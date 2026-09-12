@@ -1,0 +1,107 @@
+/**
+ * Provider-agnostic AI registry.
+ *
+ * The product never hard-codes one vendor. A provider is a registry entry; routing
+ * picks a candidate list per request and the orchestrator walks it as a fallback
+ * chain. Adding Gemini / OpenAI / Grok / Claude / a local model is a new entry plus
+ * a `call` implementation — the core engine does not change.
+ */
+
+export type TaskIntent =
+  | "explain_page"
+  | "locate_element"
+  | "answer"
+  | "plan"
+  | "summarize"
+  | "classify";
+
+export interface RouteRequest {
+  intent: TaskIntent;
+  needsVision: boolean;
+  contextTokens: number;
+  latencySensitive: boolean;
+  costSensitive: boolean;
+}
+
+export type ProviderId = "lovable-gateway";
+
+/** Wire protocol a model is served on. */
+export type Api = "responses" | "chat";
+
+export interface ModelEntry {
+  /** Exact model id sent on the wire. */
+  id: string;
+  provider: ProviderId;
+  api: Api;
+  vision: boolean;
+  contextTokens: number;
+  /** Relative cost, 1 = cheapest. */
+  cost: number;
+  /** Relative speed, 1 = fastest. */
+  speed: number;
+  /** Reasoning effort for models that require one. */
+  reasoningEffort?: "low" | "medium" | "high";
+}
+
+export const MODELS: ModelEntry[] = [
+  {
+    id: "openai/gpt-6-astra",
+    provider: "lovable-gateway",
+    api: "responses",
+    vision: true,
+    contextTokens: 200_000,
+    cost: 4,
+    speed: 3,
+    reasoningEffort: "low",
+  },
+  {
+    id: "google/gemini-3.8-flash",
+    provider: "lovable-gateway",
+    api: "chat",
+    vision: true,
+    contextTokens: 1_000_000,
+    cost: 2,
+    speed: 1,
+  },
+  {
+    id: "google/gemini-3.1-flash-lite",
+    provider: "lovable-gateway",
+    api: "chat",
+    vision: false,
+    contextTokens: 500_000,
+    cost: 1,
+    speed: 1,
+  },
+];
+
+export function findModel(id: string): ModelEntry | undefined {
+  return MODELS.find((m) => m.id === id);
+}
+
+/**
+ * Ordered candidate list: best fit first, then progressively different fallbacks.
+ * The list is always non-empty so a caller can never end up with nothing to try.
+ */
+export function route(request: RouteRequest): ModelEntry[] {
+  const usable = MODELS.filter(
+    (m) => (!request.needsVision || m.vision) && m.contextTokens >= request.contextTokens,
+  );
+  const pool = usable.length ? usable : MODELS.filter((m) => !request.needsVision || m.vision);
+  const candidates = pool.length ? [...pool] : [...MODELS];
+
+  const wantsFast =
+    request.latencySensitive ||
+    request.intent === "locate_element" ||
+    request.intent === "classify";
+  const wantsCheap = request.costSensitive || request.intent === "summarize";
+  const wantsReasoning = request.intent === "plan";
+
+  candidates.sort((a, b) => {
+    if (wantsReasoning && a.cost !== b.cost) return b.cost - a.cost; // strongest first
+    if (wantsFast && a.speed !== b.speed) return a.speed - b.speed;
+    if (wantsCheap && a.cost !== b.cost) return a.cost - b.cost;
+    return a.speed - b.speed || a.cost - b.cost;
+  });
+
+  return candidates;
+}
