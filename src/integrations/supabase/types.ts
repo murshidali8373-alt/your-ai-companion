@@ -14,16 +14,435 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      audit_log: {
+        Row: {
+          action: string
+          created_at: string
+          id: string
+          metadata: Json | null
+          target: string | null
+          user_id: string
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          id?: string
+          metadata?: Json | null
+          target?: string | null
+          user_id: string
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          id?: string
+          metadata?: Json | null
+          target?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      buddies: {
+        Row: {
+          accent_color: string
+          created_at: string
+          default_language: string
+          expertise: string[]
+          humor_level: number
+          name: string
+          personality: string
+          recommended_skills: string[]
+          seriousness: number
+          slug: string
+          sort_order: number
+          system_prompt: string
+          tagline: string
+          teaching_style: string
+          voice: string
+        }
+        Insert: {
+          accent_color?: string
+          created_at?: string
+          default_language?: string
+          expertise?: string[]
+          humor_level?: number
+          name: string
+          personality: string
+          recommended_skills?: string[]
+          seriousness?: number
+          slug: string
+          sort_order?: number
+          system_prompt: string
+          tagline: string
+          teaching_style: string
+          voice?: string
+        }
+        Update: {
+          accent_color?: string
+          created_at?: string
+          default_language?: string
+          expertise?: string[]
+          humor_level?: number
+          name?: string
+          personality?: string
+          recommended_skills?: string[]
+          seriousness?: number
+          slug?: string
+          sort_order?: number
+          system_prompt?: string
+          tagline?: string
+          teaching_style?: string
+          voice?: string
+        }
+        Relationships: []
+      }
+      custom_buddies: {
+        Row: {
+          accent_color: string
+          allowed_tools: string[]
+          created_at: string
+          expertise: string[]
+          humor_level: number
+          id: string
+          language: string
+          memory_enabled: boolean
+          name: string
+          permission_level: Database["public"]["Enums"]["permission_level"]
+          personality: string
+          seriousness: number
+          system_prompt: string
+          tagline: string
+          teaching_style: string
+          updated_at: string
+          user_id: string
+          voice: string
+        }
+        Insert: {
+          accent_color?: string
+          allowed_tools?: string[]
+          created_at?: string
+          expertise?: string[]
+          humor_level?: number
+          id?: string
+          language?: string
+          memory_enabled?: boolean
+          name: string
+          permission_level?: Database["public"]["Enums"]["permission_level"]
+          personality?: string
+          seriousness?: number
+          system_prompt?: string
+          tagline?: string
+          teaching_style?: string
+          updated_at?: string
+          user_id: string
+          voice?: string
+        }
+        Update: {
+          accent_color?: string
+          allowed_tools?: string[]
+          created_at?: string
+          expertise?: string[]
+          humor_level?: number
+          id?: string
+          language?: string
+          memory_enabled?: boolean
+          name?: string
+          permission_level?: Database["public"]["Enums"]["permission_level"]
+          personality?: string
+          seriousness?: number
+          system_prompt?: string
+          tagline?: string
+          teaching_style?: string
+          updated_at?: string
+          user_id?: string
+          voice?: string
+        }
+        Relationships: []
+      }
+      memories: {
+        Row: {
+          created_at: string
+          id: string
+          key: string
+          kind: string
+          source: string
+          updated_at: string
+          user_id: string
+          value: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          key: string
+          kind?: string
+          source?: string
+          updated_at?: string
+          user_id: string
+          value: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          key?: string
+          kind?: string
+          source?: string
+          updated_at?: string
+          user_id?: string
+          value?: string
+        }
+        Relationships: []
+      }
+      permission_settings: {
+        Row: {
+          allow_memory: boolean
+          allow_screenshots: boolean
+          blocked_domains: string[]
+          confirm_high_impact: boolean
+          level: Database["public"]["Enums"]["permission_level"]
+          privacy_mode: boolean
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          allow_memory?: boolean
+          allow_screenshots?: boolean
+          blocked_domains?: string[]
+          confirm_high_impact?: boolean
+          level?: Database["public"]["Enums"]["permission_level"]
+          privacy_mode?: boolean
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          allow_memory?: boolean
+          allow_screenshots?: boolean
+          blocked_domains?: string[]
+          confirm_high_impact?: boolean
+          level?: Database["public"]["Enums"]["permission_level"]
+          privacy_mode?: boolean
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          display_name: string | null
+          graphics_mode: string
+          id: string
+          language: string
+          selected_buddy_slug: string | null
+          selected_custom_buddy_id: string | null
+          theme: string
+          updated_at: string
+          voice: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string | null
+          graphics_mode?: string
+          id: string
+          language?: string
+          selected_buddy_slug?: string | null
+          selected_custom_buddy_id?: string | null
+          theme?: string
+          updated_at?: string
+          voice?: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string | null
+          graphics_mode?: string
+          id?: string
+          language?: string
+          selected_buddy_slug?: string | null
+          selected_custom_buddy_id?: string | null
+          theme?: string
+          updated_at?: string
+          voice?: string
+        }
+        Relationships: []
+      }
+      subscriptions: {
+        Row: {
+          created_at: string
+          plan: string
+          status: string
+          trial_ends_at: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          plan?: string
+          status?: string
+          trial_ends_at?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          plan?: string
+          status?: string
+          trial_ends_at?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      task_events: {
+        Row: {
+          created_at: string
+          detail: string | null
+          id: string
+          payload: Json | null
+          phase: string
+          task_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          detail?: string | null
+          id?: string
+          payload?: Json | null
+          phase: string
+          task_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          detail?: string | null
+          id?: string
+          payload?: Json | null
+          phase?: string
+          task_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_events_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tasks: {
+        Row: {
+          answer: string | null
+          buddy_slug: string | null
+          created_at: string
+          error: string | null
+          id: string
+          intent: string
+          latency_ms: number | null
+          model: string | null
+          page_title: string | null
+          page_url: string | null
+          provider: string | null
+          status: string
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          answer?: string | null
+          buddy_slug?: string | null
+          created_at?: string
+          error?: string | null
+          id?: string
+          intent?: string
+          latency_ms?: number | null
+          model?: string | null
+          page_title?: string | null
+          page_url?: string | null
+          provider?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          answer?: string | null
+          buddy_slug?: string | null
+          created_at?: string
+          error?: string | null
+          id?: string
+          intent?: string
+          latency_ms?: number | null
+          model?: string | null
+          page_title?: string | null
+          page_url?: string | null
+          provider?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      usage_counters: {
+        Row: {
+          day: string
+          id: string
+          requests: number
+          tokens: number
+          user_id: string
+        }
+        Insert: {
+          day?: string
+          id?: string
+          requests?: number
+          tokens?: number
+          user_id: string
+        }
+        Update: {
+          day?: string
+          id?: string
+          requests?: number
+          tokens?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "user"
+      permission_level: "observe" | "explain" | "suggest" | "assist" | "execute"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +569,9 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "user"],
+      permission_level: ["observe", "explain", "suggest", "assist", "execute"],
+    },
   },
 } as const
