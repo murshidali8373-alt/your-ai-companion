@@ -432,12 +432,20 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      bump_usage: {
+        Args: { _max?: number; _tokens?: number }
+        Returns: boolean
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
           _user_id: string
         }
         Returns: boolean
+      }
+      write_audit: {
+        Args: { _action: string; _metadata?: Json; _target?: string }
+        Returns: undefined
       }
     }
     Enums: {
