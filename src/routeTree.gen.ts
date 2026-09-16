@@ -10,33 +10,58 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiPublicExtensionAskRouteImport } from './routes/api/public/extension/ask'
+import { Route as ApiPublicExtensionHealthRouteImport } from './routes/api/public/extension/health'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicExtensionAskRoute = ApiPublicExtensionAskRouteImport.update({
+  id: '/api/public/extension/ask',
+  path: '/api/public/extension/ask',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicExtensionHealthRoute =
+  ApiPublicExtensionHealthRouteImport.update({
+    id: '/api/public/extension/health',
+    path: '/api/public/extension/health',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
+  '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
+  '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
+  '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/api/public/extension/ask' | '/api/public/extension/health'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/api/public/extension/ask' | '/api/public/extension/health'
+  id:
+    | '__root__'
+    | '/'
+    | '/api/public/extension/ask'
+    | '/api/public/extension/health'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ApiPublicExtensionAskRoute: typeof ApiPublicExtensionAskRoute
+  ApiPublicExtensionHealthRoute: typeof ApiPublicExtensionHealthRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +73,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/extension/ask': {
+      id: '/api/public/extension/ask'
+      path: '/api/public/extension/ask'
+      fullPath: '/api/public/extension/ask'
+      preLoaderRoute: typeof ApiPublicExtensionAskRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/extension/health': {
+      id: '/api/public/extension/health'
+      path: '/api/public/extension/health'
+      fullPath: '/api/public/extension/health'
+      preLoaderRoute: typeof ApiPublicExtensionHealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ApiPublicExtensionAskRoute: ApiPublicExtensionAskRoute,
+  ApiPublicExtensionHealthRoute: ApiPublicExtensionHealthRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
