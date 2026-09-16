@@ -1,0 +1,64 @@
+/**
+ * "Buddy, diagnose yourself." Reports what the extension needs to know without
+ * leaking configuration details. Signed-in callers additionally get their own
+ * account health.
+ */
+
+import { createFileRoute } from "@tanstack/react-router";
+
+import { verifyBearer } from "@/lib/supabase-bearer.server";
+
+export const Route = createFileRoute("/api/public/extension/health")({
+  server: {
+    handlers: {
+      GET: async ({ request }) => {
+        const checks: Record<string, { ok: boolean; detail: string }> = {
+          backend: { ok: false, detail: "not checked" },
+          ai: {
+            ok: Boolean(process.env["LOVABLE_API_KEY"]),
+            detail: process.env["LOVABLE_API_KEY"] ? "configured" : "not configured",
+          },
+          session: { ok: false, detail: "signed out" },
+        };
+
+        let auth: Awaited<ReturnType<typeof verifyBearer>> = null;
+        try {
+          auth = await verifyBearer(request.headers.get("authorization"));
+        } catch (error) {
+          console.error("[extension/health] auth", error);
+        }
+
+        if (auth) {
+          checks["session"] = { ok: true, detail: "signed in" };
+          const { error } = await auth.db
+            .from("permission_settings")
+            .select("level")
+            .eq("user_id", auth.userId)
+            .maybeSingle();
+          checks["backend"] = error
+            ? { ok: false, detail: "database unreachable" }
+            : { ok: true, detail: "reachable" };
+          const { data: usage } = await auth.db
+            .from("usage_counters")
+            .select("requests")
+            .eq("user_id", auth.userId)
+            .order("day", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          checks["usage"] = {
+            ok: true,
+            detail: `${usage?.requests ?? 0} requests today`,
+          };
+        } else {
+          checks["backend"] = { ok: true, detail: "reachable" };
+        }
+
+        const ok = Object.values(checks).every((c) => c.ok);
+        return new Response(JSON.stringify({ ok, checks, version: "0.1.0" }), {
+          status: 200,
+          headers: { "content-type": "application/json", "cache-control": "no-store" },
+        });
+      },
+    },
+  },
+});
