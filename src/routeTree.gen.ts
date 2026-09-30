@@ -10,7 +10,10 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthRouteImport } from './routes/auth'
+import { Route as DownloadRouteImport } from './routes/download'
 import { Route as PrivacyRouteImport } from './routes/privacy'
+import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as ApiPublicExtensionAskRouteImport } from './routes/api/public/extension/ask'
 import { Route as ApiPublicExtensionHealthRouteImport } from './routes/api/public/extension/health'
 
@@ -19,10 +22,25 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthRoute = AuthRouteImport.update({
+  id: '/auth',
+  path: '/auth',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DownloadRoute = DownloadRouteImport.update({
+  id: '/download',
+  path: '/download',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PrivacyRoute = PrivacyRouteImport.update({
   id: '/privacy',
   path: '/privacy',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AuthCallbackRoute = AuthCallbackRouteImport.update({
+  id: '/callback',
+  path: '/callback',
+  getParentRoute: () => AuthRoute,
 } as any)
 const ApiPublicExtensionAskRoute = ApiPublicExtensionAskRouteImport.update({
   id: '/api/public/extension/ask',
@@ -38,20 +56,29 @@ const ApiPublicExtensionHealthRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/auth': typeof AuthRouteWithChildren
+  '/download': typeof DownloadRoute
   '/privacy': typeof PrivacyRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
   '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/auth': typeof AuthRouteWithChildren
+  '/download': typeof DownloadRoute
   '/privacy': typeof PrivacyRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
   '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/auth': typeof AuthRouteWithChildren
+  '/download': typeof DownloadRoute
   '/privacy': typeof PrivacyRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
   '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
 }
@@ -59,25 +86,36 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/auth'
+    | '/download'
     | '/privacy'
+    | '/auth/callback'
     | '/api/public/extension/ask'
     | '/api/public/extension/health'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/auth'
+    | '/download'
     | '/privacy'
+    | '/auth/callback'
     | '/api/public/extension/ask'
     | '/api/public/extension/health'
   id:
     | '__root__'
     | '/'
+    | '/auth'
+    | '/download'
     | '/privacy'
+    | '/auth/callback'
     | '/api/public/extension/ask'
     | '/api/public/extension/health'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AuthRoute: typeof AuthRouteWithChildren
+  DownloadRoute: typeof DownloadRoute
   PrivacyRoute: typeof PrivacyRoute
   ApiPublicExtensionAskRoute: typeof ApiPublicExtensionAskRoute
   ApiPublicExtensionHealthRoute: typeof ApiPublicExtensionHealthRoute
@@ -92,12 +130,33 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/auth': {
+      id: '/auth'
+      path: '/auth'
+      fullPath: '/auth'
+      preLoaderRoute: typeof AuthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/download': {
+      id: '/download'
+      path: '/download'
+      fullPath: '/download'
+      preLoaderRoute: typeof DownloadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/privacy': {
       id: '/privacy'
       path: '/privacy'
       fullPath: '/privacy'
       preLoaderRoute: typeof PrivacyRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/auth/callback': {
+      id: '/auth/callback'
+      path: '/callback'
+      fullPath: '/auth/callback'
+      preLoaderRoute: typeof AuthCallbackRouteImport
+      parentRoute: typeof AuthRoute
     }
     '/api/public/extension/ask': {
       id: '/api/public/extension/ask'
@@ -116,8 +175,20 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AuthRouteChildren {
+  AuthCallbackRoute: typeof AuthCallbackRoute
+}
+
+const AuthRouteChildren: AuthRouteChildren = {
+  AuthCallbackRoute: AuthCallbackRoute,
+}
+
+const AuthRouteWithChildren = AuthRoute._addFileChildren(AuthRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AuthRoute: AuthRouteWithChildren,
+  DownloadRoute: DownloadRoute,
   PrivacyRoute: PrivacyRoute,
   ApiPublicExtensionAskRoute: ApiPublicExtensionAskRoute,
   ApiPublicExtensionHealthRoute: ApiPublicExtensionHealthRoute,
