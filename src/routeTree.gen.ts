@@ -10,12 +10,18 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as ApiPublicExtensionAskRouteImport } from './routes/api/public/extension/ask'
 import { Route as ApiPublicExtensionHealthRouteImport } from './routes/api/public/extension/health'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiPublicExtensionAskRoute = ApiPublicExtensionAskRouteImport.update({
@@ -32,34 +38,47 @@ const ApiPublicExtensionHealthRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/privacy': typeof PrivacyRoute
   '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
   '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/privacy': typeof PrivacyRoute
   '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
   '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/privacy': typeof PrivacyRoute
   '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
   '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/public/extension/ask' | '/api/public/extension/health'
+  fullPaths:
+    | '/'
+    | '/privacy'
+    | '/api/public/extension/ask'
+    | '/api/public/extension/health'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/public/extension/ask' | '/api/public/extension/health'
+  to:
+    | '/'
+    | '/privacy'
+    | '/api/public/extension/ask'
+    | '/api/public/extension/health'
   id:
     | '__root__'
     | '/'
+    | '/privacy'
     | '/api/public/extension/ask'
     | '/api/public/extension/health'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  PrivacyRoute: typeof PrivacyRoute
   ApiPublicExtensionAskRoute: typeof ApiPublicExtensionAskRoute
   ApiPublicExtensionHealthRoute: typeof ApiPublicExtensionHealthRoute
 }
@@ -71,6 +90,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/public/extension/ask': {
@@ -92,6 +118,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  PrivacyRoute: PrivacyRoute,
   ApiPublicExtensionAskRoute: ApiPublicExtensionAskRoute,
   ApiPublicExtensionHealthRoute: ApiPublicExtensionHealthRoute,
 }
