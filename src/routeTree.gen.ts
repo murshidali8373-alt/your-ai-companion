@@ -14,8 +14,13 @@ import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as DownloadRouteImport } from './routes/download'
 import { Route as PrivacyRouteImport } from './routes/privacy'
+import { Route as AuthenticatedBuddiesRouteImport } from './routes/_authenticated/buddies'
+import { Route as AuthenticatedConnectRouteImport } from './routes/_authenticated/connect'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
+import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
+import { Route as AuthenticatedTasksRouteImport } from './routes/_authenticated/tasks'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
+import { Route as AuthenticatedBuddiesNewRouteImport } from './routes/_authenticated/buddies.new'
 import { Route as ApiPublicExtensionAskRouteImport } from './routes/api/public/extension/ask'
 import { Route as ApiPublicExtensionHealthRouteImport } from './routes/api/public/extension/health'
 
@@ -43,15 +48,40 @@ const PrivacyRoute = PrivacyRouteImport.update({
   path: '/privacy',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedBuddiesRoute = AuthenticatedBuddiesRouteImport.update({
+  id: '/buddies',
+  path: '/buddies',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedConnectRoute = AuthenticatedConnectRouteImport.update({
+  id: '/connect',
+  path: '/connect',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedSettingsRoute = AuthenticatedSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedTasksRoute = AuthenticatedTasksRouteImport.update({
+  id: '/tasks',
+  path: '/tasks',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthCallbackRoute = AuthCallbackRouteImport.update({
   id: '/callback',
   path: '/callback',
   getParentRoute: () => AuthRoute,
+} as any)
+const AuthenticatedBuddiesNewRoute = AuthenticatedBuddiesNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => AuthenticatedBuddiesRoute,
 } as any)
 const ApiPublicExtensionAskRoute = ApiPublicExtensionAskRouteImport.update({
   id: '/api/public/extension/ask',
@@ -70,8 +100,13 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRouteWithChildren
   '/download': typeof DownloadRoute
   '/privacy': typeof PrivacyRoute
+  '/buddies': typeof AuthenticatedBuddiesRouteWithChildren
+  '/connect': typeof AuthenticatedConnectRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/settings': typeof AuthenticatedSettingsRoute
+  '/tasks': typeof AuthenticatedTasksRoute
   '/auth/callback': typeof AuthCallbackRoute
+  '/buddies/new': typeof AuthenticatedBuddiesNewRoute
   '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
   '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
 }
@@ -80,8 +115,13 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRouteWithChildren
   '/download': typeof DownloadRoute
   '/privacy': typeof PrivacyRoute
+  '/buddies': typeof AuthenticatedBuddiesRouteWithChildren
+  '/connect': typeof AuthenticatedConnectRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/settings': typeof AuthenticatedSettingsRoute
+  '/tasks': typeof AuthenticatedTasksRoute
   '/auth/callback': typeof AuthCallbackRoute
+  '/buddies/new': typeof AuthenticatedBuddiesNewRoute
   '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
   '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
 }
@@ -92,8 +132,13 @@ export interface FileRoutesById {
   '/auth': typeof AuthRouteWithChildren
   '/download': typeof DownloadRoute
   '/privacy': typeof PrivacyRoute
+  '/_authenticated/buddies': typeof AuthenticatedBuddiesRouteWithChildren
+  '/_authenticated/connect': typeof AuthenticatedConnectRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/_authenticated/settings': typeof AuthenticatedSettingsRoute
+  '/_authenticated/tasks': typeof AuthenticatedTasksRoute
   '/auth/callback': typeof AuthCallbackRoute
+  '/_authenticated/buddies/new': typeof AuthenticatedBuddiesNewRoute
   '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
   '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
 }
@@ -104,8 +149,13 @@ export interface FileRouteTypes {
     | '/auth'
     | '/download'
     | '/privacy'
+    | '/buddies'
+    | '/connect'
     | '/dashboard'
+    | '/settings'
+    | '/tasks'
     | '/auth/callback'
+    | '/buddies/new'
     | '/api/public/extension/ask'
     | '/api/public/extension/health'
   fileRoutesByTo: FileRoutesByTo
@@ -114,8 +164,13 @@ export interface FileRouteTypes {
     | '/auth'
     | '/download'
     | '/privacy'
+    | '/buddies'
+    | '/connect'
     | '/dashboard'
+    | '/settings'
+    | '/tasks'
     | '/auth/callback'
+    | '/buddies/new'
     | '/api/public/extension/ask'
     | '/api/public/extension/health'
   id:
@@ -125,8 +180,13 @@ export interface FileRouteTypes {
     | '/auth'
     | '/download'
     | '/privacy'
+    | '/_authenticated/buddies'
+    | '/_authenticated/connect'
     | '/_authenticated/dashboard'
+    | '/_authenticated/settings'
+    | '/_authenticated/tasks'
     | '/auth/callback'
+    | '/_authenticated/buddies/new'
     | '/api/public/extension/ask'
     | '/api/public/extension/health'
   fileRoutesById: FileRoutesById
@@ -178,11 +238,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PrivacyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/buddies': {
+      id: '/_authenticated/buddies'
+      path: '/buddies'
+      fullPath: '/buddies'
+      preLoaderRoute: typeof AuthenticatedBuddiesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/connect': {
+      id: '/_authenticated/connect'
+      path: '/connect'
+      fullPath: '/connect'
+      preLoaderRoute: typeof AuthenticatedConnectRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/dashboard': {
       id: '/_authenticated/dashboard'
       path: '/dashboard'
       fullPath: '/dashboard'
       preLoaderRoute: typeof AuthenticatedDashboardRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/settings': {
+      id: '/_authenticated/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AuthenticatedSettingsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/tasks': {
+      id: '/_authenticated/tasks'
+      path: '/tasks'
+      fullPath: '/tasks'
+      preLoaderRoute: typeof AuthenticatedTasksRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/auth/callback': {
@@ -191,6 +279,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/auth/callback'
       preLoaderRoute: typeof AuthCallbackRouteImport
       parentRoute: typeof AuthRoute
+    }
+    '/_authenticated/buddies/new': {
+      id: '/_authenticated/buddies/new'
+      path: '/new'
+      fullPath: '/buddies/new'
+      preLoaderRoute: typeof AuthenticatedBuddiesNewRouteImport
+      parentRoute: typeof AuthenticatedBuddiesRoute
     }
     '/api/public/extension/ask': {
       id: '/api/public/extension/ask'
@@ -209,12 +304,31 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AuthenticatedBuddiesRouteChildren {
+  AuthenticatedBuddiesNewRoute: typeof AuthenticatedBuddiesNewRoute
+}
+
+const AuthenticatedBuddiesRouteChildren: AuthenticatedBuddiesRouteChildren = {
+  AuthenticatedBuddiesNewRoute: AuthenticatedBuddiesNewRoute,
+}
+
+const AuthenticatedBuddiesRouteWithChildren =
+  AuthenticatedBuddiesRoute._addFileChildren(AuthenticatedBuddiesRouteChildren)
+
 interface AuthenticatedRouteRouteChildren {
+  AuthenticatedBuddiesRoute: typeof AuthenticatedBuddiesRouteWithChildren
+  AuthenticatedConnectRoute: typeof AuthenticatedConnectRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
+  AuthenticatedSettingsRoute: typeof AuthenticatedSettingsRoute
+  AuthenticatedTasksRoute: typeof AuthenticatedTasksRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
+  AuthenticatedBuddiesRoute: AuthenticatedBuddiesRouteWithChildren,
+  AuthenticatedConnectRoute: AuthenticatedConnectRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
+  AuthenticatedSettingsRoute: AuthenticatedSettingsRoute,
+  AuthenticatedTasksRoute: AuthenticatedTasksRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =
