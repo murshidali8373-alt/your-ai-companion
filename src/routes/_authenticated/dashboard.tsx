@@ -23,7 +23,7 @@ import {
 import { PERMISSION_DESCRIPTIONS } from "@/shared/permissions";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
-  component: Dashboard;
+  component: Dashboard,
 });
 
 function trialLabel(subscription: { status: string; trial_ends_at: string | null } | null) {
