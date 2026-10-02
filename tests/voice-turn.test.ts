@@ -56,7 +56,7 @@ describe("state machine", () => {
 
 it("strips spoken filler", () => {
   expect(stripSpokenFiller("Hmm, okay okay. The GSTIN box is on the right.")).toBe(
-    "okay okay. The GSTIN box is on the right.".replace(/^okay okay\.\s*/, "") || "",
+    "The GSTIN box is on the right.",
   );
   expect(stripSpokenFiller("Got it. Click Save.")).toBe("Click Save.");
 });
