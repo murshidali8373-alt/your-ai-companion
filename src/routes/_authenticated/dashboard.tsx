@@ -52,7 +52,7 @@ function Dashboard() {
   const [answer, setAnswer] = useState<{
     text: string;
     buddy: string;
-    confidence: number;
+    confidence: string;
     needs: string[];
     emotion: BuddyEmotion;
     blocked: boolean;
@@ -70,7 +70,7 @@ function Dashboard() {
         text: result.answer,
         buddy: result.buddyName,
         confidence: result.confidence,
-        needs: result.needs,
+        needs: result.needs ? [result.needs] : [],
         emotion: (result.emotion as BuddyEmotion) ?? "neutral",
         blocked: result.blocked,
       });
@@ -191,7 +191,7 @@ function Dashboard() {
               )}
               {!answer.blocked && (
                 <p className="mt-3 text-xs text-muted-foreground">
-                  Confidence {Math.round(answer.confidence * 100)}%. Buddy is not a licensed
+                  Confidence: {answer.confidence}. Buddy is not a licensed
                   professional — check anything that carries risk.
                 </p>
               )}

@@ -37,7 +37,14 @@ function Settings() {
   }, [data]);
 
   const perms = data?.permissions;
-  const patch = async (p: Parameters<typeof savePerms>[0]["data"]) => {
+  const patch = async (p: {
+    level?: PermissionLevel;
+    confirm_high_impact?: boolean;
+    allow_screenshots?: boolean;
+    privacy_mode?: boolean;
+    allow_memory?: boolean;
+    blocked_domains?: string[];
+  }) => {
     try {
       await savePerms({ data: p });
       toast.success("Saved.");

@@ -120,7 +120,7 @@ export const updateProfile = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { error } = await context.supabase
       .from("profiles")
-      .update(data)
+      .update(Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined)) as never)
       .eq("id", context.userId);
     if (error) throw new Error("Could not save your settings.");
     return { ok: true };
@@ -143,7 +143,11 @@ export const updatePermissions = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { error } = await context.supabase
       .from("permission_settings")
-      .upsert({ user_id: context.userId, ...data, updated_at: new Date().toISOString() })
+      .upsert({
+        user_id: context.userId,
+        ...Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined)),
+        updated_at: new Date().toISOString(),
+      } as never)
       .eq("user_id", context.userId);
     if (error) throw new Error("Could not save your permissions.");
     await context.supabase.rpc("write_audit", {
@@ -260,7 +264,7 @@ export const clearMemory = createServerFn({ method: "POST" })
       .delete()
       .eq("user_id", context.userId);
     if (error) throw new Error("Could not clear your memory.");
-    await context.supabase.rpc("write_audit", { _action: "memory_cleared", _target: null, _metadata: null });
+    await context.supabase.rpc("write_audit", { _action: "memory_cleared", _target: "memory", _metadata: {} });
     return { ok: true };
   });
 
