@@ -2,11 +2,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { AlertTriangle, Send, Stethoscope, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { AppShell } from "@/components/app-shell";
-import { BuddyAvatar, type BuddyEmotion } from "@/components/buddy-avatar";
+import { Buddy3D } from "@/components/buddy-3d";
+import type { BuddyEmotion } from "@/components/buddy-avatar";
+import { VoiceBar } from "@/components/voice-bar";
+import { SingleSpeaker } from "@/shared/voice-turn";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +22,8 @@ import {
   deleteMemory,
   diagnose,
   getDashboard,
+  listBuddies,
+  selectBuddy,
 } from "@/lib/app.functions";
 import { PERMISSION_DESCRIPTIONS } from "@/shared/permissions";
 
@@ -63,9 +68,41 @@ function Dashboard() {
     null,
   );
 
+  const runSelect = useServerFn(selectBuddy);
+  const fetchBuddies = useServerFn(listBuddies);
+  const buddies = useQuery({ queryKey: ["buddies"], queryFn: () => fetchBuddies() });
+  const [listening, setListening] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const speaker = useRef<SingleSpeaker | null>(null);
+  const requestId = useRef(0);
+
+  useEffect(() => {
+    speaker.current = new SingleSpeaker(typeof speechSynthesis === "undefined" ? null : speechSynthesis);
+    return () => speaker.current?.cancel();
+  }, []);
+
+  const stopAll = useCallback(() => {
+    requestId.current += 1; // any in-flight reply is ignored
+    speaker.current?.cancel();
+    setSpeaking(false);
+  }, []);
+
+  const choose = useMutation({
+    mutationFn: (slug: string) => runSelect({ data: { slug, customId: null } }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+    onError: () => toast.error("Could not switch Buddy. Please try again."),
+  });
+
   const ask = useMutation({
-    mutationFn: (text: string) => runAsk({ data: { question: text } }),
-    onSuccess: (result) => {
+    mutationFn: async (text: string) => {
+      const id = ++requestId.current;
+      const result = await runAsk({ data: { question: text } });
+      return { result, stale: id !== requestId.current };
+    },
+    onSuccess: ({ result, stale }) => {
+      if (stale) return;
+      const lang = dashboard.data?.profile?.language === "english" ? "en-IN" : "hi-IN";
+      if (speaker.current?.speak(result.answer, lang, () => setSpeaking(false))) setSpeaking(true);
       setAnswer({
         text: result.answer,
         buddy: result.buddyName,
@@ -136,107 +173,126 @@ function Dashboard() {
     profile?.selected_buddy_slug ??
     "friendly";
 
+  const lang = profile?.language === "english" ? "en-IN" : "hi-IN";
+  const stageEmotion: BuddyEmotion = listening
+    ? "listening"
+    : ask.isPending
+      ? "thinking"
+      : speaking
+        ? "speaking"
+        : (answer?.emotion ?? "neutral");
+  const graphics = (profile?.graphics_mode ?? "balanced") as "low" | "balanced" | "high";
+  const presets = buddies.data?.buddies ?? [];
+
   return (
     <AppShell
       title={`Hello${profile?.display_name ? `, ${profile.display_name}` : ""}.`}
-      description="Ask your Buddy anything here. On a real page, use the extension side panel so it can see the screen."
+      description="Talk to your Buddy. On a real web page, open the extension side panel so it can see the screen."
     >
-      <div className="grid gap-4 lg:grid-cols-3">
-        <section className="panel p-6 lg:col-span-2">
-          <div className="flex items-start gap-4">
-            <BuddyAvatar
-              emotion={ask.isPending ? "thinking" : (answer?.emotion ?? "neutral")}
-              size={84}
-            />
-            <div className="flex-1">
-              <p className="text-sm text-muted-foreground">
-                Current Buddy: <span className="font-medium text-foreground">{activeBuddy}</span>
-              </p>
-              <Textarea
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                placeholder="Ask your Buddy — “explain GST input credit in simple Hinglish”"
-                className="mt-2"
-                rows={3}
-                maxLength={2000}
-              />
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <Button
-                  onClick={() => ask.mutate(question.trim())}
-                  disabled={ask.isPending || question.trim().length === 0}
-                >
-                  <Send className="mr-2 size-4" />
-                  {ask.isPending ? "Thinking…" : "Ask"}
-                </Button>
-                <span className="text-xs text-muted-foreground">
-                  {requestsToday}/300 requests today
-                </span>
-              </div>
-            </div>
-          </div>
+      <div className="grid gap-4 lg:grid-cols-[200px_1fr_280px]">
+        {/* BUDDY DOCK */}
+        <nav aria-label="Buddy dock" className="glass order-2 p-2 lg:order-1">
+          <p className="px-2 py-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Buddies
+          </p>
+          <ul className="flex gap-1 overflow-x-auto lg:flex-col lg:overflow-visible">
+            {presets.slice(0, 10).map((b) => {
+              const active = !profile?.selected_custom_buddy_id && profile?.selected_buddy_slug === b.slug;
+              return (
+                <li key={b.slug}>
+                  <button
+                    type="button"
+                    disabled={choose.isPending}
+                    onClick={() => choose.mutate(b.slug)}
+                    aria-pressed={active}
+                    className={`flex w-full min-w-36 items-center gap-2 rounded-xl px-2 py-2 text-left text-sm transition-colors ${
+                      active ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    }`}
+                  >
+                    <span className={`size-2 shrink-0 rounded-full ${active ? "bg-primary" : "bg-border"}`} />
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium">{b.name}</span>
+                      <span className="block truncate text-xs text-muted-foreground">{b.tagline}</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <Link to="/buddies" className="block px-2 pt-2 text-xs text-muted-foreground underline">
+            All Buddies & custom
+          </Link>
+        </nav>
 
-          {answer && (
-            <div className="mt-5 rounded-lg border border-border bg-muted/40 p-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                {answer.buddy}
-                {answer.blocked ? " · blocked by your permission level" : ""}
-              </p>
-              <p className="mt-2 whitespace-pre-wrap text-sm">{answer.text}</p>
-              {answer.needs.length > 0 && (
-                <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-                  {answer.needs.map((need) => (
-                    <li key={need}>{need}</li>
-                  ))}
-                </ul>
-              )}
-              {!answer.blocked && (
-                <p className="mt-3 text-xs text-muted-foreground">
-                  Confidence: {answer.confidence}. Buddy is not a licensed
-                  professional — check anything that carries risk.
-                </p>
-              )}
-            </div>
-          )}
+        {/* MAIN STAGE */}
+        <section className="glass stage-glow order-1 flex flex-col items-center gap-4 p-6 lg:order-2">
+          <div className="flex w-full items-center justify-between text-xs text-muted-foreground">
+            <span>
+              <span className="font-medium text-foreground">{activeBuddy}</span> · {stageEmotion}
+            </span>
+            <span>{requestsToday}/300 today</span>
+          </div>
+          <Buddy3D slug={profile?.selected_custom_buddy_id ? null : (profile?.selected_buddy_slug ?? null)} emotion={stageEmotion} size={260} graphics={graphics} />
+          <VoiceBar
+            busy={ask.isPending || speaking}
+            lang={lang}
+            onListeningChange={setListening}
+            onStop={stopAll}
+            onSubmit={(text) => ask.mutate(text)}
+          />
         </section>
 
-        <aside className="space-y-4">
-          <div className="panel p-5">
-            <h2 className="font-semibold">Plan</h2>
-            <p className="mt-1 text-sm text-muted-foreground">{trialLabel(subscription)}</p>
-            <Badge variant="secondary" className="mt-3">
-              {permissions?.level ?? "explain"}
-            </Badge>
+        {/* ACTIVITY */}
+        <aside aria-label="Activity" className="glass order-3 space-y-4 p-5">
+          <div>
+            <h2 className="text-sm font-semibold">Activity</h2>
+            {ask.isPending && <p className="mt-2 text-sm text-muted-foreground">Understanding your request…</p>}
+            {!ask.isPending && !answer && (
+              <p className="mt-2 text-sm text-muted-foreground">Ask something — the result shows here.</p>
+            )}
+            {answer && !ask.isPending && (
+              <div className="mt-2 space-y-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  {answer.buddy}
+                  {answer.blocked ? " · blocked" : ` · confidence ${answer.confidence}`}
+                </p>
+                <p className="max-h-72 overflow-y-auto whitespace-pre-wrap text-sm">{answer.text}</p>
+                {answer.needs.length > 0 && (
+                  <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                    {answer.needs.map((need) => (
+                      <li key={need}>{need}</li>
+                    ))}
+                  </ul>
+                )}
+                {!answer.blocked && (
+                  <p className="text-xs text-muted-foreground">
+                    Buddy is not a licensed professional — check anything that carries risk.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+          <div className="border-t border-border pt-4">
+            <p className="text-sm">{trialLabel(subscription)}</p>
+            <Badge variant="secondary" className="mt-2">{permissions?.level ?? "explain"}</Badge>
             <p className="mt-2 text-xs text-muted-foreground">
               {PERMISSION_DESCRIPTIONS[permissions?.level ?? "explain"]}
             </p>
-            <Button asChild variant="outline" size="sm" className="mt-4 w-full">
-              <Link to="/settings">Change permissions</Link>
-            </Button>
+            <Link to="/settings" className="mt-2 inline-block text-xs underline text-muted-foreground">
+              Change permissions
+            </Link>
           </div>
-
-          <div className="panel p-5">
-            <h2 className="font-semibold">Self-check</h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              “Buddy, diagnose yourself.” Runs real checks against the backend and AI provider.
-            </p>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="mt-3 w-full"
-              onClick={() => diagnosis.mutate()}
-              disabled={diagnosis.isPending}
-            >
+          <div className="border-t border-border pt-4">
+            <Button variant="secondary" size="sm" className="w-full" onClick={() => diagnosis.mutate()} disabled={diagnosis.isPending}>
               <Stethoscope className="mr-2 size-4" />
-              {diagnosis.isPending ? "Checking…" : "Run diagnostics"}
+              {diagnosis.isPending ? "Checking…" : "Buddy, diagnose yourself"}
             </Button>
             {checks && (
-              <ul className="mt-3 space-y-1.5 text-sm">
+              <ul className="mt-3 space-y-1.5 text-xs">
                 {checks.map((check) => (
                   <li key={check.name} className="flex items-start justify-between gap-2">
                     <span className="text-muted-foreground">{check.name}</span>
-                    <span className={check.ok ? "text-foreground" : "text-destructive"}>
-                      {check.detail}
-                    </span>
+                    <span className={check.ok ? "text-foreground" : "text-destructive"}>{check.detail}</span>
                   </li>
                 ))}
               </ul>

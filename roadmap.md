@@ -6,3 +6,5 @@
 - [ ] Use uploaded 3D starter pack (.glb models) as real-time 3D avatar, lazy-loaded, 2D fallback on low mode
 - [ ] Tests (Vitest) for shared logic
 - [ ] Docs/changelog update
+
+- [x] Obsidian Glass premium look (dark-first) + 3-zone dashboard (dock / 3D stage + voice bar / activity)
