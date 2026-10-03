@@ -166,7 +166,7 @@ function Landing() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {PIPELINE.map(({ icon: Icon, title, body }) => (
             <div key={title} className="panel p-5">
-              <Icon className="size-5 text-accent-foreground" />
+              <Icon className="size-5 text-primary" />
               <h3 className="mt-3 font-semibold">{title}</h3>
               <p className="mt-1 text-sm text-muted-foreground">{body}</p>
             </div>
@@ -178,7 +178,7 @@ function Landing() {
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {FEATURES.map(({ icon: Icon, title, body }) => (
             <div key={title} className="panel p-6">
-              <Icon className="size-5 text-accent-foreground" />
+              <Icon className="size-5 text-primary" />
               <h3 className="mt-3 font-semibold">{title}</h3>
               <p className="mt-1 text-sm text-muted-foreground">{body}</p>
             </div>
@@ -249,7 +249,7 @@ function Landing() {
         <div className="grid gap-4 md:grid-cols-2">
           {SPECIALISTS.map(({ icon: Icon, title, body, status }) => (
             <div key={title} className="panel p-6">
-              <Icon className="size-5 text-accent-foreground" />
+              <Icon className="size-5 text-primary" />
               <h3 className="mt-3 font-semibold">{title}</h3>
               <p className="mt-1 text-sm text-muted-foreground">{body}</p>
               <Badge variant="secondary" className="mt-3 text-[11px]">{status}</Badge>
@@ -290,7 +290,7 @@ function Landing() {
             { title: "Audit trail", body: "Every task, permission change and action is logged for you to review." },
           ].map((item) => (
             <div key={item.title} className="panel p-6">
-              <ShieldCheck className="size-5 text-accent-foreground" />
+              <ShieldCheck className="size-5 text-primary" />
               <h3 className="mt-3 font-semibold">{item.title}</h3>
               <p className="mt-1 text-sm text-muted-foreground">{item.body}</p>
             </div>
@@ -311,7 +311,7 @@ function Landing() {
               <ul className="mt-4 space-y-2 text-sm">
                 {plan.items.map((item) => (
                   <li key={item} className="flex items-start gap-2">
-                    <Check className="mt-0.5 size-4 shrink-0 text-accent-foreground" />
+                    <Check className="mt-0.5 size-4 shrink-0 text-primary" />
                     <span className="text-muted-foreground">{item}</span>
                   </li>
                 ))}
