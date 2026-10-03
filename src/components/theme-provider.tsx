@@ -20,17 +20,17 @@ function applyTheme(theme: Theme) {
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>("system");
+  const [theme, setThemeState] = useState<Theme>("dark");
 
   // Read storage after hydration so server and client markup match.
   useEffect(() => {
     const stored = window.localStorage.getItem(STORAGE_KEY) as Theme | null;
-    const next = stored ?? "system";
+    const next = stored ?? "dark";
     setThemeState(next);
     applyTheme(next);
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const onChange = () => {
-      if ((window.localStorage.getItem(STORAGE_KEY) ?? "system") === "system") {
+      if ((window.localStorage.getItem(STORAGE_KEY) ?? "dark") === "system") {
         applyTheme("system");
       }
     };
