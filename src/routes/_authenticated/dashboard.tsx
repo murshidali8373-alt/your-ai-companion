@@ -232,7 +232,7 @@ function Dashboard() {
             </span>
             <span>{requestsToday}/300 today</span>
           </div>
-          <Buddy3D slug={profile?.selected_custom_buddy_id ? null : profile?.selected_buddy_slug} emotion={stageEmotion} size={260} graphics={graphics} />
+          <Buddy3D slug={profile?.selected_custom_buddy_id ? null : (profile?.selected_buddy_slug ?? null)} emotion={stageEmotion} size={260} graphics={graphics} />
           <VoiceBar
             busy={ask.isPending || speaking}
             lang={lang}
