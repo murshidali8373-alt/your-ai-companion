@@ -24,6 +24,7 @@ granted to `authenticated` only.
 ## Sensitive data
 
 Two layers block secrets from reaching memory or a model:
+
 - Client/server pre-check `containsSensitive()` (`src/lib/security/sensitive.ts`).
 - Database trigger `block_sensitive_memory` — the authoritative one.
 

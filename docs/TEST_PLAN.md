@@ -4,14 +4,14 @@ Run: `bunx vitest run`
 
 ## Automated (Vitest)
 
-| Suite | Covers |
-| --- | --- |
-| `tests/snapshot.test.ts` | page snapshot: roles, labels, required flags, error text, sensitive-value redaction, ref stability |
-| `tests/context.test.ts` | context manager: token budget, prioritising forms/errors over body text, truncation |
-| `tests/orchestrator.test.ts` | provider routing, ordered fallback, retry cap, timeout/watchdog, error normalisation, no infinite retry |
-| `tests/memory.test.ts` | sensitive-value detection for passwords, OTP, CVV, private keys, API keys |
-| `tests/permissions.test.ts` | permission ladder: what each level may do, high-impact confirmation |
-| `tests/restricted-url.test.ts` | `chrome://`, web store, extension pages and blocked domains are refused with a reason |
+| Suite                          | Covers                                                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `tests/snapshot.test.ts`       | page snapshot: roles, labels, required flags, error text, sensitive-value redaction, ref stability      |
+| `tests/context.test.ts`        | context manager: token budget, prioritising forms/errors over body text, truncation                     |
+| `tests/orchestrator.test.ts`   | provider routing, ordered fallback, retry cap, timeout/watchdog, error normalisation, no infinite retry |
+| `tests/memory.test.ts`         | sensitive-value detection for passwords, OTP, CVV, private keys, API keys                               |
+| `tests/permissions.test.ts`    | permission ladder: what each level may do, high-impact confirmation                                     |
+| `tests/restricted-url.test.ts` | `chrome://`, web store, extension pages and blocked domains are refused with a reason                   |
 
 ## Manual browser scenarios (`extension/test-pages/`)
 

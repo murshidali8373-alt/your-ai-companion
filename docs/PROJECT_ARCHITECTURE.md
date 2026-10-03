@@ -2,14 +2,14 @@
 
 ## Stack (verified against the repo)
 
-| Layer | Technology |
-| --- | --- |
-| Web app | TanStack Start v1 (React 19, Vite), file routes in `src/routes` |
-| Styling | Tailwind CSS v4 semantic tokens in `src/styles.css`, shadcn primitives in `src/components/ui` |
-| Backend | Lovable Cloud (Postgres + Auth + RLS), accessed via `createServerFn` and server routes |
-| AI | Lovable AI Gateway behind a provider-agnostic orchestrator (`src/lib/ai/`) |
-| Extension | Chrome Manifest V3 in `extension/`, packaged to `public/ai-buddy-extension.zip` |
-| Tests | Vitest (`tests/`) |
+| Layer     | Technology                                                                                    |
+| --------- | --------------------------------------------------------------------------------------------- |
+| Web app   | TanStack Start v1 (React 19, Vite), file routes in `src/routes`                               |
+| Styling   | Tailwind CSS v4 semantic tokens in `src/styles.css`, shadcn primitives in `src/components/ui` |
+| Backend   | Lovable Cloud (Postgres + Auth + RLS), accessed via `createServerFn` and server routes        |
+| AI        | Lovable AI Gateway behind a provider-agnostic orchestrator (`src/lib/ai/`)                    |
+| Extension | Chrome Manifest V3 in `extension/`, packaged to `public/ai-buddy-extension.zip`               |
+| Tests     | Vitest (`tests/`)                                                                             |
 
 ## Components
 

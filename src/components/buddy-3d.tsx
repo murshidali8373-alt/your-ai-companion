@@ -33,7 +33,10 @@ function webglAvailable(): boolean {
   }
 }
 
-class Fallback extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
+class Fallback extends Component<
+  { fallback: ReactNode; children: ReactNode },
+  { failed: boolean }
+> {
   override state = { failed: false };
   static getDerivedStateFromError() {
     return { failed: true };

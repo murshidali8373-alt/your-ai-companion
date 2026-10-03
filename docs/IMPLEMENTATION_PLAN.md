@@ -3,19 +3,19 @@
 Status legend: `planned` · `scaffolded` (real code, not user-complete) · `complete`
 (UI + logic + error handling + permissions + tests + docs).
 
-| Phase | Scope | Status |
-| --- | --- | --- |
-| 0 | Project inspection, docs, registries | complete |
-| 1 | Design system, database, auth, dashboard, buddy gallery, custom buddy | complete |
-| 2 | MV3 extension foundation: manifest, service worker, side panel, content script, packaging, session handshake | complete |
-| 3 | Voice (push-to-talk STT, TTS with interrupt), screen understanding, explain + highlight, task logging | complete |
-| 4 | Browser agent: click / type / select / scroll with verify + recover | planned |
-| 5 | Universal form engine, workflow engine, multi-step task state | planned |
-| 6 | Skill registry + specialist packs (e-commerce, CA, legal, developer) | planned |
-| 7 | Memory promotion from conversation, teach & replay | planned |
-| 8 | Self-debug engine, expanded automated test engine, bug autopilot | planned |
-| 9 | 3D buddy + emotion engine (currently a lightweight 2D animated buddy) | scaffolded |
-| 10 | Multi-model cross-check, daily discovery, analytics dashboards | planned |
+| Phase | Scope                                                                                                        | Status     |
+| ----- | ------------------------------------------------------------------------------------------------------------ | ---------- |
+| 0     | Project inspection, docs, registries                                                                         | complete   |
+| 1     | Design system, database, auth, dashboard, buddy gallery, custom buddy                                        | complete   |
+| 2     | MV3 extension foundation: manifest, service worker, side panel, content script, packaging, session handshake | complete   |
+| 3     | Voice (push-to-talk STT, TTS with interrupt), screen understanding, explain + highlight, task logging        | complete   |
+| 4     | Browser agent: click / type / select / scroll with verify + recover                                          | planned    |
+| 5     | Universal form engine, workflow engine, multi-step task state                                                | planned    |
+| 6     | Skill registry + specialist packs (e-commerce, CA, legal, developer)                                         | planned    |
+| 7     | Memory promotion from conversation, teach & replay                                                           | planned    |
+| 8     | Self-debug engine, expanded automated test engine, bug autopilot                                             | planned    |
+| 9     | 3D buddy + emotion engine (currently a lightweight 2D animated buddy)                                        | scaffolded |
+| 10    | Multi-model cross-check, daily discovery, analytics dashboards                                               | planned    |
 
 ## Vertical slice delivered
 

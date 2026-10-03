@@ -120,7 +120,13 @@ export function VoiceBar({
           }}
         >
           {supported && (
-            <Button type="button" size="icon" variant="ghost" onClick={() => setTyping(false)} aria-label="Use voice">
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              onClick={() => setTyping(false)}
+              aria-label="Use voice"
+            >
               <Mic className="size-4" />
             </Button>
           )}
@@ -132,7 +138,13 @@ export function VoiceBar({
             className="border-0 bg-transparent focus-visible:ring-0"
           />
           {busy ? (
-            <Button type="button" size="icon" variant="secondary" onClick={onStop} aria-label="Stop">
+            <Button
+              type="button"
+              size="icon"
+              variant="secondary"
+              onClick={onStop}
+              aria-label="Stop"
+            >
               <Square className="size-4" />
             </Button>
           ) : (
@@ -156,7 +168,10 @@ export function VoiceBar({
               {listening ? "Listening…" : busy ? "Buddy is working…" : "Talk to AI Buddy"}
             </p>
             <p className="truncate text-xs text-muted-foreground">
-              {transcript || (listening ? "Take your time — I wait for you to finish." : "“What can I do for you?”")}
+              {transcript ||
+                (listening
+                  ? "Take your time — I wait for you to finish."
+                  : "“What can I do for you?”")}
             </p>
           </div>
           {busy && (
@@ -164,7 +179,12 @@ export function VoiceBar({
               Stop
             </Button>
           )}
-          <Button size="icon" variant="ghost" onClick={() => setTyping(true)} aria-label="Type instead">
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={() => setTyping(true)}
+            aria-label="Type instead"
+          >
             <Keyboard className="size-4" />
           </Button>
         </div>

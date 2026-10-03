@@ -106,7 +106,9 @@ export function VoiceDemo() {
         </Button>
       </div>
       <div className="flex-1 space-y-2 text-sm">
-        <p className="font-medium text-foreground">Say something like “Hey Buddy, explain this page”.</p>
+        <p className="font-medium text-foreground">
+          Say something like “Hey Buddy, explain this page”.
+        </p>
         <p className="min-h-10 rounded-md border border-border bg-muted/40 p-3 text-muted-foreground">
           {transcript || (listening ? "Listening…" : "Your words will appear here.")}
         </p>

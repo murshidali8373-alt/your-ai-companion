@@ -33,4 +33,4 @@ Chrome limits that will be stated plainly in the product: no access to `chrome:/
 
 ## Phase order after this slice
 
-4) browser agent (click/type/select with observe→verify→recover) · 5) forms + workflow engine · 6) skills & specialist packs (e-commerce, CA, legal, developer) · 7) memory + teach & replay · 8) self-debug + expanded test engine · 9) animation + emotion · 10) hardening, observability, discovery.
+4. browser agent (click/type/select with observe→verify→recover) · 5) forms + workflow engine · 6) skills & specialist packs (e-commerce, CA, legal, developer) · 7) memory + teach & replay · 8) self-debug + expanded test engine · 9) animation + emotion · 10) hardening, observability, discovery.

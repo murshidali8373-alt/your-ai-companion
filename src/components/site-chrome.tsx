@@ -63,10 +63,18 @@ export function SiteHeader() {
           <span className="font-[family-name:var(--font-display)] text-lg">AI Buddy</span>
         </Link>
         <div className="hidden items-center gap-6 text-sm text-muted-foreground md:flex">
-          <a href="/#how" className="transition-colors hover:text-foreground">How it works</a>
-          <a href="/#buddies" className="transition-colors hover:text-foreground">Buddies</a>
-          <a href="/#security" className="transition-colors hover:text-foreground">Security</a>
-          <a href="/#pricing" className="transition-colors hover:text-foreground">Pricing</a>
+          <a href="/#how" className="transition-colors hover:text-foreground">
+            How it works
+          </a>
+          <a href="/#buddies" className="transition-colors hover:text-foreground">
+            Buddies
+          </a>
+          <a href="/#security" className="transition-colors hover:text-foreground">
+            Security
+          </a>
+          <a href="/#pricing" className="transition-colors hover:text-foreground">
+            Pricing
+          </a>
         </div>
         <div className="flex items-center gap-2">
           <ThemeSwitch />
@@ -94,11 +102,19 @@ export function SiteFooter() {
   return (
     <footer className="border-t border-border/70 py-10">
       <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 text-sm text-muted-foreground md:flex-row md:items-center md:justify-between">
-        <p>AI Buddy — a voice-first companion for your browser. Not a licensed professional advisor.</p>
+        <p>
+          AI Buddy — a voice-first companion for your browser. Not a licensed professional advisor.
+        </p>
         <div className="flex gap-5">
-          <Link to="/privacy" className="hover:text-foreground">Privacy</Link>
-          <Link to="/download" className="hover:text-foreground">Download</Link>
-          <Link to="/auth" className="hover:text-foreground">Sign in</Link>
+          <Link to="/privacy" className="hover:text-foreground">
+            Privacy
+          </Link>
+          <Link to="/download" className="hover:text-foreground">
+            Download
+          </Link>
+          <Link to="/auth" className="hover:text-foreground">
+            Sign in
+          </Link>
         </div>
       </div>
     </footer>
