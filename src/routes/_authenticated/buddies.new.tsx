@@ -29,6 +29,10 @@ const LOOKS = [
   { slug: "friendly", label: "Friend" },
   { slug: "operations", label: "Traveller" },
   { slug: "content", label: "Creator" },
+  { slug: "business", label: "Business" },
+  { slug: "marketing", label: "Marketing" },
+  { slug: "data", label: "Data" },
+  { slug: "design", label: "Design" },
 ];
 const TOOLS = ["read_page", "highlight", "summarize", "draft_text", "fill_form", "click", "navigate"];
 

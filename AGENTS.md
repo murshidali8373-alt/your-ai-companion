@@ -10,3 +10,7 @@
 > the editor, so keep the branch in a working state.
 
 <!-- LOVABLE:END -->
+
+- Buddy appearance is configured in a shared visual registry consumed by BuddyAvatar; role changes must not alter Buddy business records.
+- Premium avatar mode uses transparent pre-rendered 3D artwork with a matching inline vector fallback, not the mechanical starter GLBs; this avoids WebGL overhead and guarantees a fallback without network access.
+- BuddyLogo is the shared brand mark; avatar motion lives in global CSS and honors reduced-motion preferences.

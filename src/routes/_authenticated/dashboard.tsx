@@ -7,7 +7,7 @@ import { toast } from "sonner";
 
 import { AppShell } from "@/components/app-shell";
 import { Buddy3D } from "@/components/buddy-3d";
-import type { BuddyEmotion } from "@/components/buddy-avatar";
+import { BuddyAvatar, type BuddyEmotion } from "@/components/buddy-avatar";
 import { VoiceBar } from "@/components/voice-bar";
 import { SingleSpeaker } from "@/shared/voice-turn";
 import { Badge } from "@/components/ui/badge";
@@ -209,7 +209,7 @@ function Dashboard() {
                       active ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
                     }`}
                   >
-                    <span className={`size-2 shrink-0 rounded-full ${active ? "bg-primary" : "bg-border"}`} />
+                    <BuddyAvatar buddyId={b.slug} size={28} variant="2d" animated={false} />
                     <span className="min-w-0">
                       <span className="block truncate font-medium">{b.name}</span>
                       <span className="block truncate text-xs text-muted-foreground">{b.tagline}</span>

@@ -65,6 +65,20 @@
 }
 
 :root {
+  /* Fixed artwork palette: professional outfits shared by both avatar forms. */
+  --buddy-pearl: oklch(0.96 0.025 85);
+  --buddy-shirt: oklch(0.98 0.015 85);
+  --buddy-ink: oklch(0.25 0.012 260);
+  --buddy-outline: oklch(0.4 0.02 260 / 45%);
+  --buddy-logo: oklch(0.84 0.1 185);
+  --buddy-teal: oklch(0.43 0.065 210);
+  --buddy-charcoal: oklch(0.34 0.018 260);
+  --buddy-blue: oklch(0.39 0.065 255);
+  --buddy-coral: oklch(0.72 0.12 40);
+  --buddy-sage: oklch(0.55 0.06 130);
+  --buddy-burgundy: oklch(0.36 0.085 15);
+  --buddy-lilac: oklch(0.7 0.06 305);
+  --buddy-parcel: oklch(0.68 0.085 70);
   --radius: 0.875rem;
 
   --background: oklch(0.985 0.008 95);
@@ -248,6 +262,17 @@
 
 @utility animate-buddy-pulse {
   animation: buddy-pulse 1.6s ease-in-out infinite;
+}
+
+.buddy-avatar[data-animated="true"] .buddy-avatar-float {
+  animation: buddy-float 6s ease-in-out infinite;
+}
+.buddy-avatar-tilt { transition: transform 400ms ease; }
+.buddy-avatar[data-animated="true"]:hover .buddy-avatar-tilt { transform: rotate(2deg); }
+@media (prefers-reduced-motion: reduce) {
+  .buddy-avatar .buddy-avatar-float { animation: none !important; }
+  .buddy-avatar .buddy-avatar-tilt { transition: none; transform: none !important; }
+  .animate-buddy-float, .animate-buddy-pulse { animation: none; }
 }
 
 /* Obsidian Glass surface: translucent, blurred, thin border, soft depth. */

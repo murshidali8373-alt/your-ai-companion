@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
-import { BuddyAvatar } from "@/components/buddy-avatar";
+import { BuddyLogo } from "@/components/buddy-logo";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -44,7 +44,7 @@ function Callback() {
 
   return (
     <div className="hero-surface flex min-h-screen flex-col items-center justify-center gap-4 px-4 text-center">
-      <BuddyAvatar emotion={failed ? "concerned" : "thinking"} size={88} />
+      <BuddyLogo size={88} />
       {failed ? (
         <>
           <p className="text-sm text-muted-foreground">

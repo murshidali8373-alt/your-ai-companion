@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   Accessibility,
   BookOpenCheck,
-  Bot,
+  BrainCircuit,
   Check,
   Code2,
   Eye,
@@ -70,7 +70,7 @@ const FEATURES = [
   { icon: ShieldCheck, title: "Permission ladder", body: "Observe, Explain, Suggest, Assist, Execute. You choose, and high-impact steps always ask first." },
   { icon: Lock, title: "Secrets stay secret", body: "Password, OTP, card and key fields are detected and redacted before anything leaves your browser." },
   { icon: Gauge, title: "Built for slow laptops", body: "Budgeted page context, throttled observation, lightweight avatar, low graphics mode." },
-  { icon: Bot, title: "Many models, one Buddy", body: "The engine routes each request to the right model and falls back on failure. You just see your Buddy." },
+  { icon: BrainCircuit, title: "Many models, one Buddy", body: "The engine routes each request to the right model and falls back on failure. You just see your Buddy." },
 ];
 
 const SPECIALISTS = [
@@ -194,7 +194,7 @@ function Landing() {
             {buddies.map((buddy) => (
               <div key={buddy.slug} className="panel p-5">
                 <div className="flex items-center gap-3">
-                  <BuddyAvatar size={40} animated={false} />
+                  <BuddyAvatar buddyId={buddy.slug} size={40} />
                   <div>
                     <h3 className="font-semibold">{buddy.name}</h3>
                     <p className="text-xs text-muted-foreground">{buddy.tagline}</p>

@@ -42,7 +42,8 @@ function Gallery() {
 
   const profile = dashboard.data?.profile;
   const current = profile?.selected_custom_buddy_id ?? profile?.selected_buddy_slug ?? "friendly";
-  const shown = preview ?? profile?.selected_buddy_slug ?? "friendly";
+  const customLook = dashboard.data?.customBuddies.find((b) => b.id === profile?.selected_custom_buddy_id)?.accent_color;
+  const shown = preview ?? customLook ?? profile?.selected_buddy_slug ?? "friendly";
   const graphics = (profile?.graphics_mode as "low" | "balanced" | "high") ?? "balanced";
 
   return (
@@ -58,7 +59,7 @@ function Gallery() {
             {(buddies.data?.buddies ?? []).map((b) => (
               <div key={b.slug} className="panel flex flex-col p-4" onMouseEnter={() => setPreview(b.slug)}>
                 <div className="flex items-center gap-3">
-                  <BuddyAvatar size={40} animated={false} />
+                  <BuddyAvatar buddyId={b.slug} size={40} />
                   <div>
                     <h3 className="font-semibold">{b.name}</h3>
                     <p className="text-xs text-muted-foreground">{b.tagline}</p>
@@ -90,7 +91,7 @@ function Gallery() {
             <p className="text-sm text-muted-foreground">None yet.</p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
-              {dashboard.data!.customBuddies.map((c) => (
+              {(dashboard.data?.customBuddies ?? []).map((c) => (
                 <div key={c.id} className="panel flex items-center justify-between gap-3 p-4">
                   <div>
                     <h3 className="font-semibold">{c.name}</h3>

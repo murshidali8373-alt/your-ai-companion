@@ -3,7 +3,7 @@ import { LogOut } from "lucide-react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 
-import { BuddyAvatar } from "@/components/buddy-avatar";
+import { BuddyLogo } from "@/components/buddy-logo";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -40,7 +40,7 @@ export function AppShell({
       <header className="border-b border-border/70 bg-card/60 backdrop-blur">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3">
           <Link to="/dashboard" className="flex items-center gap-2 font-semibold">
-            <BuddyAvatar size={30} animated={false} />
+            <BuddyLogo size={30} />
             <span className="font-[family-name:var(--font-display)]">AI Buddy</span>
           </Link>
           <nav className="order-3 flex w-full gap-1 overflow-x-auto text-sm md:order-2 md:w-auto">

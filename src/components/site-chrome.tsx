@@ -2,7 +2,7 @@ import { Link, useRouter } from "@tanstack/react-router";
 import { Monitor, Moon, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { BuddyAvatar } from "@/components/buddy-avatar";
+import { BuddyLogo } from "@/components/buddy-logo";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/components/theme-provider";
 import { supabase } from "@/integrations/supabase/client";
@@ -59,7 +59,7 @@ export function SiteHeader() {
     <header className="sticky top-0 z-40 border-b border-border/70 bg-background/85 backdrop-blur">
       <nav className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
         <Link to="/" className="flex items-center gap-2 font-semibold">
-          <BuddyAvatar size={32} animated={false} />
+          <BuddyLogo size={32} />
           <span className="font-[family-name:var(--font-display)] text-lg">AI Buddy</span>
         </Link>
         <div className="hidden items-center gap-6 text-sm text-muted-foreground md:flex">
