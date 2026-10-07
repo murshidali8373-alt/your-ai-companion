@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 
-import { BuddyAvatar } from "@/components/buddy-avatar";
+import { BuddyLogo } from "@/components/buddy-logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -129,7 +129,7 @@ function AuthPage() {
     <div className="hero-surface flex min-h-screen items-center justify-center px-4 py-12">
       <div className="panel w-full max-w-md p-8">
         <div className="flex flex-col items-center text-center">
-          <BuddyAvatar emotion="happy" size={72} />
+          <BuddyLogo size={72} />
           <h1 className="mt-3 font-[family-name:var(--font-display)] text-2xl font-semibold">
             {mode === "signup" ? "Start your free trial" : mode === "reset" ? "Reset your password" : "Welcome back"}
           </h1>
