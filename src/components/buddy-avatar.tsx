@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { BUDDY_VISUALS, avatarVariant, buddyVisualId, type BuddyVisualId } from "@/lib/buddy-visuals";
+import { useEffect, useState } from "react";
+import { BUDDY_VISUALS, avatarVariant, avatarMotionEnabled, buddyVisualId, type BuddyVisualId } from "@/lib/buddy-visuals";
 import { cn } from "@/lib/utils";
 
 export type BuddyEmotion = "neutral" | "listening" | "thinking" | "speaking" | "happy" | "concerned" | "curious" | "celebrate";
@@ -26,16 +26,24 @@ function Illustration({ id, emotion }: { id: BuddyVisualId; emotion: BuddyEmotio
 
 /** Shared 3D-rendered artwork / vector fallback. No WebGL or mechanical starter models. */
 export function BuddyAvatar({ buddyId, slug, emotion = "neutral", size = 96, variant = "auto", animated = true, className }: {
-  buddyId?: string | null; slug?: string | null; emotion?: BuddyEmotion; size?: number;
+  buddyId?: string | null | undefined; slug?: string | null | undefined; emotion?: BuddyEmotion; size?: number;
   variant?: "3d" | "2d" | "auto"; animated?: boolean; className?: string;
 }) {
   const id = buddyVisualId(buddyId ?? slug);
   const image = BUDDY_VISUALS[id].image;
   const [failedImage, setFailedImage] = useState<string | null>(null);
+  const [reducedMotion, setReducedMotion] = useState(false);
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const sync = () => setReducedMotion(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
   const displayed = avatarVariant(variant, failedImage === image);
   return <span className={cn("buddy-avatar relative inline-flex shrink-0 items-center justify-center", className)}
     style={{ width: size, height: size, maxWidth: "100%", aspectRatio: "1" }}
-    data-buddy={id} data-avatar-variant={displayed} data-animated={animated} aria-hidden="true">
+    data-buddy={id} data-avatar-variant={displayed} data-animated={avatarMotionEnabled(animated, reducedMotion)} aria-hidden="true">
     <span className="buddy-avatar-float block h-full w-full"><span className="buddy-avatar-tilt block h-full w-full">
       {displayed === "2d" ? <Illustration id={id} emotion={emotion} /> : <img src={image} alt="" width={384} height={384}
         loading={size >= 140 ? "eager" : "lazy"} decoding="async" className="h-full w-full object-contain"

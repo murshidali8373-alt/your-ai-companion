@@ -42,7 +42,8 @@ function Gallery() {
 
   const profile = dashboard.data?.profile;
   const current = profile?.selected_custom_buddy_id ?? profile?.selected_buddy_slug ?? "friendly";
-  const shown = preview ?? profile?.selected_buddy_slug ?? "friendly";
+  const customLook = dashboard.data?.customBuddies.find((b) => b.id === profile?.selected_custom_buddy_id)?.accent_color;
+  const shown = preview ?? customLook ?? profile?.selected_buddy_slug ?? "friendly";
   const graphics = (profile?.graphics_mode as "low" | "balanced" | "high") ?? "balanced";
 
   return (
