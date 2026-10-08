@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  body { width: 340px; margin: 0; font: 14px system-ui, sans-serif; background: #0f1419; color: #e6edf3; }
+  .wrap { padding: 14px; display: grid; gap: 10px; }
+  header { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  textarea { width: 100%; box-sizing: border-box; min-height: 64px; border-radius: 8px; border: 1px solid #2d3743; background: #161d25; color: inherit; padding: 8px; font: inherit; resize: vertical; }
+  button { border: 0; border-radius: 8px; padding: 8px 12px; font: inherit; cursor: pointer; background: #14b8a6; color: #04201d; font-weight: 600; }
+  button.ghost { background: transparent; color: #9fb0c0; border: 1px solid #2d3743; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .answer { white-space: pre-wrap; background: #161d25; border-radius: 8px; padding: 10px; line-height: 1.45; }
+  .muted { color: #9fb0c0; font-size: 12px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><img src="icons/icon48.png" width="24" height="24" alt="" /> AI Buddy</header>
+  <div id="signedOut" hidden>
+    <p>Connect your account to start.</p>
+    <button id="connect">Connect account</button>
+  </div>
+  <div id="signedIn" hidden>
+    <div class="row">
+      <button class="ghost" data-q="Explain this page simply." data-i="explain_page">Explain page</button>
+      <button class="ghost" data-q="What should I do next on this page?" data-i="plan">Next step</button>
+    </div>
+    <textarea id="q" placeholder="Ask about this page… e.g. Where do I enter GSTIN?"></textarea>
+    <div class="row"><button id="send">Ask Buddy</button><button class="ghost" id="signout">Sign out</button></div>
+    <div id="status" class="muted"></div>
+    <div id="answer" class="answer" hidden></div>
+    <div id="who" class="muted"></div>
+  </div>
+</div>
+<script src="popup.js"></script>
+</body>
+</html>

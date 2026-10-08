@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "AI Buddy",
+  "version": "0.1.0",
+  "description": "Your AI Buddy explains the page you are on and shows you where things are.",
+  "action": { "default_popup": "popup.html", "default_title": "AI Buddy" },
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "background": { "service_worker": "background.js" },
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["https://*.lovable.app/*", "http://localhost:8080/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://*.lovable.app/connect*", "http://localhost:8080/connect*"],
+      "js": ["bridge.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
