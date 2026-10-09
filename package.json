@@ -9,7 +9,9 @@
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "lint": "eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "package:extension": "node scripts/package-extension.mjs",
+    "test": "npx vitest run --config vitest.config.ts"
   },
   "overrides": {
     "rolldown": "1.2.1"

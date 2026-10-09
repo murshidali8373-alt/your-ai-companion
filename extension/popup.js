@@ -55,3 +55,18 @@ chrome.storage.local.get("session").then(({ session }) => {
   if (session?.apiBase) chrome.storage.local.set({ lastBase: session.apiBase });
 });
 render();
+
+if ($("openSidePanel")) {
+  $("openSidePanel").onclick = async () => {
+    if (chrome.sidePanel && typeof chrome.sidePanel.open === "function") {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.windowId) {
+        chrome.sidePanel.open({ windowId: tab.windowId });
+        window.close();
+        return;
+      }
+    }
+    chrome.runtime.sendMessage({ type: "OPEN_SIDE_PANEL" });
+    window.close();
+  };
+}

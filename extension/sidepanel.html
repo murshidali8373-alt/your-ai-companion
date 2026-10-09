@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Buddy Side Panel</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card-bg: #161d25;
+      --border: #2d3743;
+      --accent: #14b8a6;
+      --accent-hover: #0d9488;
+      --text: #e6edf3;
+      --muted: #9fb0c0;
+      --destructive: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 100%;
+      min-height: 100vh;
+      font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+    }
+    .panel-wrap {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      padding: 16px;
+      gap: 12px;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 15px;
+    }
+    .avatar-preview {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #1f2937;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      border: 1px solid var(--accent);
+      transition: transform 0.3s ease;
+    }
+    .avatar-preview[data-emotion="listening"] {
+      animation: pulse-ring 1.2s infinite;
+    }
+    .avatar-preview[data-emotion="thinking"] {
+      transform: rotate(6deg) scale(1.05);
+    }
+    @keyframes pulse-ring {
+      0% { box-shadow: 0 0 0 0 rgba(20, 184, 166, 0.6); }
+      70% { box-shadow: 0 0 0 8px rgba(20, 184, 166, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(20, 184, 166, 0); }
+    }
+    .badge {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      background: rgba(20, 184, 166, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(20, 184, 166, 0.3);
+      font-weight: 500;
+    }
+    .auth-banner {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      text-align: center;
+    }
+    .quick-chips {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    button {
+      border: 0;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font: inherit;
+      cursor: pointer;
+      background: var(--accent);
+      color: #04201d;
+      font-weight: 600;
+      transition: background 0.15s ease, opacity 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    button:hover:not(:disabled) { background: var(--accent-hover); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.ghost {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      font-weight: 500;
+      font-size: 12px;
+      padding: 6px 10px;
+    }
+    button.ghost:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text);
+      border-color: #4b5563;
+    }
+    button.voice-btn {
+      background: #1f2937;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    button.voice-btn.active {
+      background: var(--destructive);
+      color: #fff;
+      border-color: var(--destructive);
+      animation: pulse-mic 1s infinite;
+    }
+    @keyframes pulse-mic {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+    .input-box {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    textarea {
+      width: 100%;
+      min-height: 72px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--card-bg);
+      color: var(--text);
+      padding: 10px;
+      font: inherit;
+      resize: vertical;
+      outline: none;
+    }
+    textarea:focus { border-color: var(--accent); }
+    .controls {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .action-group {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .content-area {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      flex: 1;
+      overflow-y: auto;
+    }
+    .answer-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .answer-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .answer-text {
+      white-space: pre-wrap;
+      line-height: 1.5;
+    }
+    .status-msg {
+      font-size: 12px;
+      color: var(--muted);
+      min-height: 18px;
+    }
+    .status-msg.thinking {
+      color: var(--accent);
+    }
+    footer {
+      margin-top: auto;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    [hidden] { display: none !important; }
+    @media (prefers-reduced-motion: reduce) {
+      *, ::before, ::after { animation: none !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="panel-wrap">
+    <header>
+      <div class="brand">
+        <div class="avatar-preview" id="buddyAvatar" data-emotion="neutral">
+          <img src="icons/icon48.png" width="22" height="22" alt="" />
+        </div>
+        <span>AI Buddy</span>
+      </div>
+      <span class="badge" id="buddyEmotionBadge">Idle</span>
+    </header>
+
+    <div id="signedOut" class="auth-banner" hidden>
+      <p style="font-weight: 500;">Connect your account to enable AI Buddy on this page.</p>
+      <button id="connectBtn">Connect account</button>
+    </div>
+
+    <div id="signedIn" class="content-area" hidden>
+      <div class="quick-chips">
+        <button class="ghost" data-q="Explain what this page is about simply." data-i="explain_page">Explain page</button>
+        <button class="ghost" data-q="What should I do next on this page?" data-i="plan">Next step</button>
+        <button class="ghost" data-q="Show me all form fields and inputs." data-i="locate_element">Find forms</button>
+      </div>
+
+      <div class="input-box">
+        <textarea id="promptInput" placeholder="Ask about this page… e.g. Where do I enter GSTIN?"></textarea>
+        <div class="controls">
+          <div class="action-group">
+            <button id="voiceBtn" class="voice-btn" title="Hold or click to talk">🎤 Talk</button>
+            <button id="speakAnswerBtn" class="ghost" title="Read answer out loud" hidden>🔊 Speak</button>
+          </div>
+          <button id="sendBtn">Ask Buddy</button>
+        </div>
+      </div>
+
+      <div id="statusText" class="status-msg"></div>
+
+      <div id="answerCard" class="answer-card" hidden>
+        <div class="answer-header">
+          <span id="answerBuddy">Buddy</span>
+          <span id="pageNote"></span>
+        </div>
+        <div id="answerText" class="answer-text"></div>
+      </div>
+    </div>
+
+    <footer>
+      <span id="userAccount">Not connected</span>
+      <button id="signoutBtn" class="ghost" style="padding: 2px 6px; font-size: 11px;" hidden>Sign out</button>
+    </footer>
+  </div>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

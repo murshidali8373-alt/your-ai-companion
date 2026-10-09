@@ -19,8 +19,27 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     chrome.storage.local.remove("session").then(() => reply({ ok: true }));
     return true;
   }
+  if (msg.type === "OPEN_SIDE_PANEL") {
+    openSidePanel(sender).then(reply, (e) => reply({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
   return false;
 });
+
+async function openSidePanel(sender) {
+  if (chrome.sidePanel && typeof chrome.sidePanel.open === "function") {
+    if (sender?.tab?.windowId) {
+      await chrome.sidePanel.open({ windowId: sender.tab.windowId });
+      return { ok: true };
+    }
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.windowId) {
+      await chrome.sidePanel.open({ windowId: tab.windowId });
+      return { ok: true };
+    }
+  }
+  return { ok: false, message: "Side panel not supported or tab not found" };
+}
 
 async function activeTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
