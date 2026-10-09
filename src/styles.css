@@ -269,6 +269,37 @@
 }
 .buddy-avatar-tilt { transition: transform 400ms ease; }
 .buddy-avatar[data-animated="true"]:hover .buddy-avatar-tilt { transform: rotate(2deg); }
+
+/* Talking-Tom style emotion states */
+@keyframes buddy-listen {
+  0%, 100% { transform: translateY(0) rotate(0deg) scale(1); }
+  25% { transform: translateY(-2%) rotate(-3deg) scale(1.03); }
+  50% { transform: translateY(1%) rotate(0deg) scale(0.99); }
+  75% { transform: translateY(-2%) rotate(3deg) scale(1.03); }
+}
+@keyframes buddy-speak {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  20% { transform: translateY(-3%) scale(1.04, 0.97); }
+  40% { transform: translateY(1%) scale(0.97, 1.04); }
+  60% { transform: translateY(-2%) scale(1.03, 0.98); }
+  80% { transform: translateY(1%) scale(0.98, 1.03); }
+}
+@keyframes buddy-think {
+  0%, 100% { transform: rotate(-2deg) translateY(0); }
+  50% { transform: rotate(2deg) translateY(-1.5%); }
+}
+@keyframes buddy-celebrate {
+  0%, 100% { transform: translateY(0) rotate(0deg) scale(1); }
+  30% { transform: translateY(-8%) rotate(-5deg) scale(1.06); }
+  60% { transform: translateY(0) rotate(5deg) scale(1.02); }
+}
+.buddy-avatar[data-animated="true"][data-emotion="listening"] .buddy-avatar-float { animation: buddy-listen 1.1s ease-in-out infinite; }
+.buddy-avatar[data-animated="true"][data-emotion="speaking"] .buddy-avatar-float { animation: buddy-speak 0.55s ease-in-out infinite; }
+.buddy-avatar[data-animated="true"][data-emotion="thinking"] .buddy-avatar-float { animation: buddy-think 2.2s ease-in-out infinite; }
+.buddy-avatar[data-animated="true"][data-emotion="happy"] .buddy-avatar-float,
+.buddy-avatar[data-animated="true"][data-emotion="celebrate"] .buddy-avatar-float { animation: buddy-celebrate 0.9s ease-in-out infinite; }
+.buddy-avatar[data-animated="true"][data-emotion="curious"] .buddy-avatar-tilt { transform: rotate(5deg); }
+.buddy-avatar[data-animated="true"][data-emotion="concerned"] .buddy-avatar-tilt { transform: rotate(-3deg) translateY(2%); }
 @media (prefers-reduced-motion: reduce) {
   .buddy-avatar .buddy-avatar-float { animation: none !important; }
   .buddy-avatar .buddy-avatar-tilt { transition: none; transform: none !important; }

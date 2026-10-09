@@ -43,7 +43,7 @@ export function BuddyAvatar({ buddyId, slug, emotion = "neutral", size = 96, var
   const displayed = avatarVariant(variant, failedImage === image);
   return <span className={cn("buddy-avatar relative inline-flex shrink-0 items-center justify-center", className)}
     style={{ width: size, height: size, maxWidth: "100%", aspectRatio: "1" }}
-    data-buddy={id} data-avatar-variant={displayed} data-animated={avatarMotionEnabled(animated, reducedMotion)} aria-hidden="true">
+    data-buddy={id} data-avatar-variant={displayed} data-animated={avatarMotionEnabled(animated, reducedMotion)} data-emotion={emotion} aria-hidden="true">
     <span className="buddy-avatar-float block h-full w-full"><span className="buddy-avatar-tilt block h-full w-full">
       {displayed === "2d" ? <Illustration id={id} emotion={emotion} /> : <img src={image} alt="" width={384} height={384}
         loading={size >= 140 ? "eager" : "lazy"} decoding="async" className="h-full w-full object-contain"
