@@ -1,0 +1,41 @@
+AI BUDDY — QUICK VERIFICATION CHECKLIST
+
+CHARACTER CONSISTENCY
+[ ] Landing hero uses the established Buddy identity from reference screenshots 1 and 2.
+[ ] Specialist cards do not unexpectedly switch to a different mascot design.
+[ ] Each specialist's skin/colour/clothes remain configured, not randomly changed.
+[ ] Buddy page uses the same shared character system where possible.
+[ ] Missing assets have a clean fallback.
+
+MOVEMENT
+[ ] Slowly move cursor around Buddy: gaze responds smoothly and stays bounded.
+[ ] Move cursor near Buddy: subtle head/body response where supported.
+[ ] Leave idle for 30 seconds: gentle motion only, no jitter or excessive looping.
+[ ] Trigger listening/speaking/thinking: movement reflects real app state.
+[ ] Check reduced-motion preference and mobile/touch behaviour.
+[ ] Navigate away/back: no duplicated listeners or runaway animation.
+
+REGRESSION CHECK
+[ ] Chat sends and receives a response.
+[ ] Voice push-to-talk works if it worked before.
+[ ] Navigation and specialist Buddy page still work.
+[ ] Login/session and extension sign-in still work.
+[ ] Explain page / Next step / Find forms / highlighting still work if previously implemented.
+[ ] Theme toggle and responsive layout still work.
+[ ] Errors/fallbacks do not crash the app.
+
+SCREEN UNDERSTANDING
+[ ] Test first on the AI Buddy app's own page.
+[ ] Buddy uses actual captured context, not invented page details.
+[ ] If only DOM/text is captured, UI does not claim screenshot vision.
+[ ] Context is bounded and sensitive fields are redacted.
+[ ] Screenshot capture is opt-in and only marked complete after end-to-end verification.
+
+ASK AI STUDIO FOR EVIDENCE
+- Exact changed file paths.
+- Diff summary.
+- Actual test commands and outputs.
+- Build/lint/typecheck outcomes.
+- Manual reproduction steps.
+- Explicit list of features not implemented.
+Do not accept “done” or “all features working” without evidence.

@@ -22,7 +22,8 @@ function Callback() {
       done = true;
       const stored = window.sessionStorage.getItem("ai-buddy-next");
       window.sessionStorage.removeItem("ai-buddy-next");
-      const next = stored && stored.startsWith("/") && !stored.startsWith("//") ? stored : "/dashboard";
+      const next =
+        stored && stored.startsWith("/") && !stored.startsWith("//") ? stored : "/dashboard";
       navigate({ to: next, replace: true });
     };
 

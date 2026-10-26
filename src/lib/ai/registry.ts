@@ -7,13 +7,10 @@
  * a `call` implementation — the core engine does not change.
  */
 
+import { findCatalogModel } from "./model-hub";
+
 export type TaskIntent =
-  | "explain_page"
-  | "locate_element"
-  | "answer"
-  | "plan"
-  | "summarize"
-  | "classify";
+  "explain_page" | "locate_element" | "answer" | "plan" | "summarize" | "classify";
 
 export interface RouteRequest {
   intent: TaskIntent;
@@ -23,10 +20,19 @@ export interface RouteRequest {
   costSensitive: boolean;
 }
 
-export type ProviderId = "lovable-gateway";
+export type ProviderId =
+  | "lovable-gateway"
+  | "gemini"
+  | "groq"
+  | "openrouter"
+  | "openai"
+  | "ollama"
+  | "huggingface"
+  | "cloudflare"
+  | "github";
 
 /** Wire protocol a model is served on. */
-export type Api = "responses" | "chat";
+export type Api = "responses" | "chat" | "custom_adapter";
 
 export interface ModelEntry {
   /** Exact model id sent on the wire. */
@@ -41,9 +47,28 @@ export interface ModelEntry {
   speed: number;
   /** Reasoning effort for models that require one. */
   reasoningEffort?: "low" | "medium" | "high";
+  providerModelId?: string;
 }
 
 export const MODELS: ModelEntry[] = [
+  {
+    id: "gemini-3.8-flash",
+    provider: "gemini",
+    api: "chat",
+    vision: true,
+    contextTokens: 1_000_000,
+    cost: 2,
+    speed: 1,
+  },
+  {
+    id: "gemini-3.1-flash-lite",
+    provider: "gemini",
+    api: "chat",
+    vision: false,
+    contextTokens: 500_000,
+    cost: 1,
+    speed: 1,
+  },
   {
     id: "openai/gpt-6-astra",
     provider: "lovable-gateway",
@@ -75,7 +100,23 @@ export const MODELS: ModelEntry[] = [
 ];
 
 export function findModel(id: string): ModelEntry | undefined {
-  return MODELS.find((m) => m.id === id);
+  const direct = MODELS.find((m) => m.id === id);
+  if (direct) return direct;
+
+  const catalog = findCatalogModel(id);
+  if (catalog) {
+    return {
+      id: catalog.id,
+      provider: catalog.provider,
+      api: "custom_adapter",
+      vision: catalog.capabilities.includes("vision"),
+      contextTokens: catalog.contextWindow,
+      cost: catalog.costRating,
+      speed: 6 - catalog.speedRating,
+      providerModelId: catalog.providerModelId,
+    };
+  }
+  return undefined;
 }
 
 /**

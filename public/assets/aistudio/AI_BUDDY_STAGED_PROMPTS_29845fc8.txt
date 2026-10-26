@@ -1,0 +1,20 @@
+AI BUDDY — SMALL PROMPTS TO SAVE AI STUDIO WORK
+Use ONE prompt at a time. Do not paste all prompts together.
+
+PROMPT 1 — BASELINE / REGRESSION AUDIT
+Inspect the current connected repository and branch without changing files. Check git status/diff, instructions, package scripts, Buddy character assets/components, animation logic, Buddy page, extension context capture, permissions and tests. Run available relevant tests/build/lint/typecheck. List working features, broken/regressed features, exact files and smallest safe plan. Do not guess, rewrite, or claim tests passed unless they ran. Preserve all user changes.
+
+PROMPT 2 — SHARED BUDDY LOOK + MOVEMENT
+Implement only the shared Buddy visual/movement upgrade described in AI_BUDDY_UPGRADE_MASTER_PROMPT.txt. Reuse existing assets and animation infrastructure; do not add dependencies or replace the app. Keep the established Buddy look consistent across hero, cards and Buddy page. Only configured skin/colour variants differ. Add bounded, smooth pointer gaze plus subtle head/body response and real idle/listening/speaking/thinking/success states where assets support them. Respect reduced-motion, clean up listeners/loops, and avoid high CPU use. Do not touch extension screen capture, billing, auth, database, routing or unrelated features. Run focused tests and report exact changed files/results.
+
+PROMPT 3 — RESTORE REGRESSIONS ONLY
+Compare current behaviour against baseline. Reproduce each regression, identify its cause, and patch only the smallest relevant files. Do not redesign UI, replace assets, change dependencies or add features. Run relevant tests/build and list what is fixed versus still failing.
+
+PROMPT 4 — AI BUDDY PAGE CONTEXT (AFTER PROMPT 2 PASSES)
+Inspect the current Chrome extension and page snapshot implementation. Implement reliable, bounded DOM/accessibility context capture for the active AI Buddy app page first: title, URL, headings, visible text, buttons/links/forms, labels, focused element and relevant structure. Respect permissions, redact sensitive fields, truncate context, and show when context is shared. Reuse existing APIs/providers; do not invent endpoints. Do not claim screenshot vision if only DOM/text is captured. Test on AI Buddy page and a simple demo page; report exact files and real results.
+
+PROMPT 5 — VISUAL SCREEN UNDERSTANDING (SEPARATE)
+First report whether a supported vision model and secure image-processing route already exist. If not, propose the smallest architecture before coding. Screenshot capture requires explicit user action and permission, sensitive-data masking where possible, image size/retention limits, authenticated secure processing, and no silent background capture. Never expose secrets or put provider keys in client code. Implement only if project supports it; otherwise report missing prerequisite and stop.
+
+PROMPT 6 — SAFE BROWSER ACTIONS (ASK BEFORE STARTING)
+Implement only low-risk, permission-checked actions such as highlight, focus, and filling non-sensitive fields. Re-resolve targets immediately before acting, preview action, require confirmation for consequential actions, verify result, and report failures honestly. Never autonomously submit payments, enter passwords, bypass CAPTCHA or perform restricted/high-impact actions. Enforce policy server-side and client-side. Add tests for origin validation, sensitive-field rejection, permission enforcement and post-action verification.

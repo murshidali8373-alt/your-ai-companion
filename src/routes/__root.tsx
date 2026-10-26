@@ -90,7 +90,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { property: "og:title", content: "AI Buddy — your voice-first browser companion" },
       {
         property: "og:description",
-        content: "An AI companion inside Chrome that reads your screen, explains it and guides you.",
+        content:
+          "An AI companion inside Chrome that reads your screen, explains it and guides you.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },

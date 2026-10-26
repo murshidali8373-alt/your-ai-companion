@@ -12,12 +12,36 @@ export const DEFAULT_ENDPOINT_MS = 1500;
 export const LONG_UTTERANCE_ENDPOINT_MS = 2000;
 
 const FILLERS = new Set([
-  "hmm", "hm", "hmmm", "umm", "um", "uh", "uhh", "aaa", "aa", "ah", "haan", "haa", "han",
-  "ok", "okay", "yes", "yeah", "right", "acha", "achha", "oh", "huh",
+  "hmm",
+  "hm",
+  "hmmm",
+  "umm",
+  "um",
+  "uh",
+  "uhh",
+  "aaa",
+  "aa",
+  "ah",
+  "haan",
+  "haa",
+  "han",
+  "ok",
+  "okay",
+  "yes",
+  "yeah",
+  "right",
+  "acha",
+  "achha",
+  "oh",
+  "huh",
 ]);
 
 export function normalizeUtterance(text: string): string {
-  return text.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** True when the utterance is empty or made only of filler sounds. */
@@ -41,19 +65,52 @@ export function shouldCommit(transcript: string, silenceMs: number, isFinal: boo
 }
 
 export type ConversationState =
-  | "IDLE" | "LISTENING" | "PROCESSING" | "THINKING" | "PLANNING" | "ASKING_CONFIRMATION"
-  | "EXECUTING" | "VERIFYING" | "SPEAKING" | "ERROR" | "PAUSED" | "DISCONNECTED";
+  | "IDLE"
+  | "LISTENING"
+  | "PROCESSING"
+  | "THINKING"
+  | "PLANNING"
+  | "ASKING_CONFIRMATION"
+  | "EXECUTING"
+  | "VERIFYING"
+  | "SPEAKING"
+  | "ERROR"
+  | "PAUSED"
+  | "DISCONNECTED";
 
 export type ConversationEvent =
-  | "START_LISTENING" | "USER_SPEECH" | "COMMIT" | "FILLER" | "MODEL_START" | "NEEDS_CONFIRMATION"
-  | "CONFIRMED" | "DECLINED" | "EXECUTE" | "VERIFY" | "REPLY" | "TTS_END" | "STOP" | "FAIL"
-  | "PAUSE" | "RESUME" | "OFFLINE" | "ONLINE";
+  | "START_LISTENING"
+  | "USER_SPEECH"
+  | "COMMIT"
+  | "FILLER"
+  | "MODEL_START"
+  | "NEEDS_CONFIRMATION"
+  | "CONFIRMED"
+  | "DECLINED"
+  | "EXECUTE"
+  | "VERIFY"
+  | "REPLY"
+  | "TTS_END"
+  | "STOP"
+  | "FAIL"
+  | "PAUSE"
+  | "RESUME"
+  | "OFFLINE"
+  | "ONLINE";
 
-const TRANSITIONS: Partial<Record<ConversationState, Partial<Record<ConversationEvent, ConversationState>>>> = {
+const TRANSITIONS: Partial<
+  Record<ConversationState, Partial<Record<ConversationEvent, ConversationState>>>
+> = {
   IDLE: { START_LISTENING: "LISTENING", USER_SPEECH: "LISTENING", PAUSE: "PAUSED" },
   LISTENING: { COMMIT: "PROCESSING", FILLER: "LISTENING", USER_SPEECH: "LISTENING" },
   PROCESSING: { MODEL_START: "THINKING", FAIL: "ERROR" },
-  THINKING: { NEEDS_CONFIRMATION: "ASKING_CONFIRMATION", EXECUTE: "EXECUTING", REPLY: "SPEAKING", FAIL: "ERROR", USER_SPEECH: "LISTENING" },
+  THINKING: {
+    NEEDS_CONFIRMATION: "ASKING_CONFIRMATION",
+    EXECUTE: "EXECUTING",
+    REPLY: "SPEAKING",
+    FAIL: "ERROR",
+    USER_SPEECH: "LISTENING",
+  },
   PLANNING: { EXECUTE: "EXECUTING", NEEDS_CONFIRMATION: "ASKING_CONFIRMATION", FAIL: "ERROR" },
   ASKING_CONFIRMATION: { CONFIRMED: "EXECUTING", DECLINED: "SPEAKING", USER_SPEECH: "LISTENING" },
   EXECUTING: { VERIFY: "VERIFYING", NEEDS_CONFIRMATION: "ASKING_CONFIRMATION", FAIL: "ERROR" },
@@ -75,7 +132,10 @@ export function transition(state: ConversationState, event: ConversationEvent): 
 /** Strip spoken filler from a reply before TTS (spec: never speak "hmm", "got it", …). */
 export function stripSpokenFiller(reply: string): string {
   return reply
-    .replace(/^(\s*(hmm+|umm+|uh+|aaa+|haan|okay okay|yes yes|right right|got it|i see)[,.!\s]*)+/i, "")
+    .replace(
+      /^(\s*(hmm+|umm+|uh+|aaa+|haan|okay okay|yes yes|right right|got it|i see)[,.!\s]*)+/i,
+      "",
+    )
     .trim();
 }
 

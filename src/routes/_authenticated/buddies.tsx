@@ -42,12 +42,17 @@ function Gallery() {
 
   const profile = dashboard.data?.profile;
   const current = profile?.selected_custom_buddy_id ?? profile?.selected_buddy_slug ?? "friendly";
-  const customLook = dashboard.data?.customBuddies.find((b) => b.id === profile?.selected_custom_buddy_id)?.accent_color;
+  const customLook = dashboard.data?.customBuddies.find(
+    (b) => b.id === profile?.selected_custom_buddy_id,
+  )?.accent_color;
   const shown = preview ?? customLook ?? profile?.selected_buddy_slug ?? "friendly";
   const graphics = (profile?.graphics_mode as "low" | "balanced" | "high") ?? "balanced";
 
   return (
-    <AppShell title="Choose your Buddy" description="Same core intelligence. Different expertise, personality and voice.">
+    <AppShell
+      title="Choose your Buddy"
+      description="Same core intelligence. Different expertise, personality and voice."
+    >
       <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
         <div className="panel flex flex-col items-center p-4 lg:sticky lg:top-6 lg:self-start">
           <Buddy3D slug={shown} size={240} graphics={graphics} emotion="happy" />
@@ -57,7 +62,11 @@ function Gallery() {
           {buddies.data?.error && <p className="text-sm text-destructive">{buddies.data.error}</p>}
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {(buddies.data?.buddies ?? []).map((b) => (
-              <div key={b.slug} className="panel flex flex-col p-4" onMouseEnter={() => setPreview(b.slug)}>
+              <div
+                key={b.slug}
+                className="panel flex flex-col p-4"
+                onMouseEnter={() => setPreview(b.slug)}
+              >
                 <div className="flex items-center gap-3">
                   <BuddyAvatar buddyId={b.slug} size={40} />
                   <div>
@@ -67,7 +76,9 @@ function Gallery() {
                 </div>
                 <div className="mt-3 flex flex-wrap gap-1">
                   {(b.expertise ?? []).slice(0, 3).map((e) => (
-                    <Badge key={e} variant="outline" className="text-[11px]">{e}</Badge>
+                    <Badge key={e} variant="outline" className="text-[11px]">
+                      {e}
+                    </Badge>
                   ))}
                 </div>
                 <Button
@@ -85,7 +96,9 @@ function Gallery() {
 
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">Your custom Buddies</h2>
-            <Button asChild size="sm"><Link to="/buddies/new">Create a Buddy</Link></Button>
+            <Button asChild size="sm">
+              <Link to="/buddies/new">Create a Buddy</Link>
+            </Button>
           </div>
           {(dashboard.data?.customBuddies ?? []).length === 0 ? (
             <p className="text-sm text-muted-foreground">None yet.</p>
@@ -98,7 +111,11 @@ function Gallery() {
                     <p className="text-xs text-muted-foreground">{c.tagline || c.personality}</p>
                   </div>
                   <div className="flex gap-1">
-                    <Button size="sm" disabled={current === c.id} onClick={() => pick.mutate({ slug: null, customId: c.id })}>
+                    <Button
+                      size="sm"
+                      disabled={current === c.id}
+                      onClick={() => pick.mutate({ slug: null, customId: c.id })}
+                    >
                       {current === c.id ? "Current" : "Use"}
                     </Button>
                     <Button

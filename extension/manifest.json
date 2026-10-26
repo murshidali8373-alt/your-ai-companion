@@ -15,25 +15,12 @@
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": [
-    "activeTab",
-    "scripting",
-    "storage",
-    "sidePanel"
-  ],
-  "host_permissions": [
-    "https://*.lovable.app/*",
-    "http://localhost:8080/*"
-  ],
+  "permissions": ["activeTab", "scripting", "storage", "sidePanel"],
+  "host_permissions": ["<all_urls>"],
   "content_scripts": [
     {
-      "matches": [
-        "https://*.lovable.app/connect*",
-        "http://localhost:8080/connect*"
-      ],
-      "js": [
-        "bridge.js"
-      ],
+      "matches": ["https://*/*connect*", "http://*/*connect*", "http://localhost:*/*connect*"],
+      "js": ["bridge.js"],
       "run_at": "document_idle"
     }
   ],

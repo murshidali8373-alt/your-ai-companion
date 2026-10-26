@@ -25,21 +25,21 @@ describe("MV3 Chrome Extension and Side Panel", () => {
   it("sidepanel.html contains required accessible UI structures", () => {
     expect(fs.existsSync(sidepanelHtmlPath)).toBe(true);
     const html = fs.readFileSync(sidepanelHtmlPath, "utf-8");
-    expect(html).toContain("id=\"buddyAvatar\"");
-    expect(html).toContain("id=\"buddyEmotionBadge\"");
-    expect(html).toContain("id=\"promptInput\"");
-    expect(html).toContain("id=\"sendBtn\"");
-    expect(html).toContain("id=\"voiceBtn\"");
-    expect(html).toContain("id=\"answerCard\"");
-    expect(html).toContain("id=\"signedIn\"");
-    expect(html).toContain("id=\"signedOut\"");
+    expect(html).toContain('id="buddyAvatar"');
+    expect(html).toContain('id="buddyEmotionBadge"');
+    expect(html).toContain('id="promptInput"');
+    expect(html).toContain('id="sendBtn"');
+    expect(html).toContain('id="voiceBtn"');
+    expect(html).toContain('id="answerCard"');
+    expect(html).toContain('id="signedIn"');
+    expect(html).toContain('id="signedOut"');
   });
 
   it("sidepanel.js wires speech, messaging, and emotion states", () => {
     expect(fs.existsSync(sidepanelJsPath)).toBe(true);
     const js = fs.readFileSync(sidepanelJsPath, "utf-8");
     expect(js).toContain("chrome.runtime.sendMessage");
-    expect(js).toContain("type: \"ASK\"");
+    expect(js).toContain('type: "ASK"');
     expect(js).toContain("SpeechRecognition");
     expect(js).toContain("setEmotion");
   });

@@ -28,13 +28,18 @@ export const BUDDY_VISUALS = {
 
 export type BuddyVisualId = keyof typeof BUDDY_VISUALS;
 const ALIASES: Record<string, BuddyVisualId> = {
-  friendly: "general", dadaji: "general", detective: "research", operations: "business",
-  tech: "developer", study: "professor", "e-commerce": "ecommerce",
+  friendly: "general",
+  dadaji: "general",
+  detective: "research",
+  operations: "business",
+  tech: "developer",
+  study: "professor",
+  "e-commerce": "ecommerce",
 };
 
 export function buddyVisualId(id?: string | null): BuddyVisualId {
   const key = id?.toLowerCase() ?? "general";
-  return Object.hasOwn(BUDDY_VISUALS, key) ? key as BuddyVisualId : ALIASES[key] ?? "general";
+  return Object.hasOwn(BUDDY_VISUALS, key) ? (key as BuddyVisualId) : (ALIASES[key] ?? "general");
 }
 
 export function avatarVariant(variant: "auto" | "3d" | "2d", failed: boolean): "3d" | "2d" {

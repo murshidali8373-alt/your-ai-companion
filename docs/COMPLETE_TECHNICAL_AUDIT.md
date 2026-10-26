@@ -1,4 +1,5 @@
 # COMPLETE TECHNICAL AUDIT
+
 ## your-ai-companion Repository
 
 **Date**: October 7, 2026  
@@ -10,6 +11,7 @@
 ## EXECUTIVE SUMMARY
 
 ### Repository Status
+
 - **Active Project**: AI Buddy (Your AI Companion)
 - **Framework**: TanStack Start v1 (React 19, TypeScript, Vite)
 - **Backend**: Lovable Cloud (Postgres + Auth + RLS)
@@ -19,15 +21,17 @@
 - **AI Trainer**: NOT PRESENT in repo
 
 ### Critical Finding
+
 **The Chrome Extension referenced in documentation does NOT exist in the repository.** The documentation claims a complete MV3 extension (manifest.json, service worker, content script, side panel) but the actual implementation files are absent. Only backend API endpoints and session handshake infrastructure exist.
 
 ### What ACTUALLY Exists
+
 ✅ **WORKING**: Authentication, dashboard, buddy gallery, voice I/O, AI orchestrator, page snapshot logic  
 ✅ **WORKING**: Permission system, memory store, task logging, diagnostics  
 ❌ **MISSING**: Chrome Extension implementation  
 ❌ **MISSING**: Browser automation (click/type/select)  
 ❌ **MISSING**: AI Trainer functionality  
-❌ **PLANNED**: Multi-step workflows, specialist skill packs, 3D animation  
+❌ **PLANNED**: Multi-step workflows, specialist skill packs, 3D animation
 
 ---
 
@@ -161,6 +165,7 @@ your-ai-companion/
 **Status**: ✅ WORKING
 
 **Implemented**:
+
 - `src/integrations/supabase/auth-attacher.ts` - User context attachment
 - `src/integrations/supabase/auth-middleware.ts` - Middleware
 - `src/routes/auth.tsx` - Sign-in form (email + Google OAuth)
@@ -171,6 +176,7 @@ your-ai-companion/
 - 14-day free trial on signup
 
 **Database Tables**:
+
 - `auth.users` (Supabase)
 - `public.profiles` (user metadata, selected buddy, language, graphics mode)
 - `public.subscriptions` (trial tracking, plan status)
@@ -184,6 +190,7 @@ your-ai-companion/
 **File**: `src/routes/_authenticated/dashboard.tsx`
 
 **Features**:
+
 - ✅ Buddy selection (10 preset buddies shown)
 - ✅ Current buddy display (3D or 2D based on graphics setting)
 - ✅ Trial countdown display
@@ -199,6 +206,7 @@ your-ai-companion/
 - ✅ Real-time emotion display
 
 **Missing**:
+
 - ❌ Detailed analytics
 - ❌ Workout history (AI Trainer)
 - ❌ Specialist skill usage
@@ -210,6 +218,7 @@ your-ai-companion/
 **Status**: ✅ WORKING
 
 **Buddies Implemented** (15 preset):
+
 1. Friendly (General, Hinglish)
 2. CA Buddy (GST/Accounting)
 3. Legal Buddy (Laws, contracts)
@@ -227,10 +236,12 @@ your-ai-companion/
 15. Detective Buddy (Investigation)
 
 **Database Tables**:
+
 - `public.buddies` (preset buddies)
 - `public.custom_buddies` (user-created)
 
 **Features**:
+
 - ✅ Gallery view with filtering
 - ✅ Custom buddy creator (`/buddies/new`)
 - ✅ Per-buddy personality attributes (humor, seriousness, teaching style)
@@ -246,11 +257,13 @@ your-ai-companion/
 **Status**: ✅ WORKING (push-to-talk, STT/TTS)
 
 **Files**:
+
 - `src/components/voice-bar.tsx` - UI component
 - `src/components/voice-demo.tsx` - Demo interface
 - `src/shared/voice-turn.ts` - State machine & logic
 
 **Speech-to-Text**:
+
 - ✅ Web Speech API (Chromium-only)
 - ✅ ~1.5s silence endpointing (adaptive for long utterances)
 - ✅ Filler word detection ("hmm", "uh", "haan", etc.)
@@ -259,19 +272,21 @@ your-ai-companion/
 - ❌ Wake word ("Hey Buddy") - browser limitation
 
 **Speech-to-Speech**:
+
 - ✅ `speechSynthesis.speak()` (Web Speech API)
 - ✅ Per-language configuration (en-IN, hi-IN)
 - ✅ Barge-in cancellation (user speech stops Buddy response)
 - ✅ Filler stripping from spoken output
 
 **Conversation State Machine** (`voice-turn.ts`):
+
 ```
-States: IDLE, LISTENING, PROCESSING, THINKING, PLANNING, 
-        ASKING_CONFIRMATION, EXECUTING, VERIFYING, SPEAKING, 
+States: IDLE, LISTENING, PROCESSING, THINKING, PLANNING,
+        ASKING_CONFIRMATION, EXECUTING, VERIFYING, SPEAKING,
         ERROR, PAUSED, DISCONNECTED
 
-Events: START_LISTENING, USER_SPEECH, COMMIT, FILLER, 
-        MODEL_START, NEEDS_CONFIRMATION, CONFIRMED, 
+Events: START_LISTENING, USER_SPEECH, COMMIT, FILLER,
+        MODEL_START, NEEDS_CONFIRMATION, CONFIRMED,
         DECLINED, EXECUTE, VERIFY, REPLY, TTS_END, STOP, etc.
 ```
 
@@ -284,6 +299,7 @@ Events: START_LISTENING, USER_SPEECH, COMMIT, FILLER,
 **File**: `src/lib/ai/orchestrator.server.ts`
 
 **Capabilities**:
+
 - ✅ Provider-agnostic routing
 - ✅ Multi-model fallback chain
 - ✅ Streaming responses (SSE)
@@ -294,11 +310,13 @@ Events: START_LISTENING, USER_SPEECH, COMMIT, FILLER,
 - ✅ Timeout handling
 
 **Supported Models** (`src/lib/ai/registry.ts`):
+
 1. `openai/gpt-6-astra` (200k context, vision, reasoning, expensive)
 2. `google/gemini-3.8-flash` (1M context, vision, cheap-ish)
 3. `google/gemini-3.1-flash-lite` (500k context, fast, cheapest)
 
 **Routing Logic**:
+
 - Vision requirements
 - Latency sensitivity (latencySensitive flag)
 - Cost sensitivity (costSensitive flag)
@@ -306,6 +324,7 @@ Events: START_LISTENING, USER_SPEECH, COMMIT, FILLER,
 - Context token budget
 
 **Gateway**: Lovable AI Gateway (`https://ai.gateway.lovable.dev/v1`)
+
 - Uses Lovable API Key (server-only, never sent to browser/extension)
 
 ---
@@ -317,29 +336,36 @@ Events: START_LISTENING, USER_SPEECH, COMMIT, FILLER,
 **File**: `src/shared/page-snapshot.ts`
 
 **Snapshot Contract**:
+
 ```typescript
 interface PageSnapshot {
-  url, origin, title, capturedAt,
-  headings: SnapshotElement[],      // H1-H6
-  forms: SnapshotElement[],          // Input fields, textareas, selects
-  controls: SnapshotElement[],       // Buttons, links, toggles
-  alerts: SnapshotElement[],         // Error/warning messages
-  text: string,                       // Visible body text
-  truncated: boolean
+  url;
+  origin;
+  title;
+  capturedAt;
+  headings: SnapshotElement[]; // H1-H6
+  forms: SnapshotElement[]; // Input fields, textareas, selects
+  controls: SnapshotElement[]; // Buttons, links, toggles
+  alerts: SnapshotElement[]; // Error/warning messages
+  text: string; // Visible body text
+  truncated: boolean;
 }
 ```
 
 **Element Ref System**:
+
 - Generated refs: `el-1`, `el-2`, etc.
 - Per-element: role, name, tag, selector, value, placeholder, required, disabled, invalid, options, level, sensitive
 
 **What's Missing**:
+
 - ❌ Actual content script that builds this snapshot
 - ❌ DOM inspection code to extract headings/forms/controls
 - ❌ Accessibility tree walking
 - ❌ Screenshot capture logic
 
 **Context Manager** (`buildPageContext`):
+
 - ✅ Token budget management (2200 tokens default)
 - ✅ Priority sorting (errors > forms > controls > headings > body text)
 - ✅ Page context trimming
@@ -354,6 +380,7 @@ interface PageSnapshot {
 **File**: `src/shared/permissions.ts`
 
 **Permission Ladder**:
+
 1. `observe` - Read only, no answers
 2. `explain` - Can explain and highlight
 3. `suggest` - Can suggest next steps, point at elements
@@ -361,6 +388,7 @@ interface PageSnapshot {
 5. `execute` - Can submit forms and navigate
 
 **Actions Gated by Level**:
+
 - `read_page` ≥ observe
 - `answer` ≥ explain
 - `suggest_next_step` ≥ suggest
@@ -372,11 +400,13 @@ interface PageSnapshot {
 - `navigate` ≥ execute
 
 **High-Impact Actions** (require confirmation):
+
 - submit
 - navigate
 - click
 
 **Storage**:
+
 - `public.permission_settings` table per user
 - Includes: level, privacy_mode, allow_memory, blocked_domains, confirm_high_impact
 
@@ -389,6 +419,7 @@ interface PageSnapshot {
 **File**: No dedicated file - logic in `buddy-service.server.ts`
 
 **Features**:
+
 - ✅ Key-value memory storage
 - ✅ Limit: 20 most recent memories per request
 - ✅ Can save/delete individual memories
@@ -396,11 +427,13 @@ interface PageSnapshot {
 - ✅ Privacy mode toggle (disables memory use)
 
 **Sensitive Data Blocking**:
+
 - ✅ Server-side database trigger `block_sensitive_memory`
 - ✅ Client-side pre-check (passwords, OTP, CVV, API keys, private keys)
 - ✅ Database rejects sensitive keys on insert
 
 **Database Table**:
+
 - `public.memories` (key, value, user_id, updated_at)
 
 ---
@@ -410,16 +443,19 @@ interface PageSnapshot {
 **Status**: ✅ WORKING
 
 **Files**:
+
 - `src/routes/_authenticated/tasks.tsx` - Task history view
 - `src/lib/buddy-service.server.ts` - Logging logic
 
 **Phases Tracked**:
+
 - `observe` - Page snapshot received
 - `understand` - Context built (~N tokens)
 - `verify` - Model response received, confidence
 - `recover` - Error handling
 
 **Database Tables**:
+
 - `public.tasks` (id, user_id, title, intent, status, answer, provider, model, latency_ms, error, page_url, page_title, buddy_slug)
 - `public.task_events` (task_id, user_id, phase, detail, created_at)
 - `public.audit_log` (user_id, action, target, metadata, created_at)
@@ -433,6 +469,7 @@ interface PageSnapshot {
 **File**: `src/routes/_authenticated/settings.tsx`
 
 **User-Configurable**:
+
 - ✅ Permission level (observe → execute)
 - ✅ Language (English, Hindi, Hinglish)
 - ✅ 3D graphics quality (low, balanced, high)
@@ -450,12 +487,14 @@ interface PageSnapshot {
 **Status**: ⚠️ BACKEND EXISTS but EXTENSION CODE MISSING
 
 **Files**:
+
 - `src/routes/api/public/extension/ask.ts` - AI asking endpoint
 - `src/routes/api/public/extension/health.ts` - Diagnostics endpoint
 - `src/lib/supabase-bearer.server.ts` - Bearer token verification
 - `src/routes/_authenticated/connect.tsx` - Session handshake page
 
 **Endpoints Implemented**:
+
 ```
 POST /api/public/extension/ask
 - Input: question, intent, snapshot (page context)
@@ -473,12 +512,14 @@ GET /api/public/extension/health
 ```
 
 **Session Handshake**:
+
 - Page: `src/routes/_authenticated/connect.tsx`
 - Mechanism: `window.postMessage` (same-origin only)
 - Message types: `AI_BUDDY_SESSION`, `AI_BUDDY_EXT_ACK`
 - Data passed: apiBase, accessToken, refreshToken, expiresAt, email
 
 **What's Missing**:
+
 - ❌ Content script that sends page snapshots
 - ❌ Service worker that manages storage/permissions
 - ❌ Side panel UI
@@ -494,6 +535,7 @@ GET /api/public/extension/health
 ### Current Status: ❌ MISSING IMPLEMENTATION
 
 **Documentation Claims**:
+
 - MV3 manifest in `extension/manifest.json`
 - Service worker at `extension/service-worker.js`
 - Side panel at `extension/side-panel.html`
@@ -501,6 +543,7 @@ GET /api/public/extension/health
 - Packaged to `public/ai-buddy-extension.zip`
 
 **Actual Reality**:
+
 - ❌ No `extension/` directory
 - ❌ No `public/ai-buddy-extension.zip`
 - ❌ Only backend API endpoints + session handshake
@@ -508,24 +551,29 @@ GET /api/public/extension/health
 ### Extension Requirements (from docs)
 
 **Manifest V3**:
+
 - ✅ Designed but not implemented
 - Permissions needed: `sidePanel`, `storage`, `activeTab`, `scripting`, `tabs`
 - No `<all_urls>` host permission (security-first)
 
 **Service Worker**:
+
 - Responsibilities: session storage, permission enforcement, API watchdog, retry cap
 - Status: ❌ NOT IMPLEMENTED
 
 **Content Script**:
+
 - Responsibilities: Page observation (snapshots), element highlighting, scroll
 - Status: ❌ NOT IMPLEMENTED
 - Must extract: headings, forms, controls, alerts, visible text
 
 **Side Panel**:
+
 - Responsibilities: Voice I/O, text chat, status display
 - Status: ⚠️ UI components exist but not wired to extension
 
 **Build Process**:
+
 - How to zip extension: ❌ NOT DOCUMENTED
 - How to load in Chrome: ✅ Documented in `/download` page
 
@@ -563,6 +611,7 @@ GET /api/public/extension/health
 #### 4.2 Service Worker
 
 Responsibilities:
+
 - Receive messages from content script
 - Store session token (chrome.storage.local)
 - Call `/api/public/extension/ask`
@@ -573,6 +622,7 @@ Responsibilities:
 #### 4.3 Content Script
 
 Responsibilities:
+
 - Extract page snapshot (headings, forms, controls, alerts, text)
 - Send snapshot to service worker
 - Highlight elements by ref
@@ -582,6 +632,7 @@ Responsibilities:
 #### 4.4 Side Panel (UI)
 
 Responsibilities:
+
 - Display buddy avatar (reuse `Buddy3D.tsx`)
 - Voice input (reuse `VoiceBar.tsx`)
 - Status messages
@@ -591,6 +642,7 @@ Responsibilities:
 #### 4.5 Build Process
 
 Needed:
+
 - Webpack/Vite config to bundle extension code separately
 - Copy manifest, HTML, assets to build folder
 - Zip extension files
@@ -603,16 +655,19 @@ Needed:
 ### Current Build System
 
 **Framework**: TanStack Start v1 with Lovable vite config
+
 - `npm run dev` - Development server (port 3000)
 - `npm run build` - Production build
 - `npm run lint` - ESLint check
 - `npm run format` - Prettier
 
 **Build Outputs**:
+
 - Web app: Served via Nitro/Cloudflare Workers
 - Extension: ❌ NOT INCLUDED IN BUILD
 
 **Environment Variables** (required):
+
 ```
 SUPABASE_PROJECT_ID
 SUPABASE_PUBLISHABLE_KEY
@@ -621,6 +676,7 @@ LOVABLE_API_KEY (server only)
 ```
 
 **Missing**:
+
 - ❌ Extension build pipeline
 - ❌ Extension bundler config
 - ❌ Extension zipping automation
@@ -632,34 +688,43 @@ LOVABLE_API_KEY (server only)
 ### Tables (via Supabase)
 
 **Authentication**:
+
 - `auth.users` - Supabase managed
 
 **User Data**:
+
 - `profiles` - user_id, display_name, selected_buddy_slug, selected_custom_buddy_id, language, voice, graphics_mode
 - `user_roles` - user_id, role (for RBAC)
 
 **Buddies**:
+
 - `buddies` - slug, name, tagline, personality, teaching_style, humor_level, seriousness, language, expertise[], system_prompt
 - `custom_buddies` - id, user_id, name, tagline, personality, teaching_style, humor_level, seriousness, language, expertise[], system_prompt, accent_color
 
 **Billing**:
+
 - `subscriptions` - user_id, status (trialing/active/cancelled), trial_ends_at, plan_id
 
 **Tasks**:
+
 - `tasks` - id, user_id, title, intent, status, answer, provider, model, latency_ms, error, page_url, page_title, buddy_slug
 - `task_events` - task_id, user_id, phase, detail, created_at
 
 **Memory**:
+
 - `memories` - id, user_id, key, value, updated_at
 
 **Settings**:
+
 - `permission_settings` - user_id, level, privacy_mode, allow_memory, allow_screenshots, confirm_high_impact, blocked_domains[]
 
 **Auditing**:
+
 - `audit_log` - user_id, action, target, metadata, created_at
 - `usage_counters` - user_id, day, requests (daily usage tracking)
 
 **Security**:
+
 - Row-Level Security (RLS) enabled on all tables
 - Policies match `auth.uid()` for user data
 - `buddies` table is public-readable
@@ -671,6 +736,7 @@ LOVABLE_API_KEY (server only)
 ### Status: ❌ NOT PRESENT IN REPO
 
 No code, documentation, or references to AI Trainer found in:
+
 - Source code (`src/`)
 - Routes
 - Components
@@ -684,18 +750,18 @@ No code, documentation, or references to AI Trainer found in:
 
 ### Between AI Buddy and Proposed AI Trainer
 
-| Component | AI Buddy | AI Trainer | Merge Action |
-|-----------|----------|-----------|--------------|
-| Authentication | ✅ Supabase | Would share | SHARE |
-| User Profile | ✅ Exists | Would share | SHARE |
-| Avatar System | ✅ 3D/2D | Different needs | SEPARATE but unified |
-| Voice I/O | ✅ STT/TTS | Would use | SHARE |
-| AI Orchestrator | ✅ Multi-model | Would use | SHARE |
-| Memory Store | ✅ Exists | Could use | SHARE |
-| Task Logging | ✅ Exists | Would use | SHARE |
-| Permission System | ✅ Exists | Would specialize | EXTEND |
-| Settings/UI | ✅ Dashboard | Would extend | EXTEND |
-| Database | ✅ Postgres | Would share | SHARE |
+| Component         | AI Buddy       | AI Trainer       | Merge Action         |
+| ----------------- | -------------- | ---------------- | -------------------- |
+| Authentication    | ✅ Supabase    | Would share      | SHARE                |
+| User Profile      | ✅ Exists      | Would share      | SHARE                |
+| Avatar System     | ✅ 3D/2D       | Different needs  | SEPARATE but unified |
+| Voice I/O         | ✅ STT/TTS     | Would use        | SHARE                |
+| AI Orchestrator   | ✅ Multi-model | Would use        | SHARE                |
+| Memory Store      | ✅ Exists      | Could use        | SHARE                |
+| Task Logging      | ✅ Exists      | Would use        | SHARE                |
+| Permission System | ✅ Exists      | Would specialize | EXTEND               |
+| Settings/UI       | ✅ Dashboard   | Would extend     | EXTEND               |
+| Database          | ✅ Postgres    | Would share      | SHARE                |
 
 **Conclusion**: Minimal duplication. AI Trainer would be a specialized module within the same ecosystem.
 
@@ -705,39 +771,39 @@ No code, documentation, or references to AI Trainer found in:
 
 ### Phase 4 Features (Browser Automation)
 
-| Feature | Status | Required | Priority |
-|---------|--------|----------|----------|
-| Click automation | ❌ MISSING | Yes | P0 |
-| Type automation | ❌ MISSING | Yes | P0 |
-| Select dropdown | ❌ MISSING | Yes | P0 |
-| Form filling | ❌ MISSING | Yes | P0 |
-| Confirmation before execution | ❌ MISSING | Yes | P0 |
-| Element verification | ❌ MISSING | Yes | P0 |
-| Error recovery | ❌ MISSING | Yes | P0 |
+| Feature                       | Status     | Required | Priority |
+| ----------------------------- | ---------- | -------- | -------- |
+| Click automation              | ❌ MISSING | Yes      | P0       |
+| Type automation               | ❌ MISSING | Yes      | P0       |
+| Select dropdown               | ❌ MISSING | Yes      | P0       |
+| Form filling                  | ❌ MISSING | Yes      | P0       |
+| Confirmation before execution | ❌ MISSING | Yes      | P0       |
+| Element verification          | ❌ MISSING | Yes      | P0       |
+| Error recovery                | ❌ MISSING | Yes      | P0       |
 
 ### Phase 5+ Features
 
-| Feature | Status | Required | Priority |
-|---------|--------|----------|----------|
-| Multi-step workflows | ❌ MISSING | Medium | P1 |
-| Workflow recording | ❌ MISSING | Low | P2 |
-| Teach & replay | ❌ MISSING | Low | P2 |
-| Skill packs (e-commerce, CA, legal) | ❌ MISSING | Medium | P1 |
-| Screenshot capture | ❌ MISSING | Low | P2 |
-| OCR integration | ❌ MISSING | Low | P2 |
-| Multi-model cross-check | ❌ MISSING | Low | P3 |
-| 3D avatar (full) | ⚠️ PARTIAL | Low | P3 |
-| Wake word detection | ❌ MISSING | Low | P3 |
+| Feature                             | Status     | Required | Priority |
+| ----------------------------------- | ---------- | -------- | -------- |
+| Multi-step workflows                | ❌ MISSING | Medium   | P1       |
+| Workflow recording                  | ❌ MISSING | Low      | P2       |
+| Teach & replay                      | ❌ MISSING | Low      | P2       |
+| Skill packs (e-commerce, CA, legal) | ❌ MISSING | Medium   | P1       |
+| Screenshot capture                  | ❌ MISSING | Low      | P2       |
+| OCR integration                     | ❌ MISSING | Low      | P2       |
+| Multi-model cross-check             | ❌ MISSING | Low      | P3       |
+| 3D avatar (full)                    | ⚠️ PARTIAL | Low      | P3       |
+| Wake word detection                 | ❌ MISSING | Low      | P3       |
 
 ### Extension-Specific Missing
 
-| Component | Status | Required | Priority |
-|-----------|--------|----------|----------|
-| manifest.json | ❌ MISSING | Yes | P0 |
-| service-worker.js | ❌ MISSING | Yes | P0 |
-| content-script.js | ❌ MISSING | Yes | P0 |
-| side-panel.html | ❌ MISSING | Yes | P0 |
-| Extension build pipeline | ❌ MISSING | Yes | P0 |
+| Component                | Status     | Required | Priority |
+| ------------------------ | ---------- | -------- | -------- |
+| manifest.json            | ❌ MISSING | Yes      | P0       |
+| service-worker.js        | ❌ MISSING | Yes      | P0       |
+| content-script.js        | ❌ MISSING | Yes      | P0       |
+| side-panel.html          | ❌ MISSING | Yes      | P0       |
+| Extension build pipeline | ❌ MISSING | Yes      | P0       |
 
 ---
 
@@ -776,11 +842,13 @@ AI COMPANION PLATFORM
 ### Current State vs Target
 
 **TODAY**:
+
 - Web app: 85% complete (Phase 0-3)
 - Extension: 0% (backend 50%, client 0%)
 - AI Trainer: 0%
 
 **After Phase 4**:
+
 - Web app: 95% (add Phase 4 UI)
 - Extension: 100% (implement MV3)
 - AI Trainer: 0%
@@ -790,6 +858,7 @@ AI COMPANION PLATFORM
 ## 11. IMPLEMENTATION ROADMAP
 
 ### Phase 0: Consolidation (Current)
+
 - ✅ Merge repos
 - ✅ Audit existing code
 - ⏳ Create unified project structure
@@ -798,6 +867,7 @@ AI COMPANION PLATFORM
 **Risk**: Low
 
 ### Phase 1: Extension Implementation (P0)
+
 - Build manifest.json
 - Implement service worker
 - Implement content script
@@ -809,6 +879,7 @@ AI COMPANION PLATFORM
 **Risk**: Medium (Chrome API complexity)
 
 ### Phase 2: Phase 4 - Browser Automation (P0)
+
 - Click automation
 - Type automation
 - Form filling
@@ -819,6 +890,7 @@ AI COMPANION PLATFORM
 **Risk**: High (complex automation)
 
 ### Phase 3: Phase 5 - Workflows (P1)
+
 - Multi-step task execution
 - Workflow state management
 - Rollback capability
@@ -827,6 +899,7 @@ AI COMPANION PLATFORM
 **Risk**: Medium
 
 ### Phase 4: AI Trainer Integration (P1)
+
 - Exercise database schema
 - Camera/pose detection setup
 - Workout engine
@@ -839,23 +912,23 @@ AI COMPANION PLATFORM
 
 ## 12. KEEP / MERGE / REMOVE TABLE
 
-| Component | Status | Action | Reason |
-|-----------|--------|--------|--------|
-| Authentication | ✅ WORKING | KEEP | Core dependency |
-| Dashboard | ✅ WORKING | KEEP | Main UI |
-| Buddy Gallery | ✅ WORKING | KEEP | Product differentiator |
-| Voice System | ✅ WORKING | KEEP | Core product |
-| AI Orchestrator | ✅ WORKING | KEEP | Core service |
-| Page Snapshot Logic | ✅ WORKING | KEEP | Needed for extension |
-| Permission System | ✅ WORKING | KEEP | Security critical |
-| Memory Store | ✅ WORKING | KEEP | User feature |
-| Task Logging | ✅ WORKING | KEEP | Observability |
-| Extension Backend APIs | ✅ WORKING | KEEP | Ready for client |
-| Landing Page | ⚠️ PLACEHOLDER | REPLACE | Needs marketing |
-| 2D Buddy Animation | ⚠️ TEMPORARY | KEEP for now | 3D pending Phase 9 |
-| Extension Frontend | ❌ MISSING | BUILD | P0 priority |
-| Browser Automation | ❌ MISSING | BUILD | Phase 4 |
-| AI Trainer | ❌ MISSING | PLAN | Future phase |
+| Component              | Status         | Action       | Reason                 |
+| ---------------------- | -------------- | ------------ | ---------------------- |
+| Authentication         | ✅ WORKING     | KEEP         | Core dependency        |
+| Dashboard              | ✅ WORKING     | KEEP         | Main UI                |
+| Buddy Gallery          | ✅ WORKING     | KEEP         | Product differentiator |
+| Voice System           | ✅ WORKING     | KEEP         | Core product           |
+| AI Orchestrator        | ✅ WORKING     | KEEP         | Core service           |
+| Page Snapshot Logic    | ✅ WORKING     | KEEP         | Needed for extension   |
+| Permission System      | ✅ WORKING     | KEEP         | Security critical      |
+| Memory Store           | ✅ WORKING     | KEEP         | User feature           |
+| Task Logging           | ✅ WORKING     | KEEP         | Observability          |
+| Extension Backend APIs | ✅ WORKING     | KEEP         | Ready for client       |
+| Landing Page           | ⚠️ PLACEHOLDER | REPLACE      | Needs marketing        |
+| 2D Buddy Animation     | ⚠️ TEMPORARY   | KEEP for now | 3D pending Phase 9     |
+| Extension Frontend     | ❌ MISSING     | BUILD        | P0 priority            |
+| Browser Automation     | ❌ MISSING     | BUILD        | Phase 4                |
+| AI Trainer             | ❌ MISSING     | PLAN         | Future phase           |
 
 ---
 
@@ -914,21 +987,25 @@ AI COMPANION PLATFORM
 ### Current Performance
 
 **Web App**:
+
 - ✅ TanStack Start SSR - fast initial load
 - ✅ React Server Functions - no API roundtrips
 - ✅ Tailwind v4 - optimized CSS
 - ✅ Lazy components - code splitting enabled
 
 **AI**:
+
 - ⚠️ ~1-3 second latency (model + network)
 - ✅ Streaming responses (perception of speed)
 - ✅ Stall detection (45s timeout)
 
 **Database**:
+
 - ✅ Supabase (managed PostgreSQL)
 - ✅ RLS native performance
 
 **Extension** (when built):
+
 - ⚠️ Service worker lifecycle unknown
 - ⚠️ Storage performance TBD
 - ⚠️ Content script DOM inspection cost TBD
@@ -940,27 +1017,32 @@ AI COMPANION PLATFORM
 ### Current Security Measures
 
 **Authentication** ✅
+
 - Supabase Cloud Auth
 - JWT tokens
 - Secure session storage
 
 **Authorization** ✅
+
 - Row-Level Security (RLS) on all tables
 - Permission ladder (observe → execute)
 - Bearer token verification on extension endpoints
 
 **Sensitive Data** ✅
+
 - Password/OTP/CVV/API key blocklist
 - Database trigger enforcement
 - Client-side pre-check
 - Page snapshot redaction
 
 **Network** ✅
+
 - HTTPS only (Lovable Cloud)
 - CORS configured
 - No exposed secrets to browser
 
 **API Endpoints** ✅
+
 - Bearer token required (`/api/public/extension/*`)
 - Zod validation
 - Permission gates
@@ -968,6 +1050,7 @@ AI COMPANION PLATFORM
 - Audit logging
 
 **Extension** ⚠️
+
 - NOT IMPLEMENTED - Unknown security posture
 - Minimal permissions proposed (no `<all_urls>`)
 - Content script re-resolution prevents stale clicks
@@ -979,10 +1062,12 @@ AI COMPANION PLATFORM
 ### Automated Tests
 
 **Existing**:
+
 - `tests/buddy-visuals.test.ts` ✅ Page snapshot tests
 - `tests/voice-turn.test.ts` ✅ Voice state machine
 
 **Missing**:
+
 - ❌ E2E tests
 - ❌ Extension integration tests
 - ❌ Browser automation tests
@@ -991,11 +1076,13 @@ AI COMPANION PLATFORM
 ### Manual Test Scenarios
 
 **Available** (`extension/test-pages/` - referenced but files not present):
+
 - form.html - Form inputs + validation
 - slow.html - Delayed DOM injection
 - error.html - Error messages
 
 **Testing Checklist** (from TEST_PLAN.md):
+
 - [ ] Sign up → trial → selection flow
 - [ ] Buddy switching persistence
 - [ ] Permission gating
@@ -1014,21 +1101,22 @@ AI COMPANION PLATFORM
 
 ### Summary Matrix
 
-| Aspect | Status | Assessment |
-|--------|--------|------------|
-| **Current Completeness** | 60% | Phase 0-3 done, extension missing |
-| **Code Quality** | Good | TypeScript strict, well-organized |
-| **Architecture** | Solid | Provider-agnostic, scalable |
-| **Security** | Strong | RLS, permission gating, sensitive data handling |
-| **Performance** | Acceptable | TanStack Start optimizations in place |
-| **Documentation** | Excellent | Detailed docs for all phases |
-| **Test Coverage** | Partial | Core logic tested, integration missing |
-| **Extension Ready** | No | Backend complete, client missing |
-| **Merger Readiness** | Ready | Clean architecture, no conflicts expected |
+| Aspect                   | Status     | Assessment                                      |
+| ------------------------ | ---------- | ----------------------------------------------- |
+| **Current Completeness** | 60%        | Phase 0-3 done, extension missing               |
+| **Code Quality**         | Good       | TypeScript strict, well-organized               |
+| **Architecture**         | Solid      | Provider-agnostic, scalable                     |
+| **Security**             | Strong     | RLS, permission gating, sensitive data handling |
+| **Performance**          | Acceptable | TanStack Start optimizations in place           |
+| **Documentation**        | Excellent  | Detailed docs for all phases                    |
+| **Test Coverage**        | Partial    | Core logic tested, integration missing          |
+| **Extension Ready**      | No         | Backend complete, client missing                |
+| **Merger Readiness**     | Ready      | Clean architecture, no conflicts expected       |
 
 ### Next Steps (Recommended Priority Order)
 
 **Immediate (Next Sprint - P0)**:
+
 1. ✅ Complete repository consolidation (in progress)
 2. ⏳ Implement Chrome Extension (manifest, service worker, content script, side panel)
 3. ⏳ Build extension bundling pipeline
@@ -1036,18 +1124,21 @@ AI COMPANION PLATFORM
 5. ⏳ Implement element highlighting in content script
 
 **Short Term (2-3 Weeks - P1)**:
+
 1. ⏳ Implement Phase 4 browser automation (click, type, select)
 2. ⏳ Add confirmation dialogs for high-impact actions
 3. ⏳ Build error recovery system
 4. ⏳ Implement Phase 5 multi-step workflows
 
 **Medium Term (1-2 Months - P2)**:
+
 1. ⏳ Plan AI Trainer integration
 2. ⏳ Create spec for exercise database
 3. ⏳ Research pose detection libraries
 4. ⏳ Design unified avatar system
 
 **Long Term (3+ Months - P3)**:
+
 1. ⏳ Implement AI Trainer MVP
 2. ⏳ Build specialty skill packs
 3. ⏳ Implement 3D buddy animation
@@ -1071,52 +1162,53 @@ AI COMPANION PLATFORM
 
 ### Source Code (src/)
 
-| File | Type | Status | Notes |
-|------|------|--------|-------|
-| components/buddy-avatar.tsx | Component | ✅ WORKING | 2D/3D display |
-| components/buddy-3d.tsx | Component | ✅ WORKING | Three.js integration |
-| components/voice-bar.tsx | Component | ✅ WORKING | Push-to-talk UI |
-| components/voice-demo.tsx | Component | ✅ WORKING | Demo interface |
-| integrations/supabase/*.ts | Integration | ✅ WORKING | Database + auth |
-| integrations/lovable/index.ts | Integration | ✅ WORKING | AI Gateway |
-| lib/ai/orchestrator.server.ts | Logic | ✅ WORKING | Model routing |
-| lib/ai/registry.ts | Logic | ✅ WORKING | Model list |
-| lib/buddy-service.server.ts | Logic | ✅ WORKING | Core ask/answer |
-| shared/page-snapshot.ts | Logic | ✅ WORKING | Snapshot contract |
-| shared/permissions.ts | Logic | ✅ WORKING | Permission ladder |
-| shared/voice-turn.ts | Logic | ✅ WORKING | Voice state machine |
-| routes/api/public/extension/*.ts | API | ✅ WORKING | Extension endpoints |
-| routes/_authenticated/*.tsx | Pages | ✅ WORKING | Main UI |
-| routes/auth.tsx | Page | ✅ WORKING | Sign-in |
-| routes/download.tsx | Page | ✅ WORKING | Extension DL |
+| File                             | Type        | Status     | Notes                |
+| -------------------------------- | ----------- | ---------- | -------------------- |
+| components/buddy-avatar.tsx      | Component   | ✅ WORKING | 2D/3D display        |
+| components/buddy-3d.tsx          | Component   | ✅ WORKING | Three.js integration |
+| components/voice-bar.tsx         | Component   | ✅ WORKING | Push-to-talk UI      |
+| components/voice-demo.tsx        | Component   | ✅ WORKING | Demo interface       |
+| integrations/supabase/*.ts       | Integration | ✅ WORKING | Database + auth      |
+| integrations/lovable/index.ts    | Integration | ✅ WORKING | AI Gateway           |
+| lib/ai/orchestrator.server.ts    | Logic       | ✅ WORKING | Model routing        |
+| lib/ai/registry.ts               | Logic       | ✅ WORKING | Model list           |
+| lib/buddy-service.server.ts      | Logic       | ✅ WORKING | Core ask/answer      |
+| shared/page-snapshot.ts          | Logic       | ✅ WORKING | Snapshot contract    |
+| shared/permissions.ts            | Logic       | ✅ WORKING | Permission ladder    |
+| shared/voice-turn.ts             | Logic       | ✅ WORKING | Voice state machine  |
+| routes/api/public/extension/*.ts | API         | ✅ WORKING | Extension endpoints  |
+| routes/_authenticated/*.tsx      | Pages       | ✅ WORKING | Main UI              |
+| routes/auth.tsx                  | Page        | ✅ WORKING | Sign-in              |
+| routes/download.tsx              | Page        | ✅ WORKING | Extension DL         |
 
 ### Configuration Files
 
-| File | Status | Notes |
-|------|--------|-------|
-| package.json | ✅ COMPLETE | All deps present |
-| vite.config.ts | ✅ COMPLETE | Lovable config |
-| tsconfig.json | ✅ COMPLETE | Strict TypeScript |
-| components.json | ✅ COMPLETE | shadcn config |
-| eslint.config.js | ✅ COMPLETE | Linting config |
+| File             | Status      | Notes             |
+| ---------------- | ----------- | ----------------- |
+| package.json     | ✅ COMPLETE | All deps present  |
+| vite.config.ts   | ✅ COMPLETE | Lovable config    |
+| tsconfig.json    | ✅ COMPLETE | Strict TypeScript |
+| components.json  | ✅ COMPLETE | shadcn config     |
+| eslint.config.js | ✅ COMPLETE | Linting config    |
 
 ### Documentation
 
-| File | Status | Accuracy |
-|------|--------|----------|
-| README.md | ✅ COMPLETE | Comprehensive |
-| docs/PROJECT_ARCHITECTURE.md | ✅ COMPLETE | Current |
-| docs/IMPLEMENTATION_PLAN.md | ✅ COMPLETE | Phases 0-10 |
-| docs/FEATURE_REGISTRY.md | ✅ COMPLETE | 71 features |
-| docs/BUG_REGISTRY.md | ✅ COMPLETE | 7 resolved, 2 open |
-| docs/SECURITY.md | ✅ COMPLETE | Security model |
-| docs/TEST_PLAN.md | ✅ COMPLETE | Test procedures |
+| File                         | Status      | Accuracy           |
+| ---------------------------- | ----------- | ------------------ |
+| README.md                    | ✅ COMPLETE | Comprehensive      |
+| docs/PROJECT_ARCHITECTURE.md | ✅ COMPLETE | Current            |
+| docs/IMPLEMENTATION_PLAN.md  | ✅ COMPLETE | Phases 0-10        |
+| docs/FEATURE_REGISTRY.md     | ✅ COMPLETE | 71 features        |
+| docs/BUG_REGISTRY.md         | ✅ COMPLETE | 7 resolved, 2 open |
+| docs/SECURITY.md             | ✅ COMPLETE | Security model     |
+| docs/TEST_PLAN.md            | ✅ COMPLETE | Test procedures    |
 
 ---
 
 ## CONCLUSION
 
 The `your-ai-companion` repository is a **well-architected, phase 0-3 complete AI Buddy platform** with:
+
 - ✅ **Production-ready web app**
 - ✅ **Solid AI orchestration**
 - ✅ **Voice-first UX**

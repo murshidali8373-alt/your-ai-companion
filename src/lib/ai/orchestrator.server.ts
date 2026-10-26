@@ -142,19 +142,61 @@ async function callChat(model: ModelEntry, system: string, user: string): Promis
   let text = "";
   await readEventStream(response, (event) => {
     const choices = event["choices"] as
-      | Array<{ delta?: { content?: string }; message?: { content?: string } }>
-      | undefined;
+      Array<{ delta?: { content?: string }; message?: { content?: string } }> | undefined;
     const delta = choices?.[0]?.delta?.content ?? choices?.[0]?.message?.content;
     if (typeof delta === "string") text += delta;
   });
   return text;
 }
 
+async function callGemini(model: ModelEntry, system: string, user: string): Promise<string> {
+  const geminiKey = process.env["GEMINI_API_KEY"];
+  if (!geminiKey) {
+    throw new AiError("auth", "Gemini API key is not configured.");
+  }
+  const { GoogleGenAI } = await import("@google/genai");
+  const ai = new GoogleGenAI({ apiKey: geminiKey });
+  const modelId = model.id.includes("/") ? model.id.split("/")[1] || "gemini-3.8-flash" : model.id;
+  const response = await ai.models.generateContent({
+    model: modelId,
+    contents: user,
+    config: {
+      systemInstruction: system,
+    },
+  });
+  return response.text ?? "";
+}
+
 async function callOnce(model: ModelEntry, system: string, user: string): Promise<string> {
   try {
-    const text = model.api === "responses"
-      ? await callResponses(model, system, user)
-      : await callChat(model, system, user);
+    let text = "";
+    if (model.provider === "lovable-gateway") {
+      if (model.api === "responses") {
+        text = await callResponses(model, system, user);
+      } else {
+        text = await callChat(model, system, user);
+      }
+    } else {
+      const { dispatchModelCall } = await import("./provider-adapters.server");
+      const { findCatalogModel } = await import("./model-hub");
+      const catalog = findCatalogModel(model.id) ?? {
+        id: model.id,
+        name: model.id,
+        provider: model.provider,
+        providerModelId: model.providerModelId || model.id,
+        tier: "free" as const,
+        contextWindow: model.contextTokens,
+        capabilities: model.vision ? (["vision", "streaming"] as const) : (["streaming"] as const),
+        speedRating: 4 as const,
+        costRating: 1 as const,
+        recommendedUse: "Dynamic catalog entry",
+      };
+      text = await dispatchModelCall(catalog as never, {
+        systemPrompt: system,
+        userPrompt: user,
+      });
+    }
+
     if (!text.trim()) {
       throw new AiError("invalid_response", "The AI service returned an empty answer.", {
         retryable: true,

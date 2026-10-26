@@ -20,7 +20,9 @@ export const quickTalk = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { generate } = await import("./ai/orchestrator.server");
     const { AiError } = await import("./ai/errors");
-    const convo = data.history.map((h) => `${h.role === "user" ? "User" : "Buddy"}: ${h.text}`).join("\n");
+    const convo = data.history
+      .map((h) => `${h.role === "user" ? "User" : "Buddy"}: ${h.text}`)
+      .join("\n");
     try {
       const result = await generate({
         system:

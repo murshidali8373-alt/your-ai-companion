@@ -82,10 +82,19 @@ function Download() {
         <div className="panel space-y-3 p-6">
           <h2 className="font-semibold">What it asks for, and why</h2>
           <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-            <li><strong>Side panel</strong> — to show your Buddy beside the page.</li>
-            <li><strong>Active tab & scripting</strong> — to read the page you are asking about, only when you ask.</li>
-            <li><strong>Storage</strong> — to keep your connection and preferences on your machine.</li>
-            <li><strong>Microphone</strong> — only while you hold the talk button.</li>
+            <li>
+              <strong>Side panel</strong> — to show your Buddy beside the page.
+            </li>
+            <li>
+              <strong>Active tab & scripting</strong> — to read the page you are asking about, only
+              when you ask.
+            </li>
+            <li>
+              <strong>Storage</strong> — to keep your connection and preferences on your machine.
+            </li>
+            <li>
+              <strong>Microphone</strong> — only while you hold the talk button.
+            </li>
           </ul>
           <p className="text-sm text-muted-foreground">
             Chrome's own pages (chrome://, the Web Store, other extensions) cannot be read by any

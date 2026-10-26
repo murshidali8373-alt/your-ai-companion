@@ -131,7 +131,11 @@ function AuthPage() {
         <div className="flex flex-col items-center text-center">
           <BuddyLogo size={72} />
           <h1 className="mt-3 font-[family-name:var(--font-display)] text-2xl font-semibold">
-            {mode === "signup" ? "Start your free trial" : mode === "reset" ? "Reset your password" : "Welcome back"}
+            {mode === "signup"
+              ? "Start your free trial"
+              : mode === "reset"
+                ? "Reset your password"
+                : "Welcome back"}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {mode === "signup"
@@ -196,7 +200,8 @@ function AuthPage() {
         {mode !== "reset" && (
           <>
             <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground">
-              <span className="h-px flex-1 bg-border" /> or <span className="h-px flex-1 bg-border" />
+              <span className="h-px flex-1 bg-border" /> or{" "}
+              <span className="h-px flex-1 bg-border" />
             </div>
             <Button variant="outline" className="w-full" onClick={handleGoogle} disabled={busy}>
               Continue with Google
@@ -236,7 +241,9 @@ function AuthPage() {
             </p>
           )}
           <p>
-            <Link to="/" className="underline">Back to home</Link>
+            <Link to="/" className="underline">
+              Back to home
+            </Link>
           </p>
         </div>
       </div>

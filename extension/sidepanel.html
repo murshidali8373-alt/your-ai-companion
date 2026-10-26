@@ -1,273 +1,604 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI Buddy Side Panel</title>
-  <style>
-    :root {
-      --bg: #0f1419;
-      --card-bg: #161d25;
-      --border: #2d3743;
-      --accent: #14b8a6;
-      --accent-hover: #0d9488;
-      --text: #e6edf3;
-      --muted: #9fb0c0;
-      --destructive: #ef4444;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      width: 100%;
-      min-height: 100vh;
-      font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      display: flex;
-      flex-direction: column;
-    }
-    .panel-wrap {
-      display: flex;
-      flex-direction: column;
-      flex: 1;
-      padding: 16px;
-      gap: 12px;
-    }
-    header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding-bottom: 12px;
-      border-bottom: 1px solid var(--border);
-    }
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-weight: 600;
-      font-size: 15px;
-    }
-    .avatar-preview {
-      width: 32px;
-      height: 32px;
-      border-radius: 50%;
-      background: #1f2937;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      border: 1px solid var(--accent);
-      transition: transform 0.3s ease;
-    }
-    .avatar-preview[data-emotion="listening"] {
-      animation: pulse-ring 1.2s infinite;
-    }
-    .avatar-preview[data-emotion="thinking"] {
-      transform: rotate(6deg) scale(1.05);
-    }
-    @keyframes pulse-ring {
-      0% { box-shadow: 0 0 0 0 rgba(20, 184, 166, 0.6); }
-      70% { box-shadow: 0 0 0 8px rgba(20, 184, 166, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(20, 184, 166, 0); }
-    }
-    .badge {
-      font-size: 11px;
-      padding: 2px 8px;
-      border-radius: 12px;
-      background: rgba(20, 184, 166, 0.15);
-      color: var(--accent);
-      border: 1px solid rgba(20, 184, 166, 0.3);
-      font-weight: 500;
-    }
-    .auth-banner {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      text-align: center;
-    }
-    .quick-chips {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-    }
-    button {
-      border: 0;
-      border-radius: 6px;
-      padding: 8px 12px;
-      font: inherit;
-      cursor: pointer;
-      background: var(--accent);
-      color: #04201d;
-      font-weight: 600;
-      transition: background 0.15s ease, opacity 0.15s ease;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-    }
-    button:hover:not(:disabled) { background: var(--accent-hover); }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    button.ghost {
-      background: transparent;
-      color: var(--muted);
-      border: 1px solid var(--border);
-      font-weight: 500;
-      font-size: 12px;
-      padding: 6px 10px;
-    }
-    button.ghost:hover:not(:disabled) {
-      background: rgba(255, 255, 255, 0.05);
-      color: var(--text);
-      border-color: #4b5563;
-    }
-    button.voice-btn {
-      background: #1f2937;
-      color: var(--text);
-      border: 1px solid var(--border);
-    }
-    button.voice-btn.active {
-      background: var(--destructive);
-      color: #fff;
-      border-color: var(--destructive);
-      animation: pulse-mic 1s infinite;
-    }
-    @keyframes pulse-mic {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.7; }
-    }
-    .input-box {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    textarea {
-      width: 100%;
-      min-height: 72px;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: var(--card-bg);
-      color: var(--text);
-      padding: 10px;
-      font: inherit;
-      resize: vertical;
-      outline: none;
-    }
-    textarea:focus { border-color: var(--accent); }
-    .controls {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .action-group {
-      display: flex;
-      gap: 6px;
-      align-items: center;
-    }
-    .content-area {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      flex: 1;
-      overflow-y: auto;
-    }
-    .answer-card {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px 14px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .answer-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 12px;
-      color: var(--muted);
-    }
-    .answer-text {
-      white-space: pre-wrap;
-      line-height: 1.5;
-    }
-    .status-msg {
-      font-size: 12px;
-      color: var(--muted);
-      min-height: 18px;
-    }
-    .status-msg.thinking {
-      color: var(--accent);
-    }
-    footer {
-      margin-top: auto;
-      padding-top: 12px;
-      border-top: 1px solid var(--border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 11px;
-      color: var(--muted);
-    }
-    [hidden] { display: none !important; }
-    @media (prefers-reduced-motion: reduce) {
-      *, ::before, ::after { animation: none !important; transition: none !important; }
-    }
-  </style>
-</head>
-<body>
-  <div class="panel-wrap">
-    <header>
-      <div class="brand">
-        <div class="avatar-preview" id="buddyAvatar" data-emotion="neutral">
-          <img src="icons/icon48.png" width="22" height="22" alt="" />
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Buddy Side Panel</title>
+    <style>
+      :root {
+        --bg: #0b0f15;
+        --card-bg: #141b24;
+        --card-hover: #1c2633;
+        --border: #283545;
+        --accent: #14b8a6;
+        --accent-hover: #0d9488;
+        --accent-glow: rgba(20, 184, 166, 0.25);
+        --text: #f1f5f9;
+        --muted: #94a3b8;
+        --destructive: #ef4444;
+        --warning: #f59e0b;
+        --success: #10b981;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        width: 100%;
+        min-height: 100vh;
+        font:
+          13px/1.5 system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        display: flex;
+        flex-direction: column;
+        overflow-x: hidden;
+      }
+      .panel-wrap {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        padding: 14px;
+        gap: 12px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--border);
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 700;
+        font-size: 14px;
+        letter-spacing: -0.01em;
+      }
+      .status-badge {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 2px 8px;
+        border-radius: 12px;
+        background: rgba(20, 184, 166, 0.15);
+        color: var(--accent);
+        border: 1px solid rgba(20, 184, 166, 0.3);
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .status-badge.listening {
+        background: rgba(239, 68, 68, 0.2);
+        color: var(--destructive);
+        border-color: var(--destructive);
+        animation: pulse 1s infinite;
+      }
+      .status-badge.thinking {
+        background: rgba(245, 158, 11, 0.2);
+        color: var(--warning);
+        border-color: var(--warning);
+      }
+      .status-badge.speaking {
+        background: rgba(56, 189, 248, 0.2);
+        color: #38bdf8;
+        border-color: #38bdf8;
+      }
+
+      /* --- Talking Tom Stage --- */
+      .character-stage {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 6px 0;
+        position: relative;
+        cursor: pointer;
+        user-select: none;
+      }
+      .character-rig-svg {
+        width: 140px;
+        height: 160px;
+        overflow: visible;
+        filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.4));
+        transition: transform 0.2s ease;
+      }
+      .character-stage:hover .character-rig-svg {
+        transform: scale(1.03);
+      }
+      .character-stage:active .character-rig-svg {
+        transform: scale(0.97);
+      }
+
+      /* Auth Banner */
+      .auth-banner {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        text-align: center;
+      }
+
+      /* Quick Chips */
+      .quick-chips {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .chip {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 11px;
+        padding: 4px 9px;
+        border-radius: 14px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .chip:hover {
+        background: rgba(255, 255, 255, 0.09);
+        color: var(--text);
+        border-color: var(--accent);
+      }
+
+      /* Buttons */
+      button {
+        border: 0;
+        border-radius: 8px;
+        padding: 7px 12px;
+        font: inherit;
+        cursor: pointer;
+        background: var(--accent);
+        color: #04201d;
+        font-weight: 600;
+        transition:
+          background 0.15s ease,
+          opacity 0.15s ease;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+      }
+      button:hover:not(:disabled) {
+        background: var(--accent-hover);
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      button.ghost {
+        background: transparent;
+        color: var(--muted);
+        border: 1px solid var(--border);
+        font-weight: 500;
+        font-size: 11px;
+      }
+      button.ghost:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--text);
+        border-color: #4b5563;
+      }
+      button.voice-btn {
+        background: var(--card-bg);
+        color: var(--text);
+        border: 1px solid var(--border);
+        padding: 8px 14px;
+      }
+      button.voice-btn.active {
+        background: var(--destructive);
+        color: #fff;
+        border-color: var(--destructive);
+        animation: pulse 1s infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+          transform: scale(1);
+        }
+        50% {
+          opacity: 0.8;
+          transform: scale(1.02);
+        }
+      }
+
+      /* Chat / Message Area */
+      .content-area {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        flex: 1;
+        overflow-y: auto;
+      }
+      .history-box {
+        max-height: 150px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        background: rgba(0, 0, 0, 0.2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px;
+      }
+      .msg-bubble {
+        padding: 6px 10px;
+        border-radius: 8px;
+        font-size: 12px;
+        max-width: 90%;
+        word-break: break-word;
+      }
+      .msg-user {
+        align-self: flex-end;
+        background: var(--accent);
+        color: #032522;
+        font-weight: 500;
+      }
+      .msg-buddy {
+        align-self: flex-start;
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        color: var(--text);
+      }
+
+      /* Confirmation Modal / Card */
+      .confirm-card {
+        background: rgba(245, 158, 11, 0.1);
+        border: 1px solid var(--warning);
+        border-radius: 10px;
+        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .confirm-card h4 {
+        font-size: 12px;
+        color: #fde68a;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      /* Input Box */
+      .input-box {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      textarea {
+        width: 100%;
+        min-height: 56px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--card-bg);
+        color: var(--text);
+        padding: 8px 10px;
+        font: inherit;
+        font-size: 12px;
+        resize: vertical;
+        outline: none;
+      }
+      textarea:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px var(--accent);
+      }
+      .controls {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .action-group {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+
+      /* Status & Details */
+      .status-msg {
+        font-size: 11px;
+        color: var(--muted);
+        min-height: 16px;
+      }
+
+      /* Settings Drawer */
+      .settings-drawer {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        font-size: 11px;
+      }
+      .settings-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      footer {
+        margin-top: auto;
+        padding-top: 10px;
+        border-top: 1px solid var(--border);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      [hidden] {
+        display: none !important;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        ::before,
+        ::after {
+          animation: none !important;
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="panel-wrap">
+      <header>
+        <div class="brand">
+          <span style="color: var(--accent)">●</span>
+          <span>AI Buddy</span>
         </div>
-        <span>AI Buddy</span>
+        <div style="display: flex; align-items: center; gap: 6px">
+          <span class="status-badge" id="buddyEmotionBadge">Idle</span>
+          <button id="settingsToggle" class="ghost" style="padding: 3px 6px" title="Settings">
+            ⚙️
+          </button>
+        </div>
+      </header>
+
+      <!-- Settings Drawer (Collapsible) -->
+      <div id="settingsBox" class="settings-drawer" hidden>
+        <div class="settings-row">
+          <span>Mute Voice Speech:</span>
+          <input type="checkbox" id="muteToggle" />
+        </div>
+        <div class="settings-row">
+          <span>Low Graphics Mode:</span>
+          <input type="checkbox" id="lowGraphicsToggle" />
+        </div>
+        <div class="settings-row">
+          <span>Character Size:</span>
+          <select
+            id="sizeSelect"
+            style="
+              background: var(--bg);
+              color: var(--text);
+              border: 1px solid var(--border);
+              border-radius: 4px;
+              padding: 2px;
+            "
+          >
+            <option value="normal">Standard</option>
+            <option value="compact">Compact</option>
+            <option value="hidden">Hidden</option>
+          </select>
+        </div>
       </div>
-      <span class="badge" id="buddyEmotionBadge">Idle</span>
-    </header>
 
-    <div id="signedOut" class="auth-banner" hidden>
-      <p style="font-weight: 500;">Connect your account to enable AI Buddy on this page.</p>
-      <button id="connectBtn">Connect account</button>
-    </div>
+      <!-- Authentic Original AI Buddy Character Stage -->
+      <div id="characterStage" class="character-stage" title="Tap Buddy to interact">
+        <div id="buddyAvatar" data-emotion="idle">
+          <svg
+            id="characterSvg"
+            class="character-rig-svg"
+            viewBox="0 0 100 105"
+            width="100%"
+            height="100%"
+          >
+            <defs>
+              <linearGradient id="bodyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#ffffff" />
+                <stop offset="100%" stop-color="#f1f5f9" />
+              </linearGradient>
+              <linearGradient id="outfitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#0d9488" />
+                <stop offset="100%" stop-color="#0f766e" />
+              </linearGradient>
+            </defs>
 
-    <div id="signedIn" class="content-area" hidden>
-      <div class="quick-chips">
-        <button class="ghost" data-q="Explain what this page is about simply." data-i="explain_page">Explain page</button>
-        <button class="ghost" data-q="What should I do next on this page?" data-i="plan">Next step</button>
-        <button class="ghost" data-q="Show me all form fields and inputs." data-i="locate_element">Find forms</button>
+            <!-- Subtle ground shadow -->
+            <ellipse cx="50" cy="95" rx="22" ry="4" fill="#cbd5e1" opacity="0.4" />
+
+            <!-- Authentic Mascot: Feet, Body, Shirt, Head -->
+            <g fill="#f8fafc" stroke="#94a3b8" stroke-width="0.8">
+              <!-- Left & Right Feet -->
+              <ellipse cx="40" cy="88" rx="9" ry="5" />
+              <ellipse cx="61" cy="88" rx="9" ry="5" />
+
+              <!-- Body in specialist teal outfit -->
+              <path d="M29 58Q22 65 25 82Q50 92 75 82Q79 65 70 58Z" fill="url(#outfitGrad)" />
+
+              <!-- Inner Shirt -->
+              <path d="M43 59h15l-1 27H44Z" fill="#ffffff" />
+
+              <!-- Arms -->
+              <g id="rigArmLeft">
+                <path d="m32 60 12 6-4 12-9-12" fill="url(#outfitGrad)" />
+              </g>
+              <g id="rigArmRight">
+                <path d="m69 60 11 6 4 12 9-12" fill="url(#outfitGrad)" />
+              </g>
+
+              <!-- Authentic Pear-Shaped Pearl Head -->
+              <path
+                d="M64 9C43 5 23 26 23 41c0 14 12 22 27 22s27-8 27-22c0-11-7-20-16-25Z"
+                fill="url(#bodyGrad)"
+              />
+            </g>
+
+            <!-- Eyebrows (subtle expressions) -->
+            <g id="rigBrowLeft" transform="translate(40, 36)">
+              <path
+                d="M -4 0 Q 0 -1 4 0"
+                fill="none"
+                stroke="#334155"
+                stroke-width="0.8"
+                stroke-linecap="round"
+                opacity="0.5"
+              />
+            </g>
+            <g id="rigBrowRight" transform="translate(61, 36)">
+              <path
+                d="M -4 0 Q 0 -1 4 0"
+                fill="none"
+                stroke="#334155"
+                stroke-width="0.8"
+                stroke-linecap="round"
+                opacity="0.5"
+              />
+            </g>
+
+            <!-- Charcoal Ink Eyes & Pupils -->
+            <g id="rigEyeLeft" transform="translate(40, 42)">
+              <ellipse cx="0" cy="0" rx="2.4" ry="3.7" fill="#1e293b" />
+              <g id="rigPupilLeft">
+                <circle cx="-0.6" cy="-1" r="0.8" fill="#ffffff" />
+              </g>
+              <path
+                id="rigLidLeft"
+                d="M -2.4 0 Q 0 2 2.4 0"
+                fill="none"
+                stroke="#1e293b"
+                stroke-width="0.8"
+                style="display: none"
+              />
+            </g>
+            <g id="rigEyeRight" transform="translate(61, 42)">
+              <ellipse cx="0" cy="0" rx="2.4" ry="3.7" fill="#1e293b" />
+              <g id="rigPupilRight">
+                <circle cx="-0.6" cy="-1" r="0.8" fill="#ffffff" />
+              </g>
+              <path
+                id="rigLidRight"
+                d="M -2.4 0 Q 0 2 2.4 0"
+                fill="none"
+                stroke="#1e293b"
+                stroke-width="0.8"
+                style="display: none"
+              />
+            </g>
+
+            <!-- Authentic Smile Mouth -->
+            <path
+              id="rigMouth"
+              d="M45 51 Q50 55 55 51"
+              fill="none"
+              stroke="#1e293b"
+              stroke-width="1.2"
+              stroke-linecap="round"
+            />
+          </svg>
+        </div>
       </div>
 
-      <div class="input-box">
-        <textarea id="promptInput" placeholder="Ask about this page… e.g. Where do I enter GSTIN?"></textarea>
-        <div class="controls">
-          <div class="action-group">
-            <button id="voiceBtn" class="voice-btn" title="Hold or click to talk">🎤 Talk</button>
-            <button id="speakAnswerBtn" class="ghost" title="Read answer out loud" hidden>🔊 Speak</button>
+      <!-- Signed Out Screen -->
+      <div id="signedOut" class="auth-banner" hidden>
+        <p style="font-weight: 600; font-size: 13px">
+          Connect your account to enable AI Buddy on this page.
+        </p>
+        <button id="connectBtn">Connect account</button>
+      </div>
+
+      <!-- Signed In Main Interface -->
+      <div id="signedIn" class="content-area" hidden>
+        <div class="quick-chips">
+          <span class="chip" data-q="Explain what this page is about simply." data-i="explain_page"
+            >Explain page</span
+          >
+          <span class="chip" data-q="What should I do next on this page?" data-i="plan"
+            >Next step</span
+          >
+          <span class="chip" data-q="Find all form fields and inputs." data-i="locate_element"
+            >Find inputs</span
+          >
+          <span
+            class="chip"
+            data-q="Are there any errors or warnings on this page?"
+            data-i="classify"
+            >Check errors</span
+          >
+        </div>
+
+        <!-- Answer card container -->
+        <div id="answerCard" class="answer-card" hidden>
+          <div id="answerText" class="answer-text"></div>
+        </div>
+
+        <!-- Action Confirmation Card (Shown when high-impact action is detected) -->
+        <div id="confirmCard" class="confirm-card" hidden>
+          <h4>⚠️ Confirmation Needed</h4>
+          <p id="confirmDesc" style="font-size: 11px; color: var(--muted)"></p>
+          <div style="display: flex; gap: 6px; margin-top: 4px">
+            <button id="confirmApproveBtn" style="padding: 4px 8px; font-size: 11px">
+              Approve Action
+            </button>
+            <button id="confirmCancelBtn" class="ghost" style="padding: 4px 8px; font-size: 11px">
+              Cancel
+            </button>
           </div>
-          <button id="sendBtn">Ask Buddy</button>
         </div>
+
+        <!-- History conversation box -->
+        <div id="historyBox" class="history-box">
+          <div class="msg-bubble msg-buddy">
+            Hey! Ask me anything about this page or speak into the mic.
+          </div>
+        </div>
+
+        <!-- Input box -->
+        <div class="input-box">
+          <textarea
+            id="promptInput"
+            placeholder="Ask Buddy… e.g. What does this clause mean?"
+          ></textarea>
+          <div class="controls">
+            <div class="action-group">
+              <button id="voiceBtn" class="voice-btn" title="Push to talk">🎤 Talk</button>
+              <button
+                id="highlightBtn"
+                class="ghost"
+                title="Highlight target element on page"
+                hidden
+              >
+                🎯 Highlight
+              </button>
+              <button id="speakAnswerBtn" class="ghost" title="Read aloud" hidden>🔊 Read</button>
+            </div>
+            <button id="sendBtn">Ask</button>
+          </div>
+        </div>
+
+        <div id="statusText" class="status-msg"></div>
       </div>
 
-      <div id="statusText" class="status-msg"></div>
-
-      <div id="answerCard" class="answer-card" hidden>
-        <div class="answer-header">
-          <span id="answerBuddy">Buddy</span>
-          <span id="pageNote"></span>
-        </div>
-        <div id="answerText" class="answer-text"></div>
-      </div>
+      <footer>
+        <span id="userAccount">Connecting…</span>
+        <button id="signoutBtn" class="ghost" style="padding: 2px 6px; font-size: 11px" hidden>
+          Sign out
+        </button>
+      </footer>
     </div>
-
-    <footer>
-      <span id="userAccount">Not connected</span>
-      <button id="signoutBtn" class="ghost" style="padding: 2px 6px; font-size: 11px;" hidden>Sign out</button>
-    </footer>
-  </div>
-  <script src="sidepanel.js"></script>
-</body>
+    <script src="sidepanel.js"></script>
+  </body>
 </html>

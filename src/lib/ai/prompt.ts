@@ -21,7 +21,8 @@ export interface MemoryItem {
 
 const LANGUAGE_RULE: Record<string, string> = {
   english: "Answer in clear English.",
-  hindi: "Answer in natural Hindi (Devanagari). Keep technical words in English where that is normal.",
+  hindi:
+    "Answer in natural Hindi (Devanagari). Keep technical words in English where that is normal.",
   hinglish:
     "Answer in Hinglish — conversational Hindi with English technical words, the way Indian professionals actually speak. Match the user's script.",
 };

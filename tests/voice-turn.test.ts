@@ -10,7 +10,8 @@ import {
 
 describe("filler detection", () => {
   it("ignores filler-only utterances", () => {
-    for (const t of ["hmm", "Haan?", "uh umm", "aaa", "", "okay"]) expect(isFillerOnly(t)).toBe(true);
+    for (const t of ["hmm", "Haan?", "uh umm", "aaa", "", "okay"])
+      expect(isFillerOnly(t)).toBe(true);
   });
   it("keeps real requests", () => {
     expect(isFillerOnly("hmm explain this page")).toBe(false);

@@ -56,7 +56,9 @@ export const getDashboard = createServerFn({ method: "GET" })
         supabase.from("permission_settings").select("*").eq("user_id", userId).maybeSingle(),
         supabase
           .from("tasks")
-          .select("id, title, status, intent, page_title, page_url, answer, error, model, created_at")
+          .select(
+            "id, title, status, intent, page_title, page_url, answer, error, model, created_at",
+          )
           .order("created_at", { ascending: false })
           .limit(10),
         supabase
@@ -264,7 +266,11 @@ export const clearMemory = createServerFn({ method: "POST" })
       .delete()
       .eq("user_id", context.userId);
     if (error) throw new Error("Could not clear your memory.");
-    await context.supabase.rpc("write_audit", { _action: "memory_cleared", _target: "memory", _metadata: {} });
+    await context.supabase.rpc("write_audit", {
+      _action: "memory_cleared",
+      _target: "memory",
+      _metadata: {},
+    });
     return { ok: true };
   });
 
@@ -287,24 +293,111 @@ export const listTasks = createServerFn({ method: "GET" })
     return { tasks: tasks ?? [], events: events ?? [] };
   });
 
+export const getModelHubStatus = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async () => {
+    const { MODEL_CATALOG, PROVIDERS } = await import("./ai/model-hub");
+    const { verifyProviderConnection } = await import("./ai/provider-adapters.server");
+
+    // Check baseline provider states
+    const providerIds = Object.keys(PROVIDERS) as Array<keyof typeof PROVIDERS>;
+    const statuses = await Promise.all(
+      providerIds.map(async (id) => {
+        // Quick check without external network lag for initial load
+        let status: "connected" | "available_free" | "needs_key" | "offline" = "needs_key";
+        let message = PROVIDERS[id].rateLimitNote;
+
+        if (id === "gemini") {
+          status = process.env["GEMINI_API_KEY"] ? "connected" : "needs_key";
+          message =
+            status === "connected"
+              ? "Google Gemini is active via server key."
+              : "Requires GEMINI_API_KEY.";
+        } else if (id === "groq") {
+          status = process.env["GROQ_API_KEY"] ? "connected" : "available_free";
+          message =
+            status === "connected"
+              ? "GroqCloud key configured."
+              : "Free tier available with user key.";
+        } else if (id === "openrouter") {
+          status = process.env["OPENROUTER_API_KEY"] ? "connected" : "available_free";
+          message =
+            status === "connected" ? "OpenRouter key active." : "Supports free and paid routing.";
+        } else if (id === "openai") {
+          status = process.env["OPENAI_API_KEY"] ? "connected" : "needs_key";
+          message = status === "connected" ? "OpenAI key active." : "Requires OpenAI API key.";
+        } else if (id === "ollama") {
+          status = "available_free";
+          message = "Runs locally on your machine at localhost:11434.";
+        } else if (id === "lovable-gateway") {
+          status = process.env["LOVABLE_API_KEY"] ? "connected" : "available_free";
+          message = "Built-in fallback route.";
+        } else {
+          status = "available_free";
+        }
+
+        return {
+          providerId: id,
+          config: PROVIDERS[id],
+          status,
+          message,
+        };
+      }),
+    );
+
+    return {
+      providers: statuses,
+      totalModels: MODEL_CATALOG.length,
+      models: MODEL_CATALOG,
+    };
+  });
+
+export const testProvider = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        providerId: z.string(),
+        apiKey: z.string().optional(),
+        baseUrl: z.string().optional(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const { verifyProviderConnection } = await import("./ai/provider-adapters.server");
+    return await verifyProviderConnection(data.providerId as never, data.apiKey, data.baseUrl);
+  });
+
 export const askBuddy = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) =>
-    z.object({ question: z.string().min(1).max(2000) }).parse(input),
+    z
+      .object({
+        question: z.string().min(1).max(2000),
+        preferredModel: z.string().max(100).optional(),
+        snapshot: z.any().optional(),
+        intent: z
+          .enum(["explain_page", "locate_element", "answer", "plan", "summarize", "classify"])
+          .default("answer"),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }) => {
     const { ask } = await import("./buddy-service.server");
     const result = await ask(context.supabase, context.userId, {
       question: data.question,
-      intent: "answer",
-      snapshot: null,
+      intent: data.intent,
+      snapshot: (data.snapshot as never) ?? null,
       source: "web",
+      preferredModel: data.preferredModel,
     });
     return {
       answer: result.reply.answer,
       confidence: result.reply.confidence,
       emotion: result.reply.emotion,
       needs: result.reply.needs,
+      highlight: result.reply.highlight,
+      highlightSelector: result.highlightSelector,
       buddyName: result.buddyName,
       model: result.model ?? null,
       blocked: result.blocked ?? false,
@@ -338,7 +431,9 @@ export const diagnose = createServerFn({ method: "GET" })
     checks.push({
       name: "Permissions",
       ok: Boolean(perms),
-      detail: perms ? `Level ${perms.level}${perms.privacy_mode ? ", privacy mode on" : ""}` : "Not set",
+      detail: perms
+        ? `Level ${perms.level}${perms.privacy_mode ? ", privacy mode on" : ""}`
+        : "Not set",
     });
     const { data: failures } = await context.supabase
       .from("tasks")

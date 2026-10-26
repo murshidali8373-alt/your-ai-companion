@@ -1,8 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { BUDDY_VISUALS, avatarVariant, buddyVisualId, avatarMotionEnabled } from "../src/lib/buddy-visuals";
+import {
+  BUDDY_VISUALS,
+  avatarVariant,
+  buddyVisualId,
+  avatarMotionEnabled,
+} from "../src/lib/buddy-visuals";
 
 describe("professional avatar registry", () => {
-  for (const id of ["ca", "legal", "ecommerce", "developer", "business", "marketing", "research", "data", "content", "design"] as const) {
+  for (const id of [
+    "ca",
+    "legal",
+    "ecommerce",
+    "developer",
+    "business",
+    "marketing",
+    "research",
+    "data",
+    "content",
+    "design",
+  ] as const) {
     it(`preserves the ${id} professional identity`, () => {
       expect(buddyVisualId(id)).toBe(id);
       expect(BUDDY_VISUALS[id].image).toContain(`buddy-${id}-3d.webp`);

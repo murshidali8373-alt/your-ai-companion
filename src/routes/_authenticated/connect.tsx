@@ -56,16 +56,35 @@ function Connect() {
   return (
     <AppShell title="Connect the extension">
       <div className="panel flex max-w-lg flex-col items-center gap-3 p-8 text-center">
-        <BuddyAvatar emotion={status === "connected" ? "celebrate" : status === "no_extension" ? "concerned" : "thinking"} size={96} />
-        {status === "connected" && <p>The extension is connected. Open any page and click the AI Buddy icon.</p>}
-        {(status === "waiting" || status === "sent") && <p className="text-muted-foreground">Looking for the extension…</p>}
+        <BuddyAvatar
+          emotion={
+            status === "connected"
+              ? "celebrate"
+              : status === "no_extension"
+                ? "concerned"
+                : "thinking"
+          }
+          size={96}
+        />
+        {status === "connected" && (
+          <p>The extension is connected. Open any page and click the AI Buddy icon.</p>
+        )}
+        {(status === "waiting" || status === "sent") && (
+          <p className="text-muted-foreground">Looking for the extension…</p>
+        )}
         {status === "no_extension" && (
           <>
             <p>I could not find the extension in this browser.</p>
-            <p className="text-sm text-muted-foreground">Install and load it first, then reload this page.</p>
+            <p className="text-sm text-muted-foreground">
+              Install and load it first, then reload this page.
+            </p>
             <div className="flex gap-2">
-              <Button asChild><Link to="/download">Install extension</Link></Button>
-              <Button variant="outline" onClick={() => window.location.reload()}>Try again</Button>
+              <Button asChild>
+                <Link to="/download">Install extension</Link>
+              </Button>
+              <Button variant="outline" onClick={() => window.location.reload()}>
+                Try again
+              </Button>
             </div>
           </>
         )}

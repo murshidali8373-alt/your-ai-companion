@@ -46,6 +46,7 @@ const bodySchema = z.object({
     })
     .nullable()
     .default(null),
+  preferredModel: z.string().max(100).optional(),
 });
 
 const json = (body: unknown, status = 200) =>
@@ -76,6 +77,7 @@ export const Route = createFileRoute("/api/public/extension/ask")({
             intent: parsed.intent,
             snapshot: parsed.snapshot as never,
             source: "extension",
+            preferredModel: parsed.preferredModel,
           });
           return json(result);
         } catch (error) {

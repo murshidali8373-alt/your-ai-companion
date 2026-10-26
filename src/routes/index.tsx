@@ -54,44 +54,147 @@ export const Route = createFileRoute("/")({
 });
 
 const PIPELINE = [
-  { icon: Eye, title: "Observe", body: "Reads the page structure, forms, errors and visible text — never your passwords." },
-  { icon: Sparkles, title: "Understand", body: "Works out what the page is for and what you are trying to finish." },
+  {
+    icon: Eye,
+    title: "Observe",
+    body: "Reads the page structure, forms, errors and visible text — never your passwords.",
+  },
+  {
+    icon: Sparkles,
+    title: "Understand",
+    body: "Works out what the page is for and what you are trying to finish.",
+  },
   { icon: Workflow, title: "Plan", body: "Breaks your goal into small, checkable steps." },
-  { icon: MessageSquare, title: "Ask", body: "Asks whenever a detail is yours to give. It never invents your data." },
-  { icon: MousePointerClick, title: "Act", body: "Acts only at the permission level you set, and only after you approve." },
-  { icon: Check, title: "Verify", body: "Checks the page actually changed the way it should have." },
-  { icon: Accessibility, title: "Recover", body: "If a step fails, it diagnoses, retries within limits, then asks you." },
-  { icon: BookOpenCheck, title: "Explain", body: "Tells you in plain language what it did and why." },
+  {
+    icon: MessageSquare,
+    title: "Ask",
+    body: "Asks whenever a detail is yours to give. It never invents your data.",
+  },
+  {
+    icon: MousePointerClick,
+    title: "Act",
+    body: "Acts only at the permission level you set, and only after you approve.",
+  },
+  {
+    icon: Check,
+    title: "Verify",
+    body: "Checks the page actually changed the way it should have.",
+  },
+  {
+    icon: Accessibility,
+    title: "Recover",
+    body: "If a step fails, it diagnoses, retries within limits, then asks you.",
+  },
+  {
+    icon: BookOpenCheck,
+    title: "Explain",
+    body: "Tells you in plain language what it did and why.",
+  },
 ];
 
 const FEATURES = [
-  { icon: Eye, title: "Real screen understanding", body: "Buttons, inputs, dropdowns, tables, warnings and errors are identified from the DOM and accessibility tree — not guessed from pixels." },
-  { icon: Languages, title: "English, Hindi, Hinglish", body: "Ask however you speak. Buddy answers in the same language and can read replies aloud." },
-  { icon: ShieldCheck, title: "Permission ladder", body: "Observe, Explain, Suggest, Assist, Execute. You choose, and high-impact steps always ask first." },
-  { icon: Lock, title: "Secrets stay secret", body: "Password, OTP, card and key fields are detected and redacted before anything leaves your browser." },
-  { icon: Gauge, title: "Built for slow laptops", body: "Budgeted page context, throttled observation, lightweight avatar, low graphics mode." },
-  { icon: BrainCircuit, title: "Many models, one Buddy", body: "The engine routes each request to the right model and falls back on failure. You just see your Buddy." },
+  {
+    icon: Eye,
+    title: "Real screen understanding",
+    body: "Buttons, inputs, dropdowns, tables, warnings and errors are identified from the DOM and accessibility tree — not guessed from pixels.",
+  },
+  {
+    icon: Languages,
+    title: "English, Hindi, Hinglish",
+    body: "Ask however you speak. Buddy answers in the same language and can read replies aloud.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Permission ladder",
+    body: "Observe, Explain, Suggest, Assist, Execute. You choose, and high-impact steps always ask first.",
+  },
+  {
+    icon: Lock,
+    title: "Secrets stay secret",
+    body: "Password, OTP, card and key fields are detected and redacted before anything leaves your browser.",
+  },
+  {
+    icon: Gauge,
+    title: "Built for slow laptops",
+    body: "Budgeted page context, throttled observation, lightweight avatar, low graphics mode.",
+  },
+  {
+    icon: BrainCircuit,
+    title: "Many models, one Buddy",
+    body: "The engine routes each request to the right model and falls back on failure. You just see your Buddy.",
+  },
 ];
 
 const SPECIALISTS = [
-  { icon: ShoppingBag, title: "E-commerce Buddy", body: "Product research, listing drafts, SEO titles, catalogue checks, pricing and ad reviews.", status: "Live for explain & draft" },
-  { icon: FileText, title: "CA Buddy", body: "GST and invoice concepts, reconciliation walk-throughs, report structure, form guidance from authoritative sources.", status: "Live for explain & guide" },
-  { icon: Scale, title: "Legal Buddy", body: "Plain-language terminology, clause explanations and drafting help — never fabricated citations.", status: "Live for explain & draft" },
-  { icon: Code2, title: "Developer Buddy", body: "Inspect, reproduce, diagnose, patch, test, regression, review — a disciplined debugging loop.", status: "Explain & diagnose today" },
+  {
+    icon: ShoppingBag,
+    title: "E-commerce Buddy",
+    body: "Product research, listing drafts, SEO titles, catalogue checks, pricing and ad reviews.",
+    status: "Live for explain & draft",
+  },
+  {
+    icon: FileText,
+    title: "CA Buddy",
+    body: "GST and invoice concepts, reconciliation walk-throughs, report structure, form guidance from authoritative sources.",
+    status: "Live for explain & guide",
+  },
+  {
+    icon: Scale,
+    title: "Legal Buddy",
+    body: "Plain-language terminology, clause explanations and drafting help — never fabricated citations.",
+    status: "Live for explain & draft",
+  },
+  {
+    icon: Code2,
+    title: "Developer Buddy",
+    body: "Inspect, reproduce, diagnose, patch, test, regression, review — a disciplined debugging loop.",
+    status: "Explain & diagnose today",
+  },
 ];
 
 const FAQS = [
-  { q: "Does Buddy click things on its own?", a: "No. Actions happen at the permission level you choose, and anything high-impact — submitting, paying, deleting — asks you first. Payments and CAPTCHAs are never completed for you." },
-  { q: "What can the extension not see?", a: "Chrome's own pages (chrome://, the Web Store, other extensions' pages) are off limits by browser design. Buddy tells you instead of pretending." },
-  { q: "Is wake-word listening always on?", a: "No. Browsers do not allow reliable always-on wake words, so push-to-talk is the primary way to speak. We say this plainly rather than faking it." },
-  { q: "What does Buddy remember?", a: "Only preferences, work context, templates and workflows you approve. Passwords, OTPs, PINs, CVVs and keys are blocked at the database level." },
-  { q: "Which AI model is used?", a: "Whichever fits the request best. The engine routes by task type, speed and cost, and falls back to another model if one fails." },
+  {
+    q: "Does Buddy click things on its own?",
+    a: "No. Actions happen at the permission level you choose, and anything high-impact — submitting, paying, deleting — asks you first. Payments and CAPTCHAs are never completed for you.",
+  },
+  {
+    q: "What can the extension not see?",
+    a: "Chrome's own pages (chrome://, the Web Store, other extensions' pages) are off limits by browser design. Buddy tells you instead of pretending.",
+  },
+  {
+    q: "Is wake-word listening always on?",
+    a: "No. Browsers do not allow reliable always-on wake words, so push-to-talk is the primary way to speak. We say this plainly rather than faking it.",
+  },
+  {
+    q: "What does Buddy remember?",
+    a: "Only preferences, work context, templates and workflows you approve. Passwords, OTPs, PINs, CVVs and keys are blocked at the database level.",
+  },
+  {
+    q: "Which AI model is used?",
+    a: "Whichever fits the request best. The engine routes by task type, speed and cost, and falls back to another model if one fails.",
+  },
 ];
 
 const PLANS = [
-  { name: "Free trial", price: "₹0", note: "14 days, no card", items: ["All 15 Buddies", "Explain & guide", "Voice in 3 languages", "300 requests/day"] },
-  { name: "Pro", price: "Coming soon", note: "Assisted actions", items: ["Guided form filling", "Saved workflows", "Longer memory", "Priority models"], highlight: true },
-  { name: "Team", price: "Coming soon", note: "For small businesses", items: ["Shared templates", "Custom Buddies", "Audit log export", "Admin permissions"] },
+  {
+    name: "Free trial",
+    price: "₹0",
+    note: "14 days, no card",
+    items: ["All 15 Buddies", "Explain & guide", "Voice in 3 languages", "300 requests/day"],
+  },
+  {
+    name: "Pro",
+    price: "Coming soon",
+    note: "Assisted actions",
+    items: ["Guided form filling", "Saved workflows", "Longer memory", "Priority models"],
+    highlight: true,
+  },
+  {
+    name: "Team",
+    price: "Coming soon",
+    note: "For small businesses",
+    items: ["Shared templates", "Custom Buddies", "Audit log export", "Admin permissions"],
+  },
 ];
 
 function Section({
@@ -126,7 +229,9 @@ function Landing() {
       <section className="hero-surface border-b border-border/60">
         <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 py-20 md:grid-cols-[1.15fr_1fr]">
           <div>
-            <Badge variant="secondary" className="mb-5">Voice-first · permission-first</Badge>
+            <Badge variant="secondary" className="mb-5">
+              Voice-first · permission-first
+            </Badge>
             <h1 className="text-4xl font-semibold leading-[1.05] tracking-tight sm:text-6xl">
               Meet Your <span className="text-gradient">AI Buddy.</span>
             </h1>
@@ -136,7 +241,9 @@ function Landing() {
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Button asChild size="lg">
-                <Link to="/auth" search={{ mode: "signup" }}>Try free</Link>
+                <Link to="/auth" search={{ mode: "signup" }}>
+                  Try free
+                </Link>
               </Button>
               <Button asChild size="lg" variant="secondary">
                 <Link to="/auth">Login</Link>
@@ -202,7 +309,9 @@ function Landing() {
                 </div>
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {(buddy.expertise ?? []).slice(0, 3).map((item) => (
-                    <Badge key={item} variant="outline" className="text-[11px]">{item}</Badge>
+                    <Badge key={item} variant="outline" className="text-[11px]">
+                      {item}
+                    </Badge>
                   ))}
                 </div>
               </div>
@@ -252,7 +361,9 @@ function Landing() {
               <Icon className="size-5 text-primary" />
               <h3 className="mt-3 font-semibold">{title}</h3>
               <p className="mt-1 text-sm text-muted-foreground">{body}</p>
-              <Badge variant="secondary" className="mt-3 text-[11px]">{status}</Badge>
+              <Badge variant="secondary" className="mt-3 text-[11px]">
+                {status}
+              </Badge>
             </div>
           ))}
         </div>
@@ -274,8 +385,17 @@ function Landing() {
             </Button>
           </div>
           <div className="grid flex-1 grid-cols-2 gap-2 text-sm">
-            {["Name & avatar", "Voice & language", "Personality & humour", "Teaching style", "Allowed tools", "Memory rules"].map((item) => (
-              <div key={item} className="rounded-md border border-border bg-muted/40 px-3 py-2">{item}</div>
+            {[
+              "Name & avatar",
+              "Voice & language",
+              "Personality & humour",
+              "Teaching style",
+              "Allowed tools",
+              "Memory rules",
+            ].map((item) => (
+              <div key={item} className="rounded-md border border-border bg-muted/40 px-3 py-2">
+                {item}
+              </div>
             ))}
           </div>
         </div>
@@ -284,10 +404,19 @@ function Landing() {
       <Section id="security" eyebrow="Security & privacy" title="Least privilege, always visible.">
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {[
-            { title: "Sensitive-field detection", body: "Password, OTP, CVV, PIN and key fields are never captured or stored." },
+            {
+              title: "Sensitive-field detection",
+              body: "Password, OTP, CVV, PIN and key fields are never captured or stored.",
+            },
             { title: "Privacy mode", body: "Turn off memory and page capture entirely, any time." },
-            { title: "Visible observing", body: "You always see when Buddy is watching or acting." },
-            { title: "Audit trail", body: "Every task, permission change and action is logged for you to review." },
+            {
+              title: "Visible observing",
+              body: "You always see when Buddy is watching or acting.",
+            },
+            {
+              title: "Audit trail",
+              body: "Every task, permission change and action is logged for you to review.",
+            },
           ].map((item) => (
             <div key={item.title} className="panel p-6">
               <ShieldCheck className="size-5 text-primary" />
@@ -316,11 +445,18 @@ function Landing() {
                   </li>
                 ))}
               </ul>
-              <Button asChild className="mt-6 w-full" variant={plan.highlight ? "default" : "outline"} disabled={plan.price === "Coming soon"}>
+              <Button
+                asChild
+                className="mt-6 w-full"
+                variant={plan.highlight ? "default" : "outline"}
+                disabled={plan.price === "Coming soon"}
+              >
                 {plan.price === "Coming soon" ? (
                   <span>Not available yet</span>
                 ) : (
-                  <Link to="/auth" search={{ mode: "signup" }}>Start free</Link>
+                  <Link to="/auth" search={{ mode: "signup" }}>
+                    Start free
+                  </Link>
                 )}
               </Button>
             </div>

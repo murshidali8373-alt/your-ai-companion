@@ -35,7 +35,8 @@ async function send(question, intent) {
     $("answer").textContent = res.reply?.answer || "No answer came back.";
     $("answer").hidden = false;
     const notes = [];
-    if (!res.pageReadable) notes.push("I could not read this page (browser-protected), so I answered generally.");
+    if (!res.pageReadable)
+      notes.push("I could not read this page (browser-protected), so I answered generally.");
     if (res.highlightSelector) notes.push("I outlined the element on the page.");
     $("status").textContent = notes.join(" ");
   } catch {
@@ -48,9 +49,14 @@ async function send(question, intent) {
 
 $("send").onclick = () => send($("q").value, "answer");
 $("q").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send($("q").value, "answer"); }
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    send($("q").value, "answer");
+  }
 });
-document.querySelectorAll("[data-q]").forEach((b) => (b.onclick = () => send(b.dataset.q, b.dataset.i)));
+document
+  .querySelectorAll("[data-q]")
+  .forEach((b) => (b.onclick = () => send(b.dataset.q, b.dataset.i)));
 chrome.storage.local.get("session").then(({ session }) => {
   if (session?.apiBase) chrome.storage.local.set({ lastBase: session.apiBase });
 });

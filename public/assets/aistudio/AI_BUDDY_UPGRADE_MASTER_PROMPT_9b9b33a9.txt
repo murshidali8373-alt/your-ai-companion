@@ -1,0 +1,121 @@
+AI BUDDY — CONTROLLED UPGRADE MASTER PROMPT
+For Google AI Studio connected to the existing GitHub project
+
+ROLE
+Act as a senior engineer working on the EXISTING AI Buddy repository. Do not rebuild the app from scratch. Make small, verified changes while preserving existing working functionality.
+
+PROJECT
+Repository: murshidali8373-alt/your-ai-companion
+Verify the actual repository, current branch, working tree and implementation first. Do not assume previous audit claims are true until you inspect code.
+
+PRIMARY GOALS
+1. Preserve existing functionality and fix regressions before adding features.
+2. Make the Buddy visually consistent across landing hero, specialist cards, Buddy page and extension wherever technically appropriate.
+3. Improve natural movement, not just eye tracking.
+4. Keep each Buddy's skin/colour/identity consistent; do not independently redesign every Buddy.
+5. Use context-appropriate prop movement only when a prop already exists (e.g. Developer/Tech Buddy laptop).
+6. Make the extension understand the active page reliably, starting with the user's own AI Buddy app, then supported pages with explicit permission.
+7. Never claim a feature works unless implemented and tested.
+
+STRICT CHANGE CONTROL
+- First inspect git status/diff, branch, project instructions, package scripts, existing character assets/components, animation code, Buddy page, extension, permissions and tests.
+- Preserve all pre-existing user changes. Never reset, discard, overwrite or revert user work.
+- Do not change package manager, framework, routes, auth, database schema, environment variables, AI provider or architecture unless required and justified.
+- Reuse existing assets and animation infrastructure. No new animation/3D dependency until you prove it is necessary. Do not generate replacement images.
+- Make the smallest practical patch. Avoid broad refactors, unrelated UI redesigns and mass formatting.
+- Do not remove existing features to make tests pass.
+- Never expose secrets in client code, logs or docs.
+- Do not fake test results, commits, screenshots or successful browser actions.
+
+STAGE 0 — BASELINE AND REGRESSION CHECK
+1. Inspect repo/branch/status/diff and current project instructions.
+2. Identify the actual source files for hero Buddy, specialist cards, Buddy interaction page, character/animation code, extension side panel, page snapshot, permissions and tests.
+3. Run available relevant tests, lint/typecheck and build. Record actual results.
+4. Check existing chat, voice push-to-talk/STT/TTS, navigation, Buddy page, theme, auth, extension sign-in/session, Explain page, Next step, Find forms/highlighting if present, permissions and error/fallback states.
+5. Fix any existing regression before new animation work.
+6. Report baseline briefly, then proceed to Stage 1 if code editing is available. Do not stop at a report only.
+
+STAGE 1 — CONSISTENT BUDDY CHARACTER AND NATURAL MOVEMENT
+A. Shared character system
+- Find the actual current character assets/components and treat them as source of truth.
+- Reuse one shared Buddy component/rig and animation state model across hero, cards and Buddy page when practical.
+- Preserve the established cute, polished mascot look from reference screenshots 1 and 2. The current yellow/third look feels inconsistent; do not replace the established character with another unrelated design.
+- Preserve each specialist's configured skin/colour/clothes. Shared rig/motion is common; appearance variants should be configuration/data.
+- Avoid distorted proportions, random eye-size changes, clipping, floating feet, stiff poses and sudden jumps. Use smooth transitions.
+- If the current character is a pre-rendered image that cannot support articulated movement, implement only what the existing asset technically supports and state the limitation honestly. Do not pretend a static image is a rigged 3D model.
+
+B. Input-responsive movement
+Use existing React patterns and a small reusable state model:
+- IDLE: gentle breathing/body bob and occasional blink; subtle, not distracting.
+- POINTER_TRACK: eyes follow pointer within a bounded range; head/upper body subtly follow with smoothing.
+- POINTER_NEAR: slight lean/turn or friendly acknowledgement when pointer approaches.
+- SPEAKING: subtle mouth/face movement if supported; otherwise restrained movement only while actually speaking.
+- LISTENING: attentive pose while microphone capture is active.
+- THINKING: small considering pose while a request is processing.
+- HAPPY/SUCCESS: brief friendly reaction, then return to idle.
+- CONFUSED/ERROR: subtle head tilt/concern, not exaggerated comedy.
+- SLEEPY: slow blink/soft idle only when explicitly triggered.
+- Respect reduced-motion preferences and reduce/pause nonessential animation when page is hidden.
+- Clean up listeners, animation frames, observers and timers. Avoid timers multiplying after rerenders.
+- Convert pointer position relative to the Buddy container, not whole browser window. Bound movement.
+- Avoid React state updates on every pointer pixel; throttle with requestAnimationFrame or use existing motion engine.
+- Keyboard/focus interactions should also trigger an accessible attention state.
+
+C. Specialist prop behaviour
+- No separate animation system for each specialist. Use shared states plus optional per-Buddy prop configuration.
+- If Developer/Tech Buddy already has a laptop, allow a subtle glance toward screen or restrained hand/arm movement only if the asset supports it.
+- Do not invent props or unrelated objects.
+- Missing assets must have a clean fallback, not broken image icons or empty mascot areas.
+
+D. Visual quality
+- Match existing design system, colours, sizing, spacing, themes and responsive layout.
+- Prevent layout shifts, overlap, jitter and excessive CPU use. Cards use restrained motion; selected/main Buddy may use richer motion.
+- Respect mobile/touch and reduced-motion settings.
+
+STAGE 1 ACCEPTANCE TESTS
+- Same Buddy identity across hero, cards and Buddy page.
+- Only configured appearance variants differ; shared movement stays consistent.
+- Pointer causes smooth, bounded gaze/head/body response where asset supports it.
+- Speaking/listening/thinking states reflect real app state, not fake decoration.
+- Laptop-related movement is subtle and only used if supported by existing asset.
+- No console errors, broken assets, runaway loops or obvious mobile layout problems.
+- Existing working features pass baseline checks.
+
+STAGE 2 — EXTENSION UNDERSTANDS THE USER'S OWN APP
+Only after Stage 1 passes:
+- Inspect existing extension and page snapshot architecture first.
+- Reliably identify active tab/page URL and title using permitted Chrome APIs.
+- On the user's AI Buddy site/dashboard, capture bounded relevant context: URL/title, visible text, headings, buttons/links/forms, labels, accessible names, focused element and useful DOM structure.
+- Add/use Explain this page and What should I do next flows with the existing extension UI.
+- Clearly distinguish DOM/accessibility context from actual screenshot vision. Never claim to visually see the screen if only DOM/text is read.
+- If screenshot vision is missing, treat it as a separate opt-in milestone requiring explicit user action, visible permission, secure authenticated processing, size/token limits, sensitive-data masking and a supported vision model. Do not invent an endpoint.
+- Never transmit passwords, payment card fields, auth tokens or sensitive private data by default.
+- Do not send full HTML or the entire DOM. Bound and redact the snapshot.
+- Show when page context is shared and provide a way to stop/clear it.
+- Test on the AI Buddy app first, then a simple demo page.
+
+STAGE 2 ACCEPTANCE
+- Buddy explains actual captured headings/actions, not invented controls.
+- If context is missing, it asks or says it cannot determine the answer.
+- Context is bounded; sensitive fields are excluded/redacted; permissions are respected.
+- Screenshot vision is marked complete only after an actual end-to-end test.
+
+STAGE 3 — SAFE BROWSER ACTIONS
+Do not start until user approves this stage and earlier stages pass.
+- Begin with low-risk highlight, focus, and filling non-sensitive fields with user-provided content.
+- Re-resolve targets immediately before action; do not rely on stale selectors or blind coordinates.
+- Preview proposed actions. Ask confirmation before submitting forms, sending messages, deleting/editing records, purchases, financial actions or other consequential operations.
+- Never autonomously submit payments, enter passwords, bypass CAPTCHA or perform restricted/high-impact actions.
+- Verify the result and explain success/failure truthfully.
+- Enforce permissions server-side as well as client-side.
+
+IMPLEMENTATION RULES
+- Use existing framework, style system, components, tests and dependencies.
+- Prefer a small shared component/hook/config instead of duplicated per-page code.
+- Add focused tests for state transitions, pointer bounds/cleanup, reduced-motion, asset fallback and context redaction as relevant.
+- Do not create fake APIs or placeholder working buttons.
+- Do not change pricing/billing/auth/database in this task.
+- Do not implement all stages in one massive patch. Complete Stage 0 and Stage 1 only now. Report Stage 2 as the next milestone.
+
+FINAL REPORT
+Return: (1) what you inspected, (2) exact files changed and why, (3) genuinely implemented vs proposed, (4) tests actually run and exact outcomes, (5) failed tests/build issues, (6) known limitations—especially pre-rendered asset vs rigged animation and DOM context vs screenshot vision, (7) manual verification steps in preview, and (8) the single safest next step. Do not claim GitHub was updated unless the connected environment actually confirms commit/push.

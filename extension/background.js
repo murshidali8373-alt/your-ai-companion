@@ -1,5 +1,6 @@
 // Service worker: stores the session and talks to the AI Buddy backend.
-const RESTRICTED = /^(chrome|edge|about|chrome-extension|devtools|view-source):|chromewebstore\.google\.com|chrome\.google\.com\/webstore/;
+const RESTRICTED =
+  /^(chrome|edge|about|chrome-extension|devtools|view-source):|chromewebstore\.google\.com|chrome\.google\.com\/webstore/;
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg.type === "SAVE_SESSION") {
@@ -21,6 +22,18 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   }
   if (msg.type === "OPEN_SIDE_PANEL") {
     openSidePanel(sender).then(reply, (e) => reply({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === "EXECUTE_ACTION") {
+    executeAction(msg.action, msg.selector, msg.value).then(reply, (e) =>
+      reply({ ok: false, error: String(e?.message || e) }),
+    );
+    return true;
+  }
+  if (msg.type === "HIGHLIGHT") {
+    highlightElement(msg.selector).then(reply, (e) =>
+      reply({ ok: false, error: String(e?.message || e) }),
+    );
     return true;
   }
   return false;
@@ -54,7 +67,10 @@ async function ask(question, intent) {
   let snapshot = null;
   if (tab?.id && tab.url && !RESTRICTED.test(tab.url)) {
     try {
-      const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["snapshot.js"] });
+      const [res] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ["snapshot.js"],
+      });
       snapshot = res?.result ?? null;
     } catch {
       snapshot = null;
@@ -95,4 +111,63 @@ function highlight(selector) {
     el.style.outlineOffset = prevOffset;
   }, 6000);
   return true;
+}
+
+async function highlightElement(selector) {
+  const tab = await activeTab();
+  if (!tab?.id || !tab.url || RESTRICTED.test(tab.url)) {
+    return { ok: false, message: "Cannot access this browser tab." };
+  }
+  const [res] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: highlight,
+    args: [selector],
+  });
+  return { ok: Boolean(res?.result) };
+}
+
+async function executeAction(action, selector, value) {
+  const tab = await activeTab();
+  if (!tab?.id || !tab.url || RESTRICTED.test(tab.url)) {
+    return { ok: false, message: "Cannot act on this restricted browser page." };
+  }
+  const [res] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: (act, sel, val) => {
+      const el = sel ? document.querySelector(sel) : null;
+      if (act === "scroll") {
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+        else window.scrollBy({ top: 350, behavior: "smooth" });
+        return { ok: true, message: "Scrolled page" };
+      }
+      if (!el) return { ok: false, message: "Target element was not found on this page." };
+
+      const SENSITIVE = /pass|otp|pin|cvv|cvc|card|secret|token|ssn|aadhaar/i;
+      if (SENSITIVE.test(`${el.name} ${el.id} ${el.type}`)) {
+        return {
+          ok: false,
+          message: "Action blocked: Buddy never types into password or financial fields.",
+        };
+      }
+
+      if (act === "click") {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.click();
+        return { ok: true, message: `Clicked ${el.tagName.toLowerCase()} element` };
+      }
+      if (act === "type") {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.focus();
+        if ("value" in el) {
+          el.value = val || "";
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        return { ok: true, message: "Filled input field safely" };
+      }
+      return { ok: false, message: `Unknown action: ${act}` };
+    },
+    args: [action, selector, value],
+  });
+  return res?.result || { ok: false };
 }

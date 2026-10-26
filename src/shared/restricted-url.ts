@@ -2,7 +2,14 @@
  * Chrome boundaries we cannot and must not cross. Explain, never pretend.
  */
 
-const RESTRICTED_SCHEMES = ["chrome:", "chrome-extension:", "edge:", "about:", "devtools:", "view-source:"];
+const RESTRICTED_SCHEMES = [
+  "chrome:",
+  "chrome-extension:",
+  "edge:",
+  "about:",
+  "devtools:",
+  "view-source:",
+];
 const RESTRICTED_HOSTS = [
   "chromewebstore.google.com",
   "chrome.google.com",

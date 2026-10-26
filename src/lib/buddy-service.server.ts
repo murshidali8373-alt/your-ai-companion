@@ -13,8 +13,13 @@ import type { Database } from "@/integrations/supabase/types";
 import { AiError } from "./ai/errors";
 import { generate } from "./ai/orchestrator.server";
 import { buildSystemPrompt, parseBuddyReply, type BuddyReply } from "./ai/prompt";
-import type { TaskIntent } from "./ai/registry";
-import { buildPageContext, estimateTokens, resolveRef, type PageSnapshot } from "@/shared/page-snapshot";
+import { findModel, type TaskIntent } from "./ai/registry";
+import {
+  buildPageContext,
+  estimateTokens,
+  resolveRef,
+  type PageSnapshot,
+} from "@/shared/page-snapshot";
 import { can, type PermissionLevel } from "@/shared/permissions";
 import { permissionDeniedMessage } from "@/shared/permissions";
 import { checkUrl } from "@/shared/restricted-url";
@@ -28,6 +33,8 @@ export interface AskInput {
   intent: TaskIntent;
   snapshot: PageSnapshot | null;
   source: "extension" | "web";
+  preferredModel?: string | null;
+  userApiKey?: string | null;
 }
 
 export interface AskOutput {
@@ -212,7 +219,9 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       : "No page snapshot was provided",
   );
 
-  const pageContext = input.snapshot ? buildPageContext(input.snapshot) : "No page context available.";
+  const pageContext = input.snapshot
+    ? buildPageContext(input.snapshot)
+    : "No page context available.";
   const system = buildSystemPrompt({
     persona: {
       name: persona.name,
@@ -232,6 +241,7 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
   await event(db, taskId, userId, "understand", `Context ~${estimateTokens(user)} tokens`);
 
   try {
+    const targetModel = input.preferredModel ? findModel(input.preferredModel) : undefined;
     const result = await generate({
       system,
       user,
@@ -242,6 +252,7 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
         latencySensitive: input.intent === "locate_element",
         costSensitive: false,
       },
+      candidates: targetModel ? [targetModel] : undefined,
     });
     const reply = parseBuddyReply(result.text);
 

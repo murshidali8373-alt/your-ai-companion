@@ -1,12 +1,6 @@
 /** The permission ladder. Each level is a superset of the ones before it. */
 
-export const PERMISSION_LEVELS = [
-  "observe",
-  "explain",
-  "suggest",
-  "assist",
-  "execute",
-] as const;
+export const PERMISSION_LEVELS = ["observe", "explain", "suggest", "assist", "execute"] as const;
 
 export type PermissionLevel = (typeof PERMISSION_LEVELS)[number];
 
@@ -44,17 +38,11 @@ export function can(level: PermissionLevel, action: BuddyAction): boolean {
   return levelRank(level) >= levelRank(MINIMUM_LEVEL[action]);
 }
 
-export function requiresConfirmation(
-  action: BuddyAction,
-  confirmHighImpact: boolean,
-): boolean {
+export function requiresConfirmation(action: BuddyAction, confirmHighImpact: boolean): boolean {
   return confirmHighImpact && HIGH_IMPACT.includes(action);
 }
 
-export function permissionDeniedMessage(
-  level: PermissionLevel,
-  action: BuddyAction,
-): string {
+export function permissionDeniedMessage(level: PermissionLevel, action: BuddyAction): string {
   return `Your Buddy is set to "${level}", which does not allow "${action.replace(/_/g, " ")}". Raise the permission level in Settings if you want this.`;
 }
 
