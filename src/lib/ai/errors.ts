@@ -9,24 +9,32 @@ export type AiErrorKind =
   | "outage"
   | "timeout"
   | "invalid_response"
-  | "network";
+  | "network"
+  | "provider_error";
 
 export class AiError extends Error {
   kind: AiErrorKind;
   retryable: boolean;
   retryAfterSeconds?: number;
+  resolution?: string;
   userMessage: string;
 
   constructor(
     kind: AiErrorKind,
     userMessage: string,
-    options: { retryable?: boolean; retryAfterSeconds?: number; cause?: unknown } = {},
+    options: {
+      retryable?: boolean;
+      retryAfterSeconds?: number;
+      resolution?: string;
+      cause?: unknown;
+    } = {},
   ) {
     super(`${kind}: ${userMessage}`);
     this.name = "AiError";
     this.kind = kind;
     this.userMessage = userMessage;
     this.retryable = options.retryable ?? false;
+    if (options.resolution !== undefined) this.resolution = options.resolution;
     if (options.retryAfterSeconds !== undefined) {
       this.retryAfterSeconds = options.retryAfterSeconds;
     }
@@ -81,5 +89,12 @@ export function normalizeGatewayError(
 
 /** Only these are worth trying another provider or another attempt for. */
 export function isFallbackWorthy(error: AiError): boolean {
-  return ["rate_limit", "outage", "timeout", "network", "invalid_response"].includes(error.kind);
+  return [
+    "rate_limit",
+    "outage",
+    "timeout",
+    "network",
+    "invalid_response",
+    "provider_error",
+  ].includes(error.kind);
 }

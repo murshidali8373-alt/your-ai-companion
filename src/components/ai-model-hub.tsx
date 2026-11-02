@@ -69,7 +69,11 @@ export function AiModelHub({
 
   // Test provider mutation
   const testMutation = useMutation({
-    mutationFn: (vars: { providerId: string; apiKey?: string; baseUrl?: string }) =>
+    mutationFn: (vars: {
+      providerId: string;
+      apiKey?: string | undefined;
+      baseUrl?: string | undefined;
+    }) =>
       runTest({ data: vars }),
     onSuccess: (res) => {
       setTestingStatus(res);
@@ -199,9 +203,7 @@ export function AiModelHub({
                 className={`group flex flex-col items-start justify-between rounded-xl border p-2.5 text-left text-xs transition-all hover:border-ring/80 hover:bg-secondary/40 ${
                   isConn
                     ? "border-emerald-500/40 bg-emerald-500/5"
-                    : p.status === "offline"
-                      ? "border-destructive/30 bg-destructive/5"
-                      : "border-border/60 bg-card/60"
+                    : "border-border/60 bg-card/60"
                 }`}
               >
                 <div className="flex w-full items-center justify-between">

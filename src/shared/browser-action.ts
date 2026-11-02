@@ -44,6 +44,32 @@ export interface BrowserAction {
   description?: string;
 }
 
+/** Full context a browser action needs before it may run (permission gate input). */
+export interface BrowserActionRequest {
+  id: string;
+  action: BrowserActionType;
+  selector: string;
+  value?: string;
+  pageUrl: string;
+  pageOrigin: string;
+  userPermissionLevel: PermissionLevel;
+  elementName?: string;
+  elementTag?: string;
+  consentDecision?: ConsentDecision;
+}
+
+/** Structured, auditable result of an executed (or blocked) browser action. */
+export interface BrowserActionResult {
+  requestId: string;
+  success: boolean;
+  action: BrowserActionType;
+  selector: string;
+  message: string;
+  verified: boolean;
+  blockedReason?: string | undefined;
+  timestamp: string;
+}
+
 export type ConsentDecision = "allow_once" | "always_for_origin" | "deny";
 
 export function classifyAction(type: BrowserActionType): {

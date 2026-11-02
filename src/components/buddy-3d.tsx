@@ -49,7 +49,7 @@ export function Buddy3D({
       <div className="relative flex items-center justify-center">
         {characterMode === "living" ? (
           <TalkingBuddyCharacter
-            slug={slug}
+            slug={slug ?? null}
             state={mapEmotionToState(emotion)}
             size={size}
             lowGraphics={graphics === "low"}

@@ -36,8 +36,8 @@ export interface TaskLifecycleStep {
   stage: TaskLifecycleStage;
   timestamp: string;
   detail: string;
-  elementRef?: string;
-  data?: Record<string, unknown>;
+  elementRef?: string | undefined;
+  data?: Record<string, unknown> | undefined;
 }
 
 export interface TaskExecutionPlan {
@@ -50,10 +50,10 @@ export interface TaskExecutionPlan {
   steps: TaskLifecycleStep[];
   snapshot: PageSnapshot | null;
   requiresUserApproval: boolean;
-  approvalPrompt?: string;
-  pendingConsequentialAction?: BrowserAction;
-  verificationReport?: string;
-  error?: string;
+  approvalPrompt?: string | undefined;
+  pendingConsequentialAction?: BrowserAction | undefined;
+  verificationReport?: string | undefined;
+  error?: string | undefined;
 }
 
 /**

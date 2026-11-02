@@ -33,8 +33,8 @@ export interface AskInput {
   intent: TaskIntent;
   snapshot: PageSnapshot | null;
   source: "extension" | "web";
-  preferredModel?: string | null;
-  userApiKey?: string | null;
+  preferredModel?: string | null | undefined;
+  userApiKey?: string | null | undefined;
 }
 
 export interface AskOutput {
