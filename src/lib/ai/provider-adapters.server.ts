@@ -100,7 +100,7 @@ export async function callGroq(model: ModelEntry, opts: ProviderCallOptions): Pr
       temperature: 0.6,
       max_tokens: 4096,
     }),
-    signal: opts.signal,
+    signal: opts.signal ?? null,
   });
 
   if (!res.ok) {
@@ -153,7 +153,7 @@ export async function callOpenRouter(
         { role: "user", content: opts.userPrompt },
       ],
     }),
-    signal: opts.signal,
+    signal: opts.signal ?? null,
   });
 
   if (!res.ok) {
@@ -195,7 +195,7 @@ export async function callOpenAI(model: ModelEntry, opts: ProviderCallOptions): 
         { role: "user", content: opts.userPrompt },
       ],
     }),
-    signal: opts.signal,
+    signal: opts.signal ?? null,
   });
 
   if (!res.ok) {
@@ -227,7 +227,7 @@ export async function callOllama(model: ModelEntry, opts: ProviderCallOptions): 
         ],
         stream: false,
       }),
-      signal: opts.signal,
+      signal: opts.signal ?? null,
     });
   } catch (err) {
     throw new AiError(
@@ -277,7 +277,7 @@ export async function callHuggingFace(
       inputs: `System: ${opts.systemPrompt}\nUser: ${opts.userPrompt}\nAssistant:`,
       parameters: { max_new_tokens: 1024, return_full_text: false },
     }),
-    signal: opts.signal,
+    signal: opts.signal ?? null,
   });
 
   if (!res.ok) {
@@ -319,7 +319,7 @@ export async function callGitHubModels(
         { role: "user", content: opts.userPrompt },
       ],
     }),
-    signal: opts.signal,
+    signal: opts.signal ?? null,
   });
 
   if (!res.ok) {
