@@ -224,7 +224,7 @@ export async function generate(input: {
   user: string;
   routing: RouteRequest;
   /** Override the candidate list (used by tests and by explicit model choice). */
-  candidates?: ModelEntry[];
+  candidates?: ModelEntry[] | undefined;
   call?: (model: ModelEntry, system: string, user: string) => Promise<string>;
 }): Promise<ModelCallResult> {
   const candidates = input.candidates ?? route(input.routing);

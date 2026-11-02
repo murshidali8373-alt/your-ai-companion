@@ -179,7 +179,7 @@ export function WebpageInspector({
   const runAsk = useServerFn(askBuddy);
   const [selectedSampleKey, setSelectedSampleKey] = useState<string>("flight_booking");
   const [currentSnapshot, setCurrentSnapshot] = useState<PageSnapshot>(
-    SAMPLE_PAGES["flight_booking"],
+    SAMPLE_PAGES["flight_booking"]!,
   );
   const [plan, setPlan] = useState<TaskExecutionPlan | null>(null);
   const [explanation, setExplanation] = useState<string | null>(null);
@@ -207,7 +207,7 @@ export function WebpageInspector({
         onHighlightElement?.(res.highlightSelector);
       }
       if (res.needs && res.needs.length > 0) {
-        setProposedNextStep(res.needs.join(", "));
+        setProposedNextStep(res.needs);
       } else {
         setProposedNextStep("Review the highlighted section and proceed.");
       }
@@ -332,7 +332,7 @@ export function WebpageInspector({
               onChange={(e) => {
                 const k = e.target.value;
                 setSelectedSampleKey(k);
-                setCurrentSnapshot(SAMPLE_PAGES[k]);
+                setCurrentSnapshot(SAMPLE_PAGES[k] ?? SAMPLE_PAGES["flight_booking"]!);
                 setExplanation(null);
                 setPlan(null);
               }}
