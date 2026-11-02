@@ -27,19 +27,19 @@ export type BuddyEmotionInput = BuddyEmotionState | keyof typeof BUDDY_EMOTION_S
 
 export interface SetEmotionOptions {
   /** Automatically revert to a baseline state after duration in milliseconds */
-  durationMs?: number;
+  durationMs?: number | undefined;
   /** State to revert back to after durationMs (defaults to 'idle') */
-  revertTo?: BuddyEmotionInput;
+  revertTo?: BuddyEmotionInput | undefined;
   /** Optional status description or contextual note */
-  reason?: string;
+  reason?: string | undefined;
   /** Priority flag to prevent low-priority animations from overriding task progress */
-  priority?: "low" | "normal" | "high";
+  priority?: "low" | "normal" | "high" | undefined;
 }
 
 export interface StateHistoryEntry {
   emotion: BuddyEmotionState;
   timestamp: number;
-  reason?: string;
+  reason?: string | undefined;
 }
 
 export interface BuddyStateManagerValue {

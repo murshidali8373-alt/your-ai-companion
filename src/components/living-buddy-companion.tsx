@@ -22,6 +22,7 @@ import {
 } from "@/components/talking-buddy-character";
 import { useBuddyStateManager, BUDDY_EMOTION_STATES } from "@/hooks/use-buddy-state-manager";
 import { SingleSpeaker } from "@/shared/voice-turn";
+import { cn } from "@/lib/utils";
 import { quickTalk } from "@/lib/talk.functions";
 
 export interface LivingBuddyCompanionProps {
