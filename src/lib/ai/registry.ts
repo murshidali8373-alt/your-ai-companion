@@ -7,7 +7,20 @@
  * a `call` implementation — the core engine does not change.
  */
 
-import { findCatalogModel } from "./model-hub";
+import { findCatalogModel, MODEL_CATALOG, type ModelEntry as CatalogModelEntry } from "./model-hub";
+
+export function catalogToModelEntry(catalog: CatalogModelEntry): ModelEntry {
+  return {
+    id: catalog.id,
+    provider: catalog.provider,
+    api: catalog.provider === "lovable-gateway" ? "responses" : "custom_adapter",
+    vision: catalog.capabilities.includes("vision"),
+    contextTokens: catalog.contextWindow,
+    cost: catalog.costRating,
+    speed: 6 - catalog.speedRating,
+    providerModelId: catalog.providerModelId,
+  };
+}
 
 export type TaskIntent =
   "explain_page" | "locate_element" | "answer" | "plan" | "summarize" | "classify";
@@ -59,6 +72,7 @@ export const MODELS: ModelEntry[] = [
     contextTokens: 1_000_000,
     cost: 2,
     speed: 1,
+    providerModelId: "gemini-3.8-flash",
   },
   {
     id: "gemini-3.1-flash-lite",
@@ -68,6 +82,7 @@ export const MODELS: ModelEntry[] = [
     contextTokens: 500_000,
     cost: 1,
     speed: 1,
+    providerModelId: "gemini-3.1-flash-lite",
   },
   {
     id: "openai/gpt-6-astra",
@@ -105,30 +120,26 @@ export function findModel(id: string): ModelEntry | undefined {
 
   const catalog = findCatalogModel(id);
   if (catalog) {
-    return {
-      id: catalog.id,
-      provider: catalog.provider,
-      api: "custom_adapter",
-      vision: catalog.capabilities.includes("vision"),
-      contextTokens: catalog.contextWindow,
-      cost: catalog.costRating,
-      speed: 6 - catalog.speedRating,
-      providerModelId: catalog.providerModelId,
-    };
+    return catalogToModelEntry(catalog);
   }
   return undefined;
 }
 
 /**
  * Ordered candidate list: best fit first, then progressively different fallbacks.
- * The list is always non-empty so a caller can never end up with nothing to try.
+ * Pulls from the comprehensive MODEL_CATALOG across all 8 providers, prioritizing
+ * diverse providers so fallback never hits an unconfigured dead end.
  */
 export function route(request: RouteRequest): ModelEntry[] {
-  const usable = MODELS.filter(
+  const catalogConverted = MODEL_CATALOG.map(catalogToModelEntry);
+  const existingIds = new Set(MODELS.map((m) => m.id));
+  const combined = [...MODELS, ...catalogConverted.filter((m) => !existingIds.has(m.id))];
+
+  const usable = combined.filter(
     (m) => (!request.needsVision || m.vision) && m.contextTokens >= request.contextTokens,
   );
-  const pool = usable.length ? usable : MODELS.filter((m) => !request.needsVision || m.vision);
-  const candidates = pool.length ? [...pool] : [...MODELS];
+  const pool = usable.length ? usable : combined.filter((m) => !request.needsVision || m.vision);
+  const candidates = pool.length ? [...pool] : [...combined];
 
   const wantsFast =
     request.latencySensitive ||
@@ -144,5 +155,19 @@ export function route(request: RouteRequest): ModelEntry[] {
     return a.speed - b.speed || a.cost - b.cost;
   });
 
-  return candidates;
+  // Interleave distinct providers so fallback gracefully moves to alternative infrastructure
+  const prioritized: ModelEntry[] = [];
+  const seenProviders = new Set<string>();
+  const deferred: ModelEntry[] = [];
+
+  for (const model of candidates) {
+    if (!seenProviders.has(model.provider)) {
+      seenProviders.add(model.provider);
+      prioritized.push(model);
+    } else {
+      deferred.push(model);
+    }
+  }
+
+  return [...prioritized, ...deferred];
 }

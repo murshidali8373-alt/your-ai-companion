@@ -12,7 +12,7 @@
  * - GitHub Models
  */
 
-import { AiError } from "./errors";
+import { AiError, normalizeProviderError } from "./errors";
 import { type ModelEntry, type ProviderId, PROVIDERS } from "./model-hub";
 
 export interface ProviderCallOptions {
@@ -54,7 +54,7 @@ export async function callGemini(model: ModelEntry, opts: ProviderCallOptions): 
     },
   });
 
-  const modelId = model.providerModelId;
+  const modelId = model.providerModelId || model.id;
   const response = await ai.models.generateContent({
     model: modelId,
     contents: opts.userPrompt,
@@ -360,8 +360,9 @@ export async function dispatchModelCall(
 }
 
 /**
- * Live Provider Verification
- * Truthfully pings each provider to check if authorized and reachable.
+ * Live Provider Verification / Ping Diagnostic Endpoint
+ * Truthfully pings each provider to check if authorized and reachable
+ * without executing a full model inference request.
  */
 export async function verifyProviderConnection(
   providerId: ProviderId,
@@ -374,13 +375,16 @@ export async function verifyProviderConnection(
     switch (providerId) {
       case "gemini": {
         const key = userApiKey || process.env["GEMINI_API_KEY"];
-        if (!key) {
+        if (!key || key.startsWith("MY_")) {
           return {
             providerId,
             ok: false,
             status: "needs_key",
             latencyMs: 0,
-            message: "Missing GEMINI_API_KEY. Configure in AI Model Hub or environment.",
+            message:
+              key && key.startsWith("MY_")
+                ? "GEMINI_API_KEY is a placeholder. Configure a real key in AI Model Hub."
+                : "Missing GEMINI_API_KEY. Configure in AI Model Hub or environment.",
           };
         }
         const { GoogleGenAI } = await import("@google/genai");
@@ -388,17 +392,24 @@ export async function verifyProviderConnection(
           apiKey: key,
           httpOptions: { headers: { "User-Agent": "aistudio-build" } },
         });
-        const res = await ai.models.generateContent({
-          model: "gemini-3.8-flash",
-          contents: "ping",
-        });
+        let pingModel = "gemini-3.8-flash";
+        try {
+          await ai.models.get({
+            model: pingModel,
+          });
+        } catch {
+          pingModel = "gemini-3.1-flash-lite";
+          await ai.models.get({
+            model: pingModel,
+          });
+        }
         return {
           providerId,
-          ok: !!res.text,
+          ok: true,
           status: "connected",
           latencyMs: Date.now() - start,
           message: "Google Gemini is active and responding.",
-          resolvedModel: "gemini-3.8-flash",
+          resolvedModel: pingModel,
         };
       }
 
@@ -603,12 +614,25 @@ export async function verifyProviderConnection(
         };
     }
   } catch (error) {
+    const normalized = normalizeProviderError(error, providerId);
+    let status: ProviderVerificationResult["status"] = "error";
+    if (normalized.kind === "auth") {
+      status = "needs_key";
+    } else if (normalized.kind === "network" || normalized.kind === "outage") {
+      status = "offline";
+    }
+
     return {
       providerId,
       ok: false,
-      status: "error",
+      status,
       latencyMs: Date.now() - start,
-      message: error instanceof Error ? error.message : "Connection test failed.",
+      message: normalized.userMessage,
     };
   }
 }
+
+/**
+ * Diagnostic alias for lightweight connectivity verification.
+ */
+export const pingProvider = verifyProviderConnection;

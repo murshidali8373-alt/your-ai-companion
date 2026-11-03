@@ -73,8 +73,7 @@ export function AiModelHub({
       providerId: string;
       apiKey?: string | undefined;
       baseUrl?: string | undefined;
-    }) =>
-      runTest({ data: vars }),
+    }) => runTest({ data: vars }),
     onSuccess: (res) => {
       setTestingStatus(res);
       if (res.ok) {
@@ -201,9 +200,7 @@ export function AiModelHub({
                 type="button"
                 onClick={() => handleOpenConfig(p.providerId)}
                 className={`group flex flex-col items-start justify-between rounded-xl border p-2.5 text-left text-xs transition-all hover:border-ring/80 hover:bg-secondary/40 ${
-                  isConn
-                    ? "border-emerald-500/40 bg-emerald-500/5"
-                    : "border-border/60 bg-card/60"
+                  isConn ? "border-emerald-500/40 bg-emerald-500/5" : "border-border/60 bg-card/60"
                 }`}
               >
                 <div className="flex w-full items-center justify-between">

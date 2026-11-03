@@ -13,7 +13,7 @@ import type { Database } from "@/integrations/supabase/types";
 import { AiError } from "./ai/errors";
 import { generate } from "./ai/orchestrator.server";
 import { buildSystemPrompt, parseBuddyReply, type BuddyReply } from "./ai/prompt";
-import { findModel, type TaskIntent } from "./ai/registry";
+import { findModel, route, type TaskIntent } from "./ai/registry";
 import {
   buildPageContext,
   estimateTokens,
@@ -33,8 +33,9 @@ export interface AskInput {
   intent: TaskIntent;
   snapshot: PageSnapshot | null;
   source: "extension" | "web";
-  preferredModel?: string | null | undefined;
-  userApiKey?: string | null | undefined;
+  preferredModel?: string | null;
+  userApiKey?: string | null;
+  customBaseUrl?: string | null;
 }
 
 export interface AskOutput {
@@ -47,6 +48,7 @@ export interface AskOutput {
   model?: string;
   latencyMs?: number;
   blocked?: boolean;
+  fellBack?: boolean;
 }
 
 interface Persona {
@@ -241,18 +243,27 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
   await event(db, taskId, userId, "understand", `Context ~${estimateTokens(user)} tokens`);
 
   try {
+    const routingParams = {
+      intent: input.intent,
+      needsVision: false,
+      contextTokens: estimateTokens(system + user) + 1200,
+      latencySensitive: input.intent === "locate_element",
+      costSensitive: false,
+    };
+    const defaultCandidates = route(routingParams);
     const targetModel = input.preferredModel ? findModel(input.preferredModel) : undefined;
+    const candidates = targetModel
+      ? [targetModel, ...defaultCandidates.filter((m) => m.id !== targetModel.id)]
+      : defaultCandidates;
+
     const result = await generate({
       system,
       user,
-      routing: {
-        intent: input.intent,
-        needsVision: false,
-        contextTokens: estimateTokens(system + user) + 1200,
-        latencySensitive: input.intent === "locate_element",
-        costSensitive: false,
-      },
-      candidates: targetModel ? [targetModel] : undefined,
+      routing: routingParams,
+      candidates,
+      userApiKey: input.userApiKey ?? undefined,
+      customBaseUrl: input.customBaseUrl ?? undefined,
+      userProvider: targetModel?.provider,
     });
     const reply = parseBuddyReply(result.text);
 
@@ -261,6 +272,16 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       const element = resolveRef(input.snapshot, reply.highlight);
       highlightSelector = element?.selector ?? null;
       if (!element) reply.highlight = null;
+    }
+
+    if (result.fellBack && input.preferredModel) {
+      await event(
+        db,
+        taskId,
+        userId,
+        "fallback",
+        `Preferred model ${input.preferredModel} was unavailable; successfully fell back to ${result.model} (${result.provider})`,
+      );
     }
 
     await event(
@@ -296,6 +317,7 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       permission,
       model: result.model,
       latencyMs: result.latencyMs,
+      fellBack: result.fellBack,
     };
   } catch (error) {
     const aiError =

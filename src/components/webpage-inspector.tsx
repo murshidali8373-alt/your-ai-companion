@@ -38,6 +38,7 @@ import {
   type TaskLifecycleStage,
 } from "@/shared/task-lifecycle";
 import { type BrowserAction } from "@/shared/browser-action";
+import { findCatalogModel } from "@/lib/ai/model-hub";
 
 // Sample live mock pages for web dashboard demonstration
 const SAMPLE_PAGES: Record<string, PageSnapshot> = {
@@ -189,6 +190,18 @@ export function WebpageInspector({
   // Mutation to analyze page via AI
   const analyzeMutation = useMutation({
     mutationFn: async (intent: "explain_page" | "locate_element" | "plan") => {
+      let userApiKey: string | undefined;
+      let customBaseUrl: string | undefined;
+      if (typeof window !== "undefined" && activeModelId) {
+        const catalogEntry = findCatalogModel(activeModelId);
+        const pId =
+          catalogEntry?.provider ?? (activeModelId.startsWith("gemini") ? "gemini" : undefined);
+        if (pId) {
+          userApiKey = localStorage.getItem(`buddy_key_${pId}`) || undefined;
+          customBaseUrl = localStorage.getItem(`buddy_url_${pId}`) || undefined;
+        }
+      }
+
       return await runAsk({
         data: {
           question:
@@ -198,6 +211,8 @@ export function WebpageInspector({
           intent,
           snapshot: currentSnapshot,
           preferredModel: activeModelId,
+          userApiKey,
+          customBaseUrl,
         },
       });
     },

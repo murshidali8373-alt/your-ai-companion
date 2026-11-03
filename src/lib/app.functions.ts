@@ -307,31 +307,42 @@ export const getModelHubStatus = createServerFn({ method: "GET" })
         let status: "connected" | "available_free" | "needs_key" | "offline" = "needs_key";
         let message = PROVIDERS[id].rateLimitNote;
 
+        const isRealKey = (key?: string) =>
+          Boolean(key && !key.startsWith("MY_") && !key.includes("your-key"));
+
         if (id === "gemini") {
-          status = process.env["GEMINI_API_KEY"] ? "connected" : "needs_key";
+          const key = process.env["GEMINI_API_KEY"];
+          status = isRealKey(key) ? "connected" : "needs_key";
           message =
             status === "connected"
               ? "Google Gemini is active via server key."
-              : "Requires GEMINI_API_KEY.";
+              : key?.startsWith("MY_")
+                ? "GEMINI_API_KEY has placeholder value; configure in AI Model Hub."
+                : "Requires GEMINI_API_KEY or user key in AI Model Hub.";
         } else if (id === "groq") {
-          status = process.env["GROQ_API_KEY"] ? "connected" : "available_free";
+          status = isRealKey(process.env["GROQ_API_KEY"]) ? "connected" : "available_free";
           message =
             status === "connected"
-              ? "GroqCloud key configured."
-              : "Free tier available with user key.";
+              ? "GroqCloud key configured on server."
+              : "Free tier available with user key in AI Model Hub.";
         } else if (id === "openrouter") {
-          status = process.env["OPENROUTER_API_KEY"] ? "connected" : "available_free";
+          status = isRealKey(process.env["OPENROUTER_API_KEY"]) ? "connected" : "available_free";
           message =
-            status === "connected" ? "OpenRouter key active." : "Supports free and paid routing.";
+            status === "connected"
+              ? "OpenRouter key active on server."
+              : "Supports free and paid routing via AI Model Hub.";
         } else if (id === "openai") {
-          status = process.env["OPENAI_API_KEY"] ? "connected" : "needs_key";
-          message = status === "connected" ? "OpenAI key active." : "Requires OpenAI API key.";
+          status = isRealKey(process.env["OPENAI_API_KEY"]) ? "connected" : "needs_key";
+          message =
+            status === "connected"
+              ? "OpenAI key active on server."
+              : "Requires OpenAI API key (add in AI Model Hub).";
         } else if (id === "ollama") {
           status = "available_free";
           message = "Runs locally on your machine at localhost:11434.";
         } else if (id === "lovable-gateway") {
-          status = process.env["LOVABLE_API_KEY"] ? "connected" : "available_free";
-          message = "Built-in fallback route.";
+          status = isRealKey(process.env["LOVABLE_API_KEY"]) ? "connected" : "available_free";
+          message = "Built-in fallback gateway route.";
         } else {
           status = "available_free";
         }
@@ -379,6 +390,8 @@ export const askBuddy = createServerFn({ method: "POST" })
         intent: z
           .enum(["explain_page", "locate_element", "answer", "plan", "summarize", "classify"])
           .default("answer"),
+        userApiKey: z.string().max(200).optional(),
+        customBaseUrl: z.string().max(300).optional(),
       })
       .parse(input),
   )
@@ -390,6 +403,8 @@ export const askBuddy = createServerFn({ method: "POST" })
       snapshot: (data.snapshot as never) ?? null,
       source: "web",
       preferredModel: data.preferredModel,
+      userApiKey: data.userApiKey,
+      customBaseUrl: data.customBaseUrl,
     });
     return {
       answer: result.reply.answer,
@@ -401,6 +416,7 @@ export const askBuddy = createServerFn({ method: "POST" })
       buddyName: result.buddyName,
       model: result.model ?? null,
       blocked: result.blocked ?? false,
+      fellBack: result.fellBack ?? false,
     };
   });
 
@@ -408,10 +424,27 @@ export const diagnose = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const checks: Array<{ name: string; ok: boolean; detail: string }> = [];
+    const isReal = (k?: string) => Boolean(k && !k.startsWith("MY_") && !k.includes("your-key"));
+    const configured: string[] = [];
+    if (isReal(process.env["GEMINI_API_KEY"])) configured.push("Gemini");
+    if (isReal(process.env["GROQ_API_KEY"])) configured.push("Groq");
+    if (isReal(process.env["OPENROUTER_API_KEY"])) configured.push("OpenRouter");
+    if (isReal(process.env["OPENAI_API_KEY"])) configured.push("OpenAI");
+    if (isReal(process.env["LOVABLE_API_KEY"])) configured.push("Lovable Gateway");
+
+    const hasPlaceholder =
+      process.env["GEMINI_API_KEY"]?.startsWith("MY_") ||
+      process.env["LOVABLE_API_KEY"]?.startsWith("MY_");
+
     checks.push({
       name: "AI provider",
-      ok: Boolean(process.env["LOVABLE_API_KEY"]),
-      detail: process.env["LOVABLE_API_KEY"] ? "Key configured" : "Key missing",
+      ok: configured.length > 0,
+      detail:
+        configured.length > 0
+          ? `Server keys active (${configured.join(", ")})`
+          : hasPlaceholder
+            ? "Server has placeholder API key; enter key in AI Model Hub"
+            : "No server keys configured; enter key in AI Model Hub",
     });
     const { error: dbError } = await context.supabase
       .from("profiles")

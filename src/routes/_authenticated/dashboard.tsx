@@ -29,6 +29,7 @@ import {
   selectBuddy,
 } from "@/lib/app.functions";
 import { PERMISSION_DESCRIPTIONS } from "@/shared/permissions";
+import { findCatalogModel } from "@/lib/ai/model-hub";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   component: Dashboard,
@@ -112,8 +113,26 @@ function Dashboard() {
     mutationFn: async (text: string) => {
       const id = ++requestId.current;
       buddy.setEmotion(BUDDY_EMOTION_STATES.THINKING, { reason: "Processing question…" });
+
+      let userApiKey: string | undefined;
+      let customBaseUrl: string | undefined;
+      if (typeof window !== "undefined") {
+        const catalogEntry = findCatalogModel(selectedModelId);
+        const pId =
+          catalogEntry?.provider ?? (selectedModelId.startsWith("gemini") ? "gemini" : undefined);
+        if (pId) {
+          userApiKey = localStorage.getItem(`buddy_key_${pId}`) || undefined;
+          customBaseUrl = localStorage.getItem(`buddy_url_${pId}`) || undefined;
+        }
+      }
+
       const result = await runAsk({
-        data: { question: text, preferredModel: selectedModelId },
+        data: {
+          question: text,
+          preferredModel: selectedModelId,
+          userApiKey,
+          customBaseUrl,
+        },
       });
       return { result, stale: id !== requestId.current };
     },

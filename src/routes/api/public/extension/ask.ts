@@ -47,6 +47,8 @@ const bodySchema = z.object({
     .nullable()
     .default(null),
   preferredModel: z.string().max(100).optional(),
+  userApiKey: z.string().max(200).optional(),
+  customBaseUrl: z.string().max(300).optional(),
 });
 
 const json = (body: unknown, status = 200) =>
@@ -78,6 +80,8 @@ export const Route = createFileRoute("/api/public/extension/ask")({
             snapshot: parsed.snapshot as never,
             source: "extension",
             preferredModel: parsed.preferredModel,
+            userApiKey: parsed.userApiKey,
+            customBaseUrl: parsed.customBaseUrl,
           });
           return json(result);
         } catch (error) {

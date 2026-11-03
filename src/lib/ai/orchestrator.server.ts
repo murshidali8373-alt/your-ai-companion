@@ -6,7 +6,7 @@
  * walk an ordered fallback chain with a hard attempt cap. No infinite retries.
  */
 
-import { AiError, isFallbackWorthy, normalizeGatewayError } from "./errors";
+import { AiError, isFallbackWorthy, normalizeGatewayError, normalizeProviderError } from "./errors";
 import { MODELS, route, type ModelEntry, type RouteRequest } from "./registry";
 
 const GATEWAY = "https://ai.gateway.lovable.dev/v1";
@@ -149,25 +149,12 @@ async function callChat(model: ModelEntry, system: string, user: string): Promis
   return text;
 }
 
-async function callGemini(model: ModelEntry, system: string, user: string): Promise<string> {
-  const geminiKey = process.env["GEMINI_API_KEY"];
-  if (!geminiKey) {
-    throw new AiError("auth", "Gemini API key is not configured.");
-  }
-  const { GoogleGenAI } = await import("@google/genai");
-  const ai = new GoogleGenAI({ apiKey: geminiKey });
-  const modelId = model.id.includes("/") ? model.id.split("/")[1] || "gemini-3.8-flash" : model.id;
-  const response = await ai.models.generateContent({
-    model: modelId,
-    contents: user,
-    config: {
-      systemInstruction: system,
-    },
-  });
-  return response.text ?? "";
-}
-
-async function callOnce(model: ModelEntry, system: string, user: string): Promise<string> {
+async function callOnce(
+  model: ModelEntry,
+  system: string,
+  user: string,
+  options?: { userApiKey?: string; customBaseUrl?: string },
+): Promise<string> {
   try {
     let text = "";
     if (model.provider === "lovable-gateway") {
@@ -194,38 +181,56 @@ async function callOnce(model: ModelEntry, system: string, user: string): Promis
       text = await dispatchModelCall(catalog as never, {
         systemPrompt: system,
         userPrompt: user,
+        userApiKey: options?.userApiKey,
+        customBaseUrl: options?.customBaseUrl,
       });
     }
 
     if (!text.trim()) {
       throw new AiError("invalid_response", "The AI service returned an empty answer.", {
         retryable: true,
+        provider: model.provider,
       });
     }
     return text;
   } catch (error) {
-    if (error instanceof AiError) throw error;
-    throw new AiError("network", "I could not reach the AI service.", {
-      retryable: true,
-      cause: error,
-    });
+    if (error instanceof AiError) {
+      if (!error.provider) error.provider = model.provider;
+      throw error;
+    }
+    throw normalizeProviderError(error, model.provider);
   }
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+export interface ExecutionTraceStep {
+  model: string;
+  provider: string;
+  error: string;
+  kind: string;
+}
+
 /**
  * Run a request against the routed candidates. Tries at most MAX_ATTEMPTS times in
- * total across all providers; a terminal error (bad request, auth, credits, blocked)
- * stops immediately because retrying it returns the same failure.
+ * total across all eligible providers; handles authentication failures by failing over
+ * to secondary providers, without wasting attempts on the same unconfigured provider.
  */
 export async function generate(input: {
   system: string;
   user: string;
   routing: RouteRequest;
   /** Override the candidate list (used by tests and by explicit model choice). */
-  candidates?: ModelEntry[] | undefined;
-  call?: (model: ModelEntry, system: string, user: string) => Promise<string>;
+  candidates?: ModelEntry[];
+  call?: (
+    model: ModelEntry,
+    system: string,
+    user: string,
+    options?: { userApiKey?: string; customBaseUrl?: string },
+  ) => Promise<string>;
+  userApiKey?: string;
+  customBaseUrl?: string;
+  userProvider?: string;
 }): Promise<ModelCallResult> {
   const candidates = input.candidates ?? route(input.routing);
   const call = input.call ?? callOnce;
@@ -234,12 +239,26 @@ export async function generate(input: {
 
   let attempts = 0;
   let lastError: AiError | undefined;
+  const failedProviders = new Set<string>();
+  const executionTrace: ExecutionTraceStep[] = [];
+  const primaryProvider = input.userProvider ?? pool[0]?.provider;
 
   for (const model of pool) {
     if (attempts >= MAX_ATTEMPTS) break;
+
+    // Skip candidate if this provider already failed with non-recoverable auth or balance error
+    if (failedProviders.has(model.provider)) {
+      continue;
+    }
+
     attempts += 1;
     try {
-      const text = await call(model, input.system, input.user);
+      const isTargetProvider = !primaryProvider || model.provider === primaryProvider;
+      const callOptions = isTargetProvider
+        ? { userApiKey: input.userApiKey, customBaseUrl: input.customBaseUrl }
+        : undefined;
+
+      const text = await call(model, input.system, input.user, callOptions);
       return {
         text,
         model: model.id,
@@ -250,10 +269,23 @@ export async function generate(input: {
       };
     } catch (error) {
       const aiError =
-        error instanceof AiError
-          ? error
-          : new AiError("network", "I could not reach the AI service.", { cause: error });
+        error instanceof AiError ? error : normalizeProviderError(error, model.provider);
+
+      if (!aiError.provider) aiError.provider = model.provider;
       lastError = aiError;
+
+      executionTrace.push({
+        model: model.id,
+        provider: model.provider,
+        error: aiError.userMessage,
+        kind: aiError.kind,
+      });
+
+      // Avoid retrying subsequent models on the exact same provider if credentials failed
+      if (aiError.kind === "auth" || aiError.kind === "credits") {
+        failedProviders.add(model.provider);
+      }
+
       if (!isFallbackWorthy(aiError)) throw aiError;
       if (aiError.kind === "rate_limit") {
         await sleep(Math.min((aiError.retryAfterSeconds ?? 1) * 1000, 5_000));
@@ -261,8 +293,9 @@ export async function generate(input: {
     }
   }
 
-  throw (
+  const finalError =
     lastError ??
-    new AiError("outage", "No AI provider was available. Please try again in a moment.")
-  );
+    new AiError("outage", "No AI provider was available. Please try again in a moment.");
+  (finalError as Error & { executionTrace?: ExecutionTraceStep[] }).executionTrace = executionTrace;
+  throw finalError;
 }
