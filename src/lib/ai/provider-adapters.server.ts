@@ -36,7 +36,7 @@ export interface ProviderVerificationResult {
  * 1. Google Gemini via official @google/genai SDK
  */
 export async function callGemini(model: ModelEntry, opts: ProviderCallOptions): Promise<string> {
-  const apiKey = opts.userApiKey || process.env["GEMINI_API_KEY"];
+  const apiKey = opts.userApiKey || (process.env["GEMINI_API_KEY"] || process.env["GOOGLE_API_KEY"]);
   if (!apiKey) {
     throw new AiError("auth", "Google Gemini API key is not configured.", {
       resolution:
@@ -373,7 +373,7 @@ export async function verifyProviderConnection(
   try {
     switch (providerId) {
       case "gemini": {
-        const key = userApiKey || process.env["GEMINI_API_KEY"];
+        const key = userApiKey || (process.env["GEMINI_API_KEY"] || process.env["GOOGLE_API_KEY"]);
         if (!key) {
           return {
             providerId,

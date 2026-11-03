@@ -67,7 +67,7 @@ export interface SetEmotionOptions {
   /** State to revert back to after durationMs (defaults to 'IDLE') */
   revertTo?: Emotion;
   /** Optional contextual note or reason */
-  reason?: string;
+  reason?: string | undefined;
 }
 
 export interface UseBuddyStateReturn {
