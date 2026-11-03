@@ -308,7 +308,7 @@ export const getModelHubStatus = createServerFn({ method: "GET" })
         let message = PROVIDERS[id].rateLimitNote;
 
         if (id === "gemini") {
-          status = process.env["GEMINI_API_KEY"] ? "connected" : "needs_key";
+          status = (process.env["GEMINI_API_KEY"] || process.env["GOOGLE_API_KEY"]) ? "connected" : "needs_key";
           message =
             status === "connected"
               ? "Google Gemini is active via server key."

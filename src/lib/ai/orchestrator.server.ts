@@ -150,7 +150,7 @@ async function callChat(model: ModelEntry, system: string, user: string): Promis
 }
 
 async function callGemini(model: ModelEntry, system: string, user: string): Promise<string> {
-  const geminiKey = process.env["GEMINI_API_KEY"];
+  const geminiKey = (process.env["GEMINI_API_KEY"] || process.env["GOOGLE_API_KEY"]);
   if (!geminiKey) {
     throw new AiError("auth", "Gemini API key is not configured.");
   }
