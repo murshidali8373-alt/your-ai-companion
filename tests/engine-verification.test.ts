@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AiError, normalizeProviderError, isFallbackWorthy } from "../src/lib/ai/errors";
 import { generate } from "../src/lib/ai/orchestrator.server";
 import { findModel, route, type ModelEntry } from "../src/lib/ai/registry";
@@ -8,8 +8,10 @@ import { verifyProviderConnection } from "../src/lib/ai/provider-adapters.server
 describe("Post-Repair Verification: AI Provider Engine", () => {
   describe("Verification 1: Real AI Response & Credential Availability", () => {
     it("reports honest status when server keys are not configured in environment", async () => {
+      vi.stubEnv("GEMINI_API_KEY", "");
+      vi.stubEnv("GOOGLE_API_KEY", "");
       const geminiCheck = await verifyProviderConnection("gemini");
-      // Environment does not have a live GEMINI_API_KEY provisioned
+      vi.unstubAllEnvs();
       expect(geminiCheck.ok).toBe(false);
       expect(geminiCheck.status).toBe("needs_key");
       expect(geminiCheck.message).toContain("GEMINI_API_KEY");
