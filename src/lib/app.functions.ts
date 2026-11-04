@@ -319,7 +319,8 @@ export const getModelHubStatus = createServerFn({ method: "GET" })
           Boolean(key && !key.startsWith("MY_") && !key.includes("your-key"));
 
         if (id === "gemini") {
-          const key = process.env["GEMINI_API_KEY"];
+          const { getGeminiKey } = await import("./ai/provider-keys.server");
+          const key = getGeminiKey() ?? process.env["GEMINI_API_KEY"];
           status = isRealKey(key) ? "connected" : "needs_key";
           message =
             status === "connected"
@@ -434,7 +435,7 @@ export const diagnose = createServerFn({ method: "GET" })
     const checks: Array<{ name: string; ok: boolean; detail: string }> = [];
     const isReal = (k?: string) => Boolean(k && !k.startsWith("MY_") && !k.includes("your-key"));
     const configured: string[] = [];
-    if (isReal(process.env["GEMINI_API_KEY"])) configured.push("Gemini");
+    if (isReal(process.env["GEMINI_API_KEY"]) || isReal(process.env["GOOGLE_API_KEY"])) configured.push("Gemini");
     if (isReal(process.env["GROQ_API_KEY"])) configured.push("Groq");
     if (isReal(process.env["OPENROUTER_API_KEY"])) configured.push("OpenRouter");
     if (isReal(process.env["OPENAI_API_KEY"])) configured.push("OpenAI");

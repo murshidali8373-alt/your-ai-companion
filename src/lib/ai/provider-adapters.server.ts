@@ -12,6 +12,7 @@
  * - GitHub Models
  */
 
+import { getGeminiKey } from "./provider-keys.server";
 import { AiError, normalizeProviderError } from "./errors";
 import { type ModelEntry, type ProviderId, PROVIDERS } from "./model-hub";
 
@@ -47,7 +48,7 @@ export async function callGemini(model: ModelEntry, opts: ProviderCallOptions): 
     }
   }
 
-  const apiKey = opts.userApiKey || process.env["GEMINI_API_KEY"];
+  const apiKey = opts.userApiKey || getGeminiKey();
   if (!apiKey || apiKey.startsWith("MY_")) {
     throw new AiError("auth", "Google Gemini API key is not configured.", {
       resolution:
@@ -437,7 +438,7 @@ export async function verifyProviderConnection(
   try {
     switch (providerId) {
       case "gemini": {
-        const key = userApiKey || process.env["GEMINI_API_KEY"];
+        const key = userApiKey || getGeminiKey();
         if (!key || key.startsWith("MY_")) {
           return {
             providerId,

@@ -9,7 +9,8 @@ export type AiErrorKind =
   | "outage"
   | "timeout"
   | "invalid_response"
-  | "network";
+  | "network"
+  | "provider_error";
 
 export class AiError extends Error {
   kind: AiErrorKind;
@@ -228,5 +229,6 @@ export function isFallbackWorthy(error: AiError): boolean {
     "timeout",
     "network",
     "invalid_response",
+    "provider_error",
   ].includes(error.kind);
 }

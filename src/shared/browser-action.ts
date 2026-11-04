@@ -126,7 +126,7 @@ export function verifyActionResult(
 }
 
 /** Actions considered high-impact that require user confirmation before execution */
-export const HIGH_IMPACT_ACTIONS: ActionType[] = ["click", "fill_field"];
+export const HIGH_IMPACT_ACTIONS: BrowserActionType[] = ["click", "fill_field"];
 
 /**
  * Validates whether an action is safe to execute according to permissions,
