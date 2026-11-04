@@ -241,12 +241,14 @@ function Landing() {
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Button asChild size="lg">
-                <Link to="/auth" search={{ mode: "signup" }}>
-                  Try free
-                </Link>
+                <a href="#voice">
+                  Chat with Buddy
+                </a>
               </Button>
               <Button asChild size="lg" variant="secondary">
-                <Link to="/auth">Login</Link>
+                <a href="#buddies">
+                  Explore 15 Buddies
+                </a>
               </Button>
               <Button asChild size="lg" variant="outline">
                 <Link to="/download">Download extension</Link>
@@ -299,11 +301,23 @@ function Landing() {
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {buddies.map((buddy) => (
-              <div key={buddy.slug} className="panel p-5">
+              <a
+                key={buddy.slug}
+                href="#voice"
+                onClick={() => {
+                  if (typeof window !== "undefined") {
+                    localStorage.setItem("buddy_selected_slug", buddy.slug);
+                    window.dispatchEvent(new CustomEvent("buddy:selected", { detail: buddy.slug }));
+                  }
+                }}
+                className="panel p-5 transition-all hover:scale-[1.02] hover:border-primary/50 cursor-pointer block text-left"
+              >
                 <div className="flex items-center gap-3">
                   <BuddyAvatar buddyId={buddy.slug} size={40} />
                   <div>
-                    <h3 className="font-semibold">{buddy.name}</h3>
+                    <h3 className="font-semibold text-foreground flex items-center gap-1.5">
+                      {buddy.name}
+                    </h3>
                     <p className="text-xs text-muted-foreground">{buddy.tagline}</p>
                   </div>
                 </div>
@@ -314,7 +328,10 @@ function Landing() {
                     </Badge>
                   ))}
                 </div>
-              </div>
+                <div className="mt-3 text-[11px] font-medium text-primary flex items-center gap-1">
+                  Chat with {buddy.name} →
+                </div>
+              </a>
             ))}
           </div>
         )}

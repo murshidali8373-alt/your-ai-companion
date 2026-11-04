@@ -107,7 +107,21 @@ async function loadPersona(db: Db, userId: string): Promise<Persona> {
 
   const slug = profile?.selected_buddy_slug ?? "friendly";
   const { data: buddy } = await db.from("buddies").select("*").eq("slug", slug).maybeSingle();
-  if (!buddy) return { ...DEFAULT_PERSONA, language: profile?.language ?? "hinglish" };
+  if (!buddy) {
+    const { getBuddyPreset } = await import("./ai/buddy-personas");
+    const preset = getBuddyPreset(slug);
+    return {
+      slug: preset.slug,
+      name: preset.name,
+      personality: preset.personality,
+      teachingStyle: preset.teaching_style,
+      humorLevel: preset.humor_level,
+      seriousness: preset.seriousness,
+      language: profile?.language ?? preset.default_language,
+      expertise: preset.expertise,
+      systemPrompt: preset.system_prompt,
+    };
+  }
   return {
     slug: buddy.slug,
     name: buddy.name,

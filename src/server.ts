@@ -1,5 +1,13 @@
 import "./lib/error-capture";
 
+if (typeof process.loadEnvFile === "function" && !process.env["GEMINI_API_KEY"]) {
+  try {
+    process.loadEnvFile(".env");
+  } catch {
+    // Environment variables already provided by host environment
+  }
+}
+
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 

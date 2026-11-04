@@ -32,17 +32,25 @@ function publicClient() {
 }
 
 export const listBuddies = createServerFn({ method: "GET" }).handler(async () => {
-  const { data, error } = await publicClient()
-    .from("buddies")
-    .select(
-      "slug, name, tagline, expertise, personality, teaching_style, humor_level, seriousness, default_language, accent_color, recommended_skills, sort_order",
-    )
-    .order("sort_order", { ascending: true });
-  if (error) {
-    console.error("[listBuddies]", error.message);
-    return { buddies: [], error: "The Buddy list is temporarily unavailable." };
+  const { BUDDY_PRESETS } = await import("./ai/buddy-personas");
+  try {
+    const url = process.env["SUPABASE_URL"];
+    const key = process.env["SUPABASE_PUBLISHABLE_KEY"];
+    if (url && key) {
+      const { data, error } = await publicClient()
+        .from("buddies")
+        .select(
+          "slug, name, tagline, expertise, personality, teaching_style, humor_level, seriousness, default_language, accent_color, recommended_skills, sort_order",
+        )
+        .order("sort_order", { ascending: true });
+      if (!error && data && data.length > 0) {
+        return { buddies: data, error: null as string | null };
+      }
+    }
+    return { buddies: BUDDY_PRESETS, error: null as string | null };
+  } catch {
+    return { buddies: BUDDY_PRESETS, error: null as string | null };
   }
-  return { buddies: data ?? [], error: null as string | null };
 });
 
 export const getDashboard = createServerFn({ method: "GET" })

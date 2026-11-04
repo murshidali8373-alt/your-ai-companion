@@ -149,6 +149,10 @@ export function route(request: RouteRequest): ModelEntry[] {
   const wantsReasoning = request.intent === "plan";
 
   candidates.sort((a, b) => {
+    // Primary configured provider (Gemini) is given first priority
+    if (a.provider === "gemini" && b.provider !== "gemini") return -1;
+    if (b.provider === "gemini" && a.provider !== "gemini") return 1;
+
     if (wantsReasoning && a.cost !== b.cost) return b.cost - a.cost; // strongest first
     if (wantsFast && a.speed !== b.speed) return a.speed - b.speed;
     if (wantsCheap && a.cost !== b.cost) return a.cost - b.cost;

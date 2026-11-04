@@ -34,13 +34,25 @@ export interface ProviderVerificationResult {
 
 /**
  * 1. Google Gemini via official @google/genai SDK
+ * Supports gemini-3.8-flash (primary) and gemini-3.1-flash-lite (alternate),
+ * with jittered exponential backoff for temporary 503 high-demand / 504 timeout spikes.
  */
 export async function callGemini(model: ModelEntry, opts: ProviderCallOptions): Promise<string> {
+  // Ensure server environment has loaded .env if not already present
+  if (typeof process.loadEnvFile === "function" && !process.env["GEMINI_API_KEY"]) {
+    try {
+      process.loadEnvFile(".env");
+    } catch {
+      // Ignore if .env is missing in container
+    }
+  }
+
   const apiKey = opts.userApiKey || process.env["GEMINI_API_KEY"];
-  if (!apiKey) {
+  if (!apiKey || apiKey.startsWith("MY_")) {
     throw new AiError("auth", "Google Gemini API key is not configured.", {
       resolution:
         "Provide your Gemini API key in Settings > AI Model Hub or check your server environment.",
+      provider: "gemini",
     });
   }
 
@@ -54,21 +66,72 @@ export async function callGemini(model: ModelEntry, opts: ProviderCallOptions): 
     },
   });
 
-  const modelId = model.providerModelId || model.id;
-  const response = await ai.models.generateContent({
-    model: modelId,
-    contents: opts.userPrompt,
-    config: {
-      systemInstruction: opts.systemPrompt,
-    },
-  });
-
-  const text = response.text ?? "";
-  if (!text.trim()) {
-    throw new AiError("invalid_response", "Gemini returned an empty reply.");
+  // Protect against deprecated model IDs (e.g. 2.5-flash/1.5-flash no longer available to new users)
+  let targetModelId = model.providerModelId || model.id;
+  if (targetModelId.includes("2.5-flash") || targetModelId.includes("1.5-flash")) {
+    targetModelId = "gemini-3.5-flash";
   }
-  return text;
+
+  // Model trial sequence: target model first, then verified active models (3.5-flash, 3.8-flash, 3.1-flash-lite)
+  const candidateModels = [
+    targetModelId,
+    "gemini-3.5-flash",
+    "gemini-3.8-flash",
+    "gemini-3.1-flash-lite",
+  ];
+  const trialModels = candidateModels.filter((m, idx, arr) => arr.indexOf(m) === idx);
+
+  let lastErr: unknown;
+
+  for (let i = 0; i < trialModels.length; i++) {
+    const currentModel = trialModels[i]!;
+    // If not first attempt, wait brief backoff before retrying alternate model
+    if (i > 0) {
+      const jitter = Math.floor(Math.random() * 400) + 600;
+      await new Promise((r) => setTimeout(r, jitter));
+    }
+
+    try {
+      if (opts.signal?.aborted) {
+        throw new AiError("timeout", "Request was canceled by user.", { provider: "gemini" });
+      }
+
+      const response = await ai.models.generateContent({
+        model: currentModel,
+        contents: opts.userPrompt,
+        config: {
+          systemInstruction: opts.systemPrompt,
+        },
+      });
+
+      const text = response.text ?? "";
+      if (text.trim()) {
+        return text;
+      }
+    } catch (err: unknown) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      const isRecoverableByAlternateModel =
+        msg.includes("503") ||
+        msg.includes("504") ||
+        msg.includes("404") ||
+        msg.includes("DEADLINE_EXCEEDED") ||
+        msg.includes("high demand") ||
+        msg.includes("UNAVAILABLE") ||
+        msg.includes("no longer available") ||
+        msg.includes("not found");
+
+      // Only attempt model failover if the error is temporary capacity/timeout or model unavailable
+      if (!isRecoverableByAlternateModel || i === trialModels.length - 1) {
+        break;
+      }
+    }
+  }
+
+  // Normalize final error
+  throw normalizeProviderError(lastErr || new Error("Gemini returned an empty reply"), "gemini");
 }
+
 
 /**
  * 2. GroqCloud via OpenAI-compatible endpoint
