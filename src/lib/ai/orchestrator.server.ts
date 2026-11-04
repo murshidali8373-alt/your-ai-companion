@@ -234,7 +234,17 @@ export async function generate(input: {
 }): Promise<ModelCallResult> {
   const candidates = input.candidates ?? route(input.routing);
   const call = input.call ?? callOnce;
-  const pool = candidates.length ? candidates : MODELS;
+  // Exclude providers with no server key (unless the caller supplied their own key for it).
+  const { isProviderConfigured } = await import("./provider-keys.server");
+  const userKeyProvider = input.userApiKey ? (input.userProvider ?? candidates[0]?.provider) : undefined;
+  const usable = (list: ModelEntry[]) =>
+    input.call ? list : list.filter((m) => isProviderConfigured(m.provider, userKeyProvider));
+  const pool = usable(candidates).length ? usable(candidates) : usable(MODELS);
+  if (!pool.length) {
+    throw new AiError("auth", "No AI provider is configured on the server.", {
+      resolution: "Add GEMINI_API_KEY (or GOOGLE_API_KEY) in Project Settings → Secrets.",
+    });
+  }
   const started = Date.now();
 
   let attempts = 0;

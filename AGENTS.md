@@ -14,3 +14,6 @@
 - Buddy appearance is configured in a shared visual registry consumed by BuddyAvatar; role changes must not alter Buddy business records.
 - Premium avatar mode uses transparent pre-rendered 3D artwork with a matching inline vector fallback, not the mechanical starter GLBs; this avoids WebGL overhead and guarantees a fallback without network access.
 - BuddyLogo is the shared brand mark; avatar motion lives in global CSS and honors reduced-motion preferences.
+
+- Server AI keys are read only via src/lib/ai/provider-keys.server.ts (Gemini accepts GEMINI_API_KEY or GOOGLE_API_KEY); the orchestrator skips providers without a key so missing keys never block fallback.
+- tsconfig exactOptionalPropertyTypes is off: GitHub-synced code passes explicit undefined throughout, and the strict flag blocked the build.
