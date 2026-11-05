@@ -13,6 +13,7 @@ import type { Database } from "@/integrations/supabase/types";
 import { AiError } from "./ai/errors";
 import { generate } from "./ai/orchestrator.server";
 import { buildSystemPrompt, parseBuddyReply, type BuddyReply } from "./ai/prompt";
+import { getBuddyPreset } from "./ai/buddy-personas";
 import { findModel, route, type TaskIntent } from "./ai/registry";
 import {
   buildPageContext,
@@ -43,6 +44,10 @@ export interface AskOutput {
   reply: BuddyReply;
   /** The element to highlight, re-resolved against the snapshot we were given. */
   highlightSelector: string | null;
+  calloutTitle?: string | null;
+  calloutDescription?: string | null;
+  actionType?: "click" | "type" | "scroll" | "inspect" | null;
+  targetRect?: SnapshotElement["rect"] | null;
   buddyName: string;
   permission: PermissionLevel;
   model?: string;
@@ -252,6 +257,7 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
     permission,
     memories,
     privacyMode,
+    providerDisclosure: "Google Gemini",
   });
   const user = `${pageContext}\n\nUSER (${input.source}): ${question}`;
   await event(db, taskId, userId, "understand", `Context ~${estimateTokens(user)} tokens`);
@@ -282,11 +288,22 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
     const reply = parseBuddyReply(result.text);
 
     let highlightSelector: string | null = null;
+    let targetRect: SnapshotElement["rect"] | null = null;
+    let element: SnapshotElement | null = null;
     if (reply.highlight && input.snapshot) {
-      const element = resolveRef(input.snapshot, reply.highlight);
+      element = resolveRef(input.snapshot, reply.highlight) as SnapshotElement | null;
       highlightSelector = element?.selector ?? null;
+      targetRect = element?.rect ?? null;
       if (!element) reply.highlight = null;
     }
+
+    const calloutTitle =
+      reply.calloutTitle || (element?.name ? element.name.slice(0, 50) : null);
+    const calloutDescription =
+      reply.calloutDescription || (element?.errorMessage ? element.errorMessage : null);
+    const actionType =
+      reply.actionType ||
+      (element?.role === "textbox" || element?.role === "textarea" ? "type" : "click");
 
     if (result.fellBack && input.preferredModel) {
       await event(
@@ -327,6 +344,10 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       taskId,
       reply,
       highlightSelector,
+      calloutTitle,
+      calloutDescription,
+      actionType,
+      targetRect,
       buddyName: persona.name,
       permission,
       model: result.model,
@@ -350,6 +371,138 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
     console.error("[buddy] ask failed", aiError.kind, aiError.cause ?? aiError.message);
     return {
       taskId,
+      reply: {
+        answer: aiError.userMessage,
+        highlight: null,
+        confidence: "low",
+        needs: null,
+        emotion: "concerned",
+      },
+      highlightSelector: null,
+      buddyName: persona.name,
+      permission,
+      blocked: aiError.kind === "credits" || aiError.kind === "blocked",
+    };
+  }
+}
+
+/**
+ * Public guest execution: Allows browser extension and unauthenticated users to
+ * inspect pages and receive grounded AI Buddy guidance without an account gate.
+ */
+export async function askGuest(input: AskInput): Promise<AskOutput> {
+  const question = input.question.trim().slice(0, 2000);
+  if (!question) throw new AiError("bad_request", "Ask me something first.");
+
+  const persona = getBuddyPreset("friendly");
+  const permission: PermissionLevel = "explain";
+
+  if (input.snapshot) {
+    const restriction = checkUrl(input.snapshot.url, []);
+    if (restriction.restricted) {
+      return {
+        taskId: null,
+        reply: {
+          answer: restriction.reason ?? "I cannot read this restricted page.",
+          highlight: null,
+          confidence: "high",
+          needs: null,
+          emotion: "concerned",
+        },
+        highlightSelector: null,
+        buddyName: persona.name,
+        permission,
+        blocked: true,
+      };
+    }
+  }
+
+  const pageContext = input.snapshot
+    ? buildPageContext(input.snapshot)
+    : "No page context available.";
+  const system = buildSystemPrompt({
+    persona: {
+      name: persona.name,
+      personality: persona.personality,
+      teachingStyle: persona.teaching_style,
+      humorLevel: persona.humor_level,
+      seriousness: persona.seriousness,
+      language: persona.default_language,
+      expertise: persona.expertise,
+      systemPrompt: persona.system_prompt,
+    },
+    permission,
+    memories: [],
+    privacyMode: true,
+    providerDisclosure: "Google Gemini",
+  });
+  const user = `${pageContext}\n\nUSER (${input.source}): ${question}`;
+
+  try {
+    const routingParams = {
+      intent: input.intent,
+      needsVision: false,
+      contextTokens: estimateTokens(system + user) + 1200,
+      latencySensitive: input.intent === "locate_element",
+      costSensitive: false,
+    };
+    const defaultCandidates = route(routingParams);
+    const targetModel = input.preferredModel ? findModel(input.preferredModel) : undefined;
+    const candidates = targetModel
+      ? [targetModel, ...defaultCandidates.filter((m) => m.id !== targetModel.id)]
+      : defaultCandidates;
+
+    const result = await generate({
+      system,
+      user,
+      routing: routingParams,
+      candidates,
+      userApiKey: input.userApiKey ?? undefined,
+      customBaseUrl: input.customBaseUrl ?? undefined,
+    });
+
+    const reply = parseBuddyReply(result.text);
+    let highlightSelector: string | null = null;
+    let targetRect: SnapshotElement["rect"] | null = null;
+    let resolved: SnapshotElement | null = null;
+    if (reply.highlight && input.snapshot) {
+      resolved = resolveRef(input.snapshot, reply.highlight) as SnapshotElement | null;
+      highlightSelector = resolved?.selector ?? null;
+      targetRect = resolved?.rect ?? null;
+      if (!resolved) reply.highlight = null;
+    }
+
+    const calloutTitle =
+      reply.calloutTitle || (resolved?.name ? resolved.name.slice(0, 50) : null);
+    const calloutDescription =
+      reply.calloutDescription || (resolved?.errorMessage ? resolved.errorMessage : null);
+    const actionType =
+      reply.actionType ||
+      (resolved?.role === "textbox" || resolved?.role === "textarea" ? "type" : "click");
+
+    return {
+      taskId: null,
+      reply,
+      highlightSelector,
+      calloutTitle,
+      calloutDescription,
+      actionType,
+      targetRect,
+      buddyName: persona.name,
+      permission,
+      model: result.model,
+      latencyMs: result.latencyMs,
+      fellBack: result.fellBack,
+    };
+  } catch (error) {
+    const aiError =
+      error instanceof AiError
+        ? error
+        : new AiError("outage", "Something went wrong on my side. Try once more.", {
+            cause: error,
+          });
+    return {
+      taskId: null,
       reply: {
         answer: aiError.userMessage,
         highlight: null,

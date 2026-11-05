@@ -133,7 +133,6 @@ export async function callGemini(model: ModelEntry, opts: ProviderCallOptions): 
   throw normalizeProviderError(lastErr || new Error("Gemini returned an empty reply"), "gemini");
 }
 
-
 /**
  * 2. GroqCloud via OpenAI-compatible endpoint
  */

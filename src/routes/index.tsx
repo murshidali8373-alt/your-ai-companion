@@ -241,14 +241,10 @@ function Landing() {
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Button asChild size="lg">
-                <a href="#voice">
-                  Chat with Buddy
-                </a>
+                <a href="#voice">Chat with Buddy</a>
               </Button>
               <Button asChild size="lg" variant="secondary">
-                <a href="#buddies">
-                  Explore 15 Buddies
-                </a>
+                <a href="#buddies">Explore 15 Buddies</a>
               </Button>
               <Button asChild size="lg" variant="outline">
                 <Link to="/download">Download extension</Link>

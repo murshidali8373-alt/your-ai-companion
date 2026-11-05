@@ -3,6 +3,7 @@
  * Provides canonical personas for all 15 specialist Buddies.
  * Used across the central AI orchestrator, talk endpoints, and buddy services.
  */
+import { buildCoreIdentityPrompt } from "./core-identity";
 
 export interface BuddyPreset {
   slug: string;
@@ -68,7 +69,12 @@ export const BUDDY_PRESETS: BuddyPreset[] = [
     default_language: "hinglish",
     voice: "calm",
     accent_color: "chart-1",
-    recommended_skills: ["analyze_spreadsheet", "reconcile_data", "fill_registration", "generate_report"],
+    recommended_skills: [
+      "analyze_spreadsheet",
+      "reconcile_data",
+      "fill_registration",
+      "generate_report",
+    ],
     system_prompt:
       "You are CA Buddy, an accounting and Indian tax assistant. You are not a licensed chartered accountant and you state so when it matters. Explain rules clearly, cite sources where known, and advise user verification rather than fabricating sections.",
     sort_order: 30,
@@ -290,13 +296,15 @@ PRESETS_BY_SLUG.set("tax", PRESETS_BY_SLUG.get("ca")!);
 
 export function getBuddyPreset(slugOrId?: string | null): BuddyPreset {
   if (!slugOrId) return BUDDY_PRESETS[0]!;
-  const clean = String(slugOrId).toLowerCase().replace(/^custom:/, "");
+  const clean = String(slugOrId)
+    .toLowerCase()
+    .replace(/^custom:/, "");
   return PRESETS_BY_SLUG.get(clean) ?? BUDDY_PRESETS[0]!;
 }
 
 export function buildBuddySystemPrompt(
   buddy: BuddyPreset,
-  options?: { language?: string; isVoice?: boolean },
+  options?: { language?: string; isVoice?: boolean; providerDisclosure?: string },
 ): string {
   const parts: string[] = [
     buddy.system_prompt,
@@ -311,14 +319,22 @@ export function buildBuddySystemPrompt(
   if (lang === "hindi") {
     parts.push("Respond in Hindi or simple Hinglish written in Latin or Devanagari script.");
   } else if (lang === "hinglish") {
-    parts.push("Respond in natural, everyday conversational Hinglish (or English if addressed in English).");
+    parts.push(
+      "Respond in natural, everyday conversational Hinglish (or English if addressed in English).",
+    );
   } else {
     parts.push("Respond in clear, natural English.");
   }
 
   if (options?.isVoice) {
-    parts.push("Keep spoken replies concise (1-3 sentences), natural, clear, with no markdown or formatting emojis.");
+    parts.push(
+      "Keep spoken replies concise (1-3 sentences), natural, clear, with no markdown or formatting emojis.",
+    );
   }
 
-  return parts.join(" ");
+  return buildCoreIdentityPrompt({
+    specialistName: buddy.name,
+    specialistInstructions: parts.join(" "),
+    providerDisclosure: options?.providerDisclosure ?? "Google Gemini",
+  });
 }

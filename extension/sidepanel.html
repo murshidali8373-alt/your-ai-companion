@@ -512,31 +512,74 @@
         </div>
       </div>
 
-      <!-- Signed Out Screen -->
-      <div id="signedOut" class="auth-banner" hidden>
-        <p style="font-weight: 600; font-size: 13px">
-          Connect your account to enable AI Buddy on this page.
-        </p>
-        <button id="connectBtn">Connect account</button>
+      <!-- Signed Out / Guest Mode Banner (Non-blocking) -->
+      <div
+        id="signedOut"
+        class="auth-banner"
+        style="
+          padding: 10px 14px;
+          background: rgba(20, 184, 166, 0.08);
+          border-color: rgba(20, 184, 166, 0.25);
+        "
+        hidden
+      >
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+          <p style="font-size: 11px; color: var(--muted); text-align: left; margin: 0">
+            <strong style="color: var(--accent)">Guest Mode</strong> — Ask anything or analyze this
+            page. Sign in to sync memory.
+          </p>
+          <button
+            id="connectBtn"
+            class="ghost"
+            style="padding: 3px 8px; font-size: 11px; white-space: nowrap"
+          >
+            Connect
+          </button>
+        </div>
       </div>
 
-      <!-- Signed In Main Interface -->
-      <div id="signedIn" class="content-area" hidden>
+      <!-- Page Error Detection Card -->
+      <div
+        id="pageErrorBanner"
+        class="confirm-card"
+        style="border-color: var(--destructive); background: rgba(239, 68, 68, 0.12)"
+        hidden
+      >
+        <h4 style="color: #fca5a5; font-size: 12px; margin-bottom: 2px">🚨 Page Issues Detected</h4>
+        <p id="pageErrorText" style="font-size: 11px; color: var(--text)"></p>
+        <div style="display: flex; gap: 6px; margin-top: 4px">
+          <button
+            id="fixErrorsBtn"
+            style="padding: 4px 8px; font-size: 11px; background: var(--destructive); color: white"
+          >
+            Explain & Fix Errors
+          </button>
+          <button id="dismissErrorsBtn" class="ghost" style="padding: 4px 8px; font-size: 11px">
+            Dismiss
+          </button>
+        </div>
+      </div>
+
+      <!-- Signed In / Guest Main Interface -->
+      <div id="signedIn" class="content-area">
         <div class="quick-chips">
-          <span class="chip" data-q="Explain what this page is about simply." data-i="explain_page"
-            >Explain page</span
-          >
-          <span class="chip" data-q="What should I do next on this page?" data-i="plan"
-            >Next step</span
-          >
-          <span class="chip" data-q="Find all form fields and inputs." data-i="locate_element"
-            >Find inputs</span
+          <span
+            class="chip"
+            data-q="Analyze what this page is about simply and summarize key points."
+            data-i="explain_page"
+            >🔍 Analyze page</span
           >
           <span
             class="chip"
-            data-q="Are there any errors or warnings on this page?"
+            data-q="Are there any validation errors, alerts, or missing required fields on this page?"
             data-i="classify"
-            >Check errors</span
+            >⚠️ Check errors</span
+          >
+          <span class="chip" data-q="What should I do next on this page?" data-i="plan"
+            >➡️ Next step</span
+          >
+          <span class="chip" data-q="Find all form fields and inputs." data-i="locate_element"
+            >🎯 Find inputs</span
           >
         </div>
 

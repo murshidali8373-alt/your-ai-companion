@@ -35,7 +35,10 @@ export const quickTalk = createServerFn({ method: "POST" })
     const { findModel } = await import("./ai/registry");
 
     const persona = getBuddyPreset(data.buddySlug);
-    const systemPrompt = buildBuddySystemPrompt(persona, { isVoice: true });
+    const systemPrompt = buildBuddySystemPrompt(persona, {
+      isVoice: true,
+      providerDisclosure: "Google Gemini",
+    });
 
     const convo = data.history
       .map((h) => `${h.role === "user" ? "User" : persona.name}: ${h.text}`)

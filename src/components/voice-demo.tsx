@@ -229,7 +229,11 @@ export function VoiceDemo() {
 
         if (!muted && speaker.current) {
           const isHindi = /[\u0900-\u097F]/.test(replyText);
-          const lang = isHindi ? "hi-IN" : activePreset.default_language === "english" ? "en-IN" : "hi-IN";
+          const lang = isHindi
+            ? "hi-IN"
+            : activePreset.default_language === "english"
+              ? "en-IN"
+              : "hi-IN";
 
           const spoke = speaker.current.speak(replyText, lang, () => {
             if (id === reqId.current) {
@@ -405,7 +409,11 @@ export function VoiceDemo() {
               className="flex items-center gap-1.5 rounded-lg border border-border/80 px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
               title={muted ? "Unmute Voice" : "Mute Voice"}
             >
-              {muted ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5 text-primary" />}
+              {muted ? (
+                <VolumeX className="size-3.5" />
+              ) : (
+                <Volume2 className="size-3.5 text-primary" />
+              )}
               <span>{muted ? "Muted" : "Voice On"}</span>
             </button>
             <div className="flex rounded-lg border border-border p-0.5">
@@ -551,7 +559,9 @@ export function VoiceDemo() {
                 {t.role === "buddy" && (
                   <div className="flex items-center justify-between text-[11px] font-semibold text-primary mb-1">
                     <span>{t.buddyName || activePreset.name}</span>
-                    {t.model && <span className="font-mono text-[10px] text-muted-foreground">{t.model}</span>}
+                    {t.model && (
+                      <span className="font-mono text-[10px] text-muted-foreground">{t.model}</span>
+                    )}
                   </div>
                 )}
                 <div className="whitespace-pre-wrap">{t.text}</div>

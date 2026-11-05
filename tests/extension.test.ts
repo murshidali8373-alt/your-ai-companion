@@ -33,15 +33,19 @@ describe("MV3 Chrome Extension and Side Panel", () => {
     expect(html).toContain('id="answerCard"');
     expect(html).toContain('id="signedIn"');
     expect(html).toContain('id="signedOut"');
+    expect(html).toContain('id="pageErrorBanner"');
+    expect(html).toContain('id="fixErrorsBtn"');
   });
 
-  it("sidepanel.js wires speech, messaging, and emotion states", () => {
+  it("sidepanel.js wires speech, messaging, emotion states, guest mode, and error inspection", () => {
     expect(fs.existsSync(sidepanelJsPath)).toBe(true);
     const js = fs.readFileSync(sidepanelJsPath, "utf-8");
     expect(js).toContain("chrome.runtime.sendMessage");
     expect(js).toContain('type: "ASK"');
     expect(js).toContain("SpeechRecognition");
     expect(js).toContain("setEmotion");
+    expect(js).toContain("checkPageForErrors");
+    expect(js).toContain("Guest Mode");
   });
 
   it("packaged extension zip exists and is ready for download", () => {

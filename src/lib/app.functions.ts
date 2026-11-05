@@ -435,7 +435,8 @@ export const diagnose = createServerFn({ method: "GET" })
     const checks: Array<{ name: string; ok: boolean; detail: string }> = [];
     const isReal = (k?: string) => Boolean(k && !k.startsWith("MY_") && !k.includes("your-key"));
     const configured: string[] = [];
-    if (isReal(process.env["GEMINI_API_KEY"]) || isReal(process.env["GOOGLE_API_KEY"])) configured.push("Gemini");
+    if (isReal(process.env["GEMINI_API_KEY"]) || isReal(process.env["GOOGLE_API_KEY"]))
+      configured.push("Gemini");
     if (isReal(process.env["GROQ_API_KEY"])) configured.push("Groq");
     if (isReal(process.env["OPENROUTER_API_KEY"])) configured.push("OpenRouter");
     if (isReal(process.env["OPENAI_API_KEY"])) configured.push("OpenAI");

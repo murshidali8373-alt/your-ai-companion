@@ -253,7 +253,7 @@ async function render() {
   const { session } = await chrome.storage.local.get("session");
   const isAuth = Boolean(session);
   $("signedOut").hidden = isAuth;
-  $("signedIn").hidden = !isAuth;
+  $("signedIn").hidden = false;
   $("signoutBtn").hidden = !isAuth;
 
   if (session) {
@@ -262,10 +262,62 @@ async function render() {
       chrome.storage.local.set({ lastBase: session.apiBase });
     }
   } else {
-    $("userAccount").textContent = "Not connected";
+    $("userAccount").textContent = "Guest Mode (Sign in optional)";
     setRigEmotion("idle", "Ready");
   }
+
+  checkPageForErrors();
 }
+
+async function checkPageForErrors() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id || !tab.url || /^(chrome|edge|about|devtools):/i.test(tab.url)) return;
+
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["snapshot.js"],
+    });
+    const snapshot = res?.result;
+    if (!snapshot) return;
+
+    const alerts = snapshot.alerts || [];
+    const invalidForms = (snapshot.forms || []).filter((f) => f.invalid);
+
+    const banner = $("pageErrorBanner");
+    const text = $("pageErrorText");
+    if (!banner || !text) return;
+
+    if (alerts.length > 0 || invalidForms.length > 0) {
+      const parts = [];
+      if (alerts.length > 0) {
+        const preview = alerts[0].name.slice(0, 80);
+        parts.push(`${alerts.length} alert(s): "${preview}"`);
+      }
+      if (invalidForms.length > 0) {
+        parts.push(`${invalidForms.length} invalid form field(s) require attention.`);
+      }
+      text.textContent = parts.join(" — ");
+      banner.hidden = false;
+      setRigEmotion("confused", "Issues Found");
+    } else {
+      banner.hidden = true;
+    }
+  } catch {
+    // Non-fatal
+  }
+}
+
+$("fixErrorsBtn").onclick = () => {
+  sendQuery(
+    "Analyze the errors, alerts, and invalid form fields on this page. Explain why they occurred and give me step-by-step instructions to fix them.",
+    "classify",
+  );
+};
+
+$("dismissErrorsBtn").onclick = () => {
+  if ($("pageErrorBanner")) $("pageErrorBanner").hidden = true;
+};
 
 $("connectBtn").onclick = async () => {
   const { lastBase } = await chrome.storage.local.get("lastBase");
@@ -400,7 +452,13 @@ async function sendQuery(question, intent) {
       speakResponse(currentAnswer);
     }
 
-    $("statusText").textContent = res.pageReadable ? "Snapshot analyzed." : "Answered generally.";
+    if (res.guest) {
+      $("statusText").textContent = res.pageReadable
+        ? "Page analyzed (Guest Mode)."
+        : "Answered (Guest Mode).";
+    } else {
+      $("statusText").textContent = res.pageReadable ? "Snapshot analyzed." : "Answered generally.";
+    }
   } catch (err) {
     setRigEmotion("error", "Error");
     $("statusText").textContent = "Could not reach AI service. Please verify connection.";

@@ -7,7 +7,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
-import { ask } from "@/lib/buddy-service.server";
+import { ask, askGuest } from "@/lib/buddy-service.server";
 import { verifyBearer } from "@/lib/supabase-bearer.server";
 
 const elementSchema = z.object({
@@ -62,9 +62,6 @@ export const Route = createFileRoute("/api/public/extension/ask")({
     handlers: {
       POST: async ({ request }) => {
         const auth = await verifyBearer(request.headers.get("authorization"));
-        if (!auth) {
-          return json({ error: "signed_out", message: "Please sign in to Buddy again." }, 401);
-        }
 
         let parsed: z.infer<typeof bodySchema>;
         try {
@@ -74,16 +71,30 @@ export const Route = createFileRoute("/api/public/extension/ask")({
         }
 
         try {
-          const result = await ask(auth.db, auth.userId, {
-            question: parsed.question,
-            intent: parsed.intent,
-            snapshot: parsed.snapshot as never,
-            source: "extension",
-            preferredModel: parsed.preferredModel,
-            userApiKey: parsed.userApiKey,
-            customBaseUrl: parsed.customBaseUrl,
-          });
-          return json(result);
+          if (auth) {
+            const result = await ask(auth.db, auth.userId, {
+              question: parsed.question,
+              intent: parsed.intent,
+              snapshot: parsed.snapshot as never,
+              source: "extension",
+              preferredModel: parsed.preferredModel,
+              userApiKey: parsed.userApiKey,
+              customBaseUrl: parsed.customBaseUrl,
+            });
+            return json(result);
+          } else {
+            // Guest mode: unauthenticated users can still inspect pages and ask Buddy
+            const result = await askGuest({
+              question: parsed.question,
+              intent: parsed.intent,
+              snapshot: parsed.snapshot as never,
+              source: "extension",
+              preferredModel: parsed.preferredModel,
+              userApiKey: parsed.userApiKey,
+              customBaseUrl: parsed.customBaseUrl,
+            });
+            return json({ ...result, guest: true });
+          }
         } catch (error) {
           console.error("[extension/ask]", error);
           return json(

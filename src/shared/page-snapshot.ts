@@ -36,6 +36,15 @@ export interface SnapshotElement {
   options?: string[];
   level?: number;
   sensitive?: boolean;
+  errorMessage?: string;
+  rect?: {
+    x: number;
+    y: number;
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+  };
 }
 
 export interface PageSnapshot {
@@ -66,6 +75,7 @@ function line(el: SnapshotElement): string {
   if (el.required) bits.push("required");
   if (el.disabled) bits.push("disabled");
   if (el.invalid) bits.push("invalid");
+  if (el.errorMessage) bits.push(`error="${el.errorMessage}"`);
   if (el.sensitive) bits.push("sensitive(value hidden)");
   else if (el.value) bits.push(`value="${el.value}"`);
   if (el.options?.length) bits.push(`options=[${el.options.slice(0, 12).join(", ")}]`);

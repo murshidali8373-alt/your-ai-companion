@@ -61,7 +61,8 @@ async function activeTab() {
 
 async function ask(question, intent) {
   const { session } = await chrome.storage.local.get("session");
-  if (!session) return { error: "signed_out", message: "Connect your account first." };
+  const { lastBase } = await chrome.storage.local.get("lastBase");
+  const apiBase = session?.apiBase || lastBase || "http://localhost:3000";
 
   const tab = await activeTab();
   let snapshot = null;
@@ -77,24 +78,42 @@ async function ask(question, intent) {
     }
   }
 
-  const res = await fetch(`${session.apiBase}/api/public/extension/ask`, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${session.accessToken}` },
-    body: JSON.stringify({ question, intent: intent || "answer", snapshot }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (res.status === 401) {
-    await chrome.storage.local.remove("session");
-    return { error: "signed_out", message: "Your sign-in expired. Please connect again." };
+  const headers = { "content-type": "application/json" };
+  if (session?.accessToken) {
+    headers["authorization"] = `Bearer ${session.accessToken}`;
   }
-  if (!res.ok) return { error: "server", message: body.message || "Buddy could not finish that." };
 
-  if (body.highlightSelector && tab?.id && snapshot) {
-    chrome.scripting
-      .executeScript({ target: { tabId: tab.id }, func: highlight, args: [body.highlightSelector] })
-      .catch(() => undefined);
+  try {
+    const res = await fetch(`${apiBase}/api/public/extension/ask`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ question, intent: intent || "answer", snapshot }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && session) {
+      await chrome.storage.local.remove("session");
+      // Retry once as guest
+      return ask(question, intent);
+    }
+    if (!res.ok)
+      return { error: "server", message: body.message || "Buddy could not finish that." };
+
+    if (body.highlightSelector && tab?.id && snapshot) {
+      chrome.scripting
+        .executeScript({
+          target: { tabId: tab.id },
+          func: highlight,
+          args: [body.highlightSelector],
+        })
+        .catch(() => undefined);
+    }
+    return { ...body, pageReadable: Boolean(snapshot), snapshot };
+  } catch {
+    return {
+      error: "network",
+      message: "Could not reach AI Buddy service. Check your connection.",
+    };
   }
-  return { ...body, pageReadable: Boolean(snapshot) };
 }
 
 // Injected into the page: outline one element for a few seconds.

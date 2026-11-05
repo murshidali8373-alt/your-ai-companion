@@ -41,14 +41,25 @@
     if (wrap) return wrap.innerText;
     return el.getAttribute("name") || el.getAttribute("title") || el.innerText || "";
   };
-  const item = (el, role, extra = {}) => ({
-    ref: `e${++n}`,
-    role,
-    name: String(labelOf(el)).trim().replace(/\s+/g, " ").slice(0, 300),
-    tag: el.tagName.toLowerCase(),
-    selector: cssPath(el),
-    ...extra,
-  });
+  const item = (el, role, extra = {}) => {
+    const r = el.getBoundingClientRect();
+    return {
+      ref: `e${++n}`,
+      role,
+      name: String(labelOf(el)).trim().replace(/\s+/g, " ").slice(0, 300),
+      tag: el.tagName.toLowerCase(),
+      selector: cssPath(el),
+      rect: {
+        x: Math.round(r.x),
+        y: Math.round(r.y),
+        top: Math.round(r.top),
+        left: Math.round(r.left),
+        width: Math.round(r.width),
+        height: Math.round(r.height),
+      },
+      ...extra,
+    };
+  };
 
   const headings = [...document.querySelectorAll("h1,h2,h3")]
     .filter(visible)
@@ -74,11 +85,24 @@
                 : type === "file"
                   ? "file"
                   : "textbox";
+
+      const isInvalid =
+        el.getAttribute("aria-invalid") === "true" ||
+        el.classList.contains("is-invalid") ||
+        Boolean(el.closest(".error, .has-error"));
+
+      const nearbyErrEl =
+        el.getAttribute("aria-errormessage")
+          ? document.getElementById(el.getAttribute("aria-errormessage"))
+          : el.parentElement?.querySelector(".invalid-feedback, .error, .text-danger, .error-message");
+      const errMsg = nearbyErrEl?.innerText?.trim()?.slice(0, 200) || undefined;
+
       return item(el, role, {
         placeholder: (el.placeholder || "").slice(0, 200) || undefined,
         required: el.required || undefined,
         disabled: el.disabled || undefined,
-        invalid: el.getAttribute("aria-invalid") === "true" || undefined,
+        invalid: isInvalid || undefined,
+        errorMessage: errMsg,
         sensitive: sensitive || undefined,
         value:
           sensitive || type === "file"
@@ -91,15 +115,35 @@
       });
     });
 
-  const controls = [...document.querySelectorAll("button,a[href],[role=button]")]
+  const controls = [...document.querySelectorAll("button,a[href],[role=button],input[type=button],input[type=submit]")]
     .filter(visible)
     .slice(0, MAX)
     .map((el) => item(el, el.tagName === "A" ? "link" : "button"));
 
-  const alerts = [...document.querySelectorAll("[role=alert],[aria-live=assertive],.error,.alert")]
+  const alertSelectors = [
+    "[role=alert]",
+    "[aria-live=assertive]",
+    ".error",
+    ".has-error",
+    ".text-danger",
+    ".alert",
+    "[aria-invalid=true]",
+    ".invalid-feedback",
+    ".error-message",
+    ".form-error",
+  ].join(",");
+
+  const alertElements = [...document.querySelectorAll(alertSelectors)]
     .filter(visible)
-    .slice(0, 40)
-    .map((el) => item(el, "alert"));
+    .slice(0, 40);
+
+  const alerts = alertElements.map((el) => {
+    const isField = el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT";
+    const textMsg = (isField ? (el.getAttribute("aria-errormessage") || el.title || el.placeholder || "") : el.innerText) || "";
+    return item(el, "alert", {
+      errorMessage: textMsg.trim().replace(/\s+/g, " ").slice(0, 200) || undefined,
+    });
+  });
 
   const raw = (document.body?.innerText || "").replace(/\s+/g, " ");
   return {

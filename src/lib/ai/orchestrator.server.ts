@@ -236,7 +236,9 @@ export async function generate(input: {
   const call = input.call ?? callOnce;
   // Exclude providers with no server key (unless the caller supplied their own key for it).
   const { isProviderConfigured } = await import("./provider-keys.server");
-  const userKeyProvider = input.userApiKey ? (input.userProvider ?? candidates[0]?.provider) : undefined;
+  const userKeyProvider = input.userApiKey
+    ? (input.userProvider ?? candidates[0]?.provider)
+    : undefined;
   const usable = (list: ModelEntry[]) =>
     input.call ? list : list.filter((m) => isProviderConfigured(m.provider, userKeyProvider));
   const pool = usable(candidates).length ? usable(candidates) : usable(MODELS);
