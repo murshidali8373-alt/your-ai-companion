@@ -4,6 +4,12 @@ const DEFAULT_BASE = "https://id-preview--142f3fbd-6878-42b4-9fe5-1517e2fe8f28.l
 let busy = false;
 let currentAnswer = "";
 let lastHighlightSelector = null;
+let lastCallout = { title: null, description: null };
+
+function pointAt() {
+  setRigEmotion("pointing", "Pointing");
+  setTimeout(() => { if (currentEmotion === "pointing") setRigEmotion("idle", "Idle"); }, 3500);
+}
 let pendingAction = null;
 let recognition = null;
 let isRecognizing = false;
@@ -71,6 +77,13 @@ function setRigEmotion(emotion, label) {
       browRight.setAttribute("transform", "translate(120, 66) rotate(6)");
       setMouthShape("rest");
       if (armLeft) armLeft.setAttribute("transform", "translate(12, -14)");
+      break;
+    case "pointing":
+      browLeft.setAttribute("transform", "translate(80, 65) rotate(-6)");
+      browRight.setAttribute("transform", "translate(120, 65) rotate(6)");
+      setMouthShape("smile");
+      if (armLeft) armLeft.setAttribute("transform", "rotate(58 34 62) scale(1.25 1)");
+      if (armRight) armRight.removeAttribute("transform");
       break;
     case "confused":
       browLeft.setAttribute("transform", "translate(80, 67) rotate(-14)");
@@ -356,11 +369,12 @@ $("highlightBtn").onclick = async () => {
   const res = await chrome.runtime.sendMessage({
     type: "HIGHLIGHT",
     selector: lastHighlightSelector,
+    title: lastCallout.title,
+    description: lastCallout.description,
   });
   if (res?.ok) {
-    setRigEmotion("happy", "Located");
-    $("statusText").textContent = "Outlined target element on page.";
-    setTimeout(() => setRigEmotion("idle", "Idle"), 2000);
+    pointAt();
+    $("statusText").textContent = "Buddy is pointing at it on the page.";
   } else {
     $("statusText").textContent = "Could not find element on active page.";
   }
@@ -425,8 +439,10 @@ async function sendQuery(question, intent) {
     appendHistory("buddy", currentAnswer);
 
     lastHighlightSelector = res.highlightSelector || null;
+    lastCallout = { title: res.calloutTitle || null, description: res.calloutDescription || null };
     if (lastHighlightSelector) {
       $("highlightBtn").hidden = false;
+      pointAt();
     }
     $("speakAnswerBtn").hidden = false;
 
@@ -448,7 +464,7 @@ async function sendQuery(question, intent) {
       $("confirmCard").hidden = false;
       setRigEmotion("thinking", "Confirm");
     } else {
-      setRigEmotion("happy", "Answered");
+      if (!lastHighlightSelector) setRigEmotion("happy", "Answered");
       speakResponse(currentAnswer);
     }
 
