@@ -20,6 +20,7 @@ import {
   estimateTokens,
   resolveRef,
   type PageSnapshot,
+  type SnapshotElement,
 } from "@/shared/page-snapshot";
 import { can, type PermissionLevel } from "@/shared/permissions";
 import { permissionDeniedMessage } from "@/shared/permissions";
