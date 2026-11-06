@@ -48,16 +48,59 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   return false;
 });
 
+// Configure Chrome Side Panel behavior
+if (chrome.sidePanel?.setPanelBehavior) {
+  chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .catch(() => {});
+}
+
+if (chrome.action?.onClicked) {
+  chrome.action.onClicked.addListener(async (tab) => {
+    if (chrome.sidePanel?.open) {
+      if (tab?.id) {
+        await chrome.sidePanel.open({ tabId: tab.id }).catch(() => {});
+      } else if (tab?.windowId) {
+        await chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
+      }
+    }
+  });
+}
+
 async function openSidePanel(sender) {
   if (chrome.sidePanel && typeof chrome.sidePanel.open === "function") {
+    if (sender?.tab?.id) {
+      try {
+        await chrome.sidePanel.open({ tabId: sender.tab.id });
+        return { ok: true };
+      } catch {
+        // continue
+      }
+    }
     if (sender?.tab?.windowId) {
-      await chrome.sidePanel.open({ windowId: sender.tab.windowId });
-      return { ok: true };
+      try {
+        await chrome.sidePanel.open({ windowId: sender.tab.windowId });
+        return { ok: true };
+      } catch {
+        // continue
+      }
     }
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) {
+      try {
+        await chrome.sidePanel.open({ tabId: tab.id });
+        return { ok: true };
+      } catch {
+        // continue
+      }
+    }
     if (tab?.windowId) {
-      await chrome.sidePanel.open({ windowId: tab.windowId });
-      return { ok: true };
+      try {
+        await chrome.sidePanel.open({ windowId: tab.windowId });
+        return { ok: true };
+      } catch {
+        // continue
+      }
     }
   }
   return { ok: false, message: "Side panel not supported or tab not found" };

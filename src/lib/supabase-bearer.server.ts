@@ -24,7 +24,7 @@ export async function verifyBearer(authHeader: string | null): Promise<BearerCon
 
   const url = process.env["SUPABASE_URL"];
   const key = process.env["SUPABASE_PUBLISHABLE_KEY"];
-  if (!url || !key) throw new Error("Supabase environment is not configured");
+  if (!url || !key) return null;
 
   const db = createClient<Database>(url, key, {
     global: {

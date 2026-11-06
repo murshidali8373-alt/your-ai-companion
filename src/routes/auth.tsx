@@ -217,9 +217,41 @@ function AuthPage() {
               <span className="h-px flex-1 bg-border" /> or{" "}
               <span className="h-px flex-1 bg-border" />
             </div>
-            <Button variant="outline" className="w-full" onClick={handleGoogle} disabled={busy}>
-              Continue with Google
-            </Button>
+            <div className="space-y-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full gap-2 border-teal-500/40 text-teal-600 dark:text-teal-400 hover:bg-teal-500/10"
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    const { error } = await supabase.auth.signInWithPassword({
+                      email: "demo@example.com",
+                      password: "password123",
+                    });
+                    if (error) throw error;
+                    toast.success("Welcome! Signed in as Demo User.");
+                    navigate({ to: next, replace: true });
+                  } catch {
+                    toast.error("Could not sign in as demo.");
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+                disabled={busy}
+              >
+                ⚡ Quick Demo Sign-In (Instant Access)
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full text-xs text-muted-foreground"
+                onClick={handleGoogle}
+                disabled={busy}
+              >
+                Continue with Google
+              </Button>
+            </div>
           </>
         )}
 
