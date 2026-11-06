@@ -104,6 +104,8 @@
         cursor: pointer;
         user-select: none;
       }
+      #rigArmLeft, #rigArmRight { transition: transform 0.45s cubic-bezier(.2,1.4,.4,1); transform-box: view-box; }
+      @media (prefers-reduced-motion: reduce) { #rigArmLeft, #rigArmRight { transition: none; } }
       .character-rig-svg {
         width: 140px;
         height: 160px;
