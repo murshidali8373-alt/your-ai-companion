@@ -20,10 +20,23 @@ function Callback() {
     const finish = () => {
       if (done) return;
       done = true;
-      const stored = window.sessionStorage.getItem("ai-buddy-next");
-      window.sessionStorage.removeItem("ai-buddy-next");
+      let target = "";
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        target = urlParams.get("next") || "";
+      } catch {
+        // ignore
+      }
+      if (!target) {
+        try {
+          target = window.sessionStorage.getItem("ai-buddy-next") || "";
+          window.sessionStorage.removeItem("ai-buddy-next");
+        } catch {
+          // ignore
+        }
+      }
       const next =
-        stored && stored.startsWith("/") && !stored.startsWith("//") ? stored : "/dashboard";
+        target && target.startsWith("/") && !target.startsWith("//") ? target : "/dashboard";
       navigate({ to: next, replace: true });
     };
 

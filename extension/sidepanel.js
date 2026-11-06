@@ -22,14 +22,14 @@ let blinkInterval = null;
 let speechMouthInterval = null;
 
 const MOUTH_SHAPES = {
-  rest: "M 92 126 Q 100 131 108 126",
-  smile: "M 90 126 Q 100 136 110 126",
-  wide_smile: "M 88 126 Q 100 144 112 126 Z",
-  open_o: "M 94 125 C 94 120 106 120 106 125 C 106 133 94 133 94 125 Z",
-  open_a: "M 90 124 Q 100 142 110 124 Q 100 122 90 124 Z",
-  open_e: "M 88 125 Q 100 133 112 125 Q 100 128 88 125 Z",
-  frown: "M 90 130 Q 100 123 110 130",
-  laugh: "M 86 124 Q 100 146 114 124 Z",
+  rest: "M 46 51 Q 50 53 54 51",
+  smile: "M 45 51 Q 50 55 55 51",
+  wide_smile: "M 44 51 Q 50 58 56 51 Q 50 49 44 51 Z",
+  open_o: "M 47 51 C 47 48 53 48 53 51 C 53 55 47 55 47 51 Z",
+  open_a: "M 45 51 Q 50 57 55 51 Q 50 48 45 51 Z",
+  open_e: "M 45 51 Q 50 54 55 51 Q 50 49 45 51 Z",
+  frown: "M 45 51 Q 50 47 55 51",
+  laugh: "M 43 51 Q 50 59 57 51 Q 50 48 43 51 Z",
 };
 
 function setMouthShape(shape) {
@@ -47,6 +47,45 @@ function setMouthShape(shape) {
 
 function setEmotion(emotion, label) {
   setRigEmotion(emotion, label);
+}
+
+function capitalize(str) {
+  if (!str) return "";
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+/**
+ * Maps Gemini backend emotion response keys (idle, thinking, happy, pointing, speaking, listening)
+ * to setRigEmotion() to unify animation states.
+ */
+function mapBackendEmotion(rawEmotion, hasHighlight) {
+  if (hasHighlight) return "pointing";
+  const e = String(rawEmotion || "").toLowerCase().trim();
+  switch (e) {
+    case "thinking":
+      return "thinking";
+    case "happy":
+    case "celebrate":
+    case "excited":
+    case "success":
+      return "happy";
+    case "pointing":
+      return "pointing";
+    case "speaking":
+      return "speaking";
+    case "listening":
+      return "listening";
+    case "concerned":
+    case "error":
+      return "error";
+    case "curious":
+    case "confused":
+      return "confused";
+    case "idle":
+    case "neutral":
+    default:
+      return "idle";
+  }
 }
 
 function setRigEmotion(emotion, label) {
@@ -67,47 +106,57 @@ function setRigEmotion(emotion, label) {
   switch (emotion) {
     case "happy":
     case "excited":
-      browLeft.setAttribute("transform", "translate(80, 64) rotate(-8)");
-      browRight.setAttribute("transform", "translate(120, 64) rotate(8)");
+      browLeft.setAttribute("transform", "translate(40, 36) rotate(-8)");
+      browRight.setAttribute("transform", "translate(61, 36) rotate(8)");
       setMouthShape("wide_smile");
-      if (armLeft) armLeft.setAttribute("transform", "translate(0, -6)");
+      if (armLeft) armLeft.setAttribute("transform", "translate(0, -3)");
+      if (armRight) armRight.setAttribute("transform", "translate(0, -3)");
       break;
     case "thinking":
-      browLeft.setAttribute("transform", "translate(80, 66) rotate(-10)");
-      browRight.setAttribute("transform", "translate(120, 66) rotate(6)");
+      browLeft.setAttribute("transform", "translate(40, 36) rotate(-10)");
+      browRight.setAttribute("transform", "translate(61, 36) rotate(6)");
       setMouthShape("rest");
-      if (armLeft) armLeft.setAttribute("transform", "translate(12, -14)");
+      if (armLeft) armLeft.setAttribute("transform", "translate(2, -3)");
+      if (armRight) armRight.removeAttribute("transform");
       break;
     case "pointing":
-      browLeft.setAttribute("transform", "translate(80, 65) rotate(-6)");
-      browRight.setAttribute("transform", "translate(120, 65) rotate(6)");
+      browLeft.setAttribute("transform", "translate(40, 36) rotate(-5)");
+      browRight.setAttribute("transform", "translate(61, 36) rotate(5)");
       setMouthShape("smile");
-      if (armLeft) armLeft.setAttribute("transform", "rotate(58 34 62) scale(1.25 1)");
+      if (armLeft) armLeft.setAttribute("transform", "rotate(58 34 62) scale(1.2 1)");
       if (armRight) armRight.removeAttribute("transform");
       break;
     case "confused":
-      browLeft.setAttribute("transform", "translate(80, 67) rotate(-14)");
-      browRight.setAttribute("transform", "translate(120, 67) rotate(10)");
+      browLeft.setAttribute("transform", "translate(40, 36) rotate(-12)");
+      browRight.setAttribute("transform", "translate(61, 36) rotate(10)");
       setMouthShape("frown");
+      if (armLeft) armLeft.removeAttribute("transform");
+      if (armRight) armRight.removeAttribute("transform");
       break;
     case "listening":
-      browLeft.setAttribute("transform", "translate(80, 65) rotate(-5)");
-      browRight.setAttribute("transform", "translate(120, 65) rotate(5)");
+      browLeft.setAttribute("transform", "translate(40, 36) rotate(-6)");
+      browRight.setAttribute("transform", "translate(61, 36) rotate(6)");
       setMouthShape("smile");
+      if (armLeft) armLeft.removeAttribute("transform");
+      if (armRight) armRight.removeAttribute("transform");
       break;
     case "speaking":
-      browLeft.setAttribute("transform", "translate(80, 65) rotate(-6)");
-      browRight.setAttribute("transform", "translate(120, 65) rotate(6)");
+      browLeft.setAttribute("transform", "translate(40, 36) rotate(-4)");
+      browRight.setAttribute("transform", "translate(61, 36) rotate(4)");
+      if (armLeft) armLeft.removeAttribute("transform");
+      if (armRight) armRight.removeAttribute("transform");
       break;
     case "error":
-      browLeft.setAttribute("transform", "translate(80, 70) rotate(10)");
-      browRight.setAttribute("transform", "translate(120, 70) rotate(-10)");
+      browLeft.setAttribute("transform", "translate(40, 36) rotate(10)");
+      browRight.setAttribute("transform", "translate(61, 36) rotate(-10)");
       setMouthShape("frown");
+      if (armLeft) armLeft.removeAttribute("transform");
+      if (armRight) armRight.removeAttribute("transform");
       break;
     case "idle":
     default:
-      browLeft.setAttribute("transform", "translate(80, 68) rotate(0)");
-      browRight.setAttribute("transform", "translate(120, 68) rotate(0)");
+      browLeft.setAttribute("transform", "translate(40, 36) rotate(0)");
+      browRight.setAttribute("transform", "translate(61, 36) rotate(0)");
       setMouthShape("smile");
       if (armLeft) armLeft.removeAttribute("transform");
       if (armRight) armRight.removeAttribute("transform");
@@ -121,13 +170,13 @@ window.addEventListener("mousemove", (e) => {
   const stage = $("characterStage");
   if (!stage) return;
   const rect = stage.getBoundingClientRect();
-  const dx = ((e.clientX - (rect.left + rect.width / 2)) / (window.innerWidth / 2)) * 1.2;
-  const dy = ((e.clientY - (rect.top + rect.height * 0.4)) / (window.innerHeight / 2)) * 1.0;
+  const dx = ((e.clientX - (rect.left + rect.width / 2)) / (window.innerWidth / 2)) * 1.1;
+  const dy = ((e.clientY - (rect.top + rect.height * 0.4)) / (window.innerHeight / 2)) * 0.8;
   const pupilLeft = $("rigPupilLeft");
   const pupilRight = $("rigPupilRight");
   if (pupilLeft && pupilRight) {
-    const clampX = Math.max(-1.2, Math.min(1.2, dx));
-    const clampY = Math.max(-1.0, Math.min(1.0, dy));
+    const clampX = Math.max(-1.1, Math.min(1.1, dx));
+    const clampY = Math.max(-0.8, Math.min(0.8, dy));
     pupilLeft.setAttribute("transform", `translate(${clampX.toFixed(2)}, ${clampY.toFixed(2)})`);
     pupilRight.setAttribute("transform", `translate(${clampX.toFixed(2)}, ${clampY.toFixed(2)})`);
   }
@@ -227,7 +276,14 @@ function stopVoice() {
   if (!busy) setRigEmotion("idle", "Idle");
 }
 
+// Maintain a buffer of the last 3 turns of conversation
+const MAX_CONVERSATION_TURNS = 3;
+const conversationBuffer = [];
+const conversationTurns = [];
+
 function appendHistory(role, text) {
+  conversationTurns.push({ role, text });
+  if (conversationTurns.length > 20) conversationTurns.shift();
   const box = $("historyBox");
   if (!box) return;
   const bubble = document.createElement("div");
@@ -237,9 +293,29 @@ function appendHistory(role, text) {
   box.scrollTop = box.scrollHeight;
 }
 
+function getRecentHistoryContext() {
+  // Returns context of the last 3 turns of conversation formatted for Gemini
+  return conversationBuffer.slice(-MAX_CONVERSATION_TURNS).flatMap((turn) => [
+    { role: "user", content: turn.user },
+    { role: "assistant", content: turn.assistant },
+  ]);
+}
+
+function recordConversationTurn(userQuestion, assistantAnswer) {
+  if (!userQuestion || !assistantAnswer) return;
+  conversationBuffer.push({ user: userQuestion, assistant: assistantAnswer });
+  if (conversationBuffer.length > MAX_CONVERSATION_TURNS) {
+    conversationBuffer.shift();
+  }
+  chrome.storage.local.set({ conversationBuffer }).catch(() => {});
+}
+
 // Speak out answer with lip synchronization
-function speakResponse(text) {
-  if (isMuted || !window.speechSynthesis) return;
+function speakResponse(text, finishEmotion = "idle") {
+  if (isMuted || !window.speechSynthesis) {
+    setRigEmotion(finishEmotion, capitalize(finishEmotion));
+    return;
+  }
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = /[\u0900-\u097F]/.test(text) ? "hi-IN" : "en-IN";
@@ -251,12 +327,12 @@ function speakResponse(text) {
 
   utterance.onend = () => {
     stopSpeechMouthCycle();
-    setRigEmotion("idle", "Idle");
+    setRigEmotion(finishEmotion, capitalize(finishEmotion));
   };
 
   utterance.onerror = () => {
     stopSpeechMouthCycle();
-    setRigEmotion("idle", "Idle");
+    setRigEmotion(finishEmotion, capitalize(finishEmotion));
   };
 
   window.speechSynthesis.speak(utterance);
@@ -278,6 +354,25 @@ async function render() {
     $("userAccount").textContent = "Guest Mode (Sign in optional)";
     setRigEmotion("idle", "Ready");
   }
+
+  // Restore conversationBuffer from storage if available
+  chrome.storage.local
+    .get("conversationBuffer")
+    .then((data) => {
+      if (Array.isArray(data.conversationBuffer) && data.conversationBuffer.length > 0) {
+        conversationBuffer.length = 0;
+        const recent = data.conversationBuffer.slice(-MAX_CONVERSATION_TURNS);
+        recent.forEach((t) => conversationBuffer.push(t));
+        const box = $("historyBox");
+        if (box && box.children.length === 0) {
+          recent.forEach((t) => {
+            appendHistory("user", t.user);
+            appendHistory("buddy", t.assistant);
+          });
+        }
+      }
+    })
+    .catch(() => {});
 
   checkPageForErrors();
 }
@@ -338,6 +433,9 @@ $("connectBtn").onclick = async () => {
 };
 
 $("signoutBtn").onclick = async () => {
+  conversationBuffer.length = 0;
+  conversationTurns.length = 0;
+  if ($("historyBox")) $("historyBox").innerHTML = "";
   await chrome.runtime.sendMessage({ type: "SIGN_OUT" });
   render();
 };
@@ -417,6 +515,10 @@ async function sendQuery(question, intent) {
   if (busy || !question.trim()) return;
   busy = true;
   $("sendBtn").disabled = true;
+
+  // Extract the last 3 turns of conversation as context for Gemini
+  const historyPayload = getRecentHistoryContext();
+
   appendHistory("user", question.trim());
   $("promptInput").value = "";
 
@@ -426,7 +528,12 @@ async function sendQuery(question, intent) {
   $("speakAnswerBtn").hidden = true;
 
   try {
-    const res = await chrome.runtime.sendMessage({ type: "ASK", question, intent });
+    const res = await chrome.runtime.sendMessage({
+      type: "ASK",
+      question,
+      intent,
+      history: historyPayload,
+    });
     if (res?.error) {
       setRigEmotion("error", "Notice");
       $("statusText").textContent = res.message || "Could not finish that. Please try again.";
@@ -437,6 +544,7 @@ async function sendQuery(question, intent) {
 
     currentAnswer = res.reply?.answer || "No response received.";
     appendHistory("buddy", currentAnswer);
+    recordConversationTurn(question.trim(), currentAnswer);
 
     lastHighlightSelector = res.highlightSelector || null;
     lastCallout = { title: res.calloutTitle || null, description: res.calloutDescription || null };
@@ -445,6 +553,9 @@ async function sendQuery(question, intent) {
       pointAt();
     }
     $("speakAnswerBtn").hidden = false;
+
+    const backendEmotion = res.reply?.emotion;
+    const resolvedEmotion = mapBackendEmotion(backendEmotion, Boolean(lastHighlightSelector));
 
     // Detect if high-impact action needs confirmation
     const qLower = question.toLowerCase();
@@ -464,8 +575,12 @@ async function sendQuery(question, intent) {
       $("confirmCard").hidden = false;
       setRigEmotion("thinking", "Confirm");
     } else {
-      if (!lastHighlightSelector) setRigEmotion("happy", "Answered");
-      speakResponse(currentAnswer);
+      if (lastHighlightSelector) {
+        setRigEmotion("pointing", "Pointing");
+      } else {
+        setRigEmotion(resolvedEmotion, capitalize(resolvedEmotion));
+      }
+      speakResponse(currentAnswer, resolvedEmotion);
     }
 
     if (res.guest) {

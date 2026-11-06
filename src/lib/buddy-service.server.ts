@@ -35,6 +35,7 @@ export interface AskInput {
   intent: TaskIntent;
   snapshot: PageSnapshot | null;
   source: "extension" | "web";
+  history?: Array<{ role: "user" | "assistant"; content: string }> | null;
   preferredModel?: string | null;
   userApiKey?: string | null;
   customBaseUrl?: string | null;
@@ -260,7 +261,10 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
     privacyMode,
     providerDisclosure: "Google Gemini",
   });
-  const user = `${pageContext}\n\nUSER (${input.source}): ${question}`;
+  const historyBlock = input.history?.length
+    ? `\n\nRECENT CONVERSATION:\n${input.history.map((h) => `${h.role === "user" ? "USER" : persona.name}: ${h.content}`).join("\n\n")}`
+    : "";
+  const user = `${pageContext}${historyBlock}\n\nUSER (${input.source}): ${question}`;
   await event(db, taskId, userId, "understand", `Context ~${estimateTokens(user)} tokens`);
 
   try {
@@ -298,8 +302,7 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       if (!element) reply.highlight = null;
     }
 
-    const calloutTitle =
-      reply.calloutTitle || (element?.name ? element.name.slice(0, 50) : null);
+    const calloutTitle = reply.calloutTitle || (element?.name ? element.name.slice(0, 50) : null);
     const calloutDescription =
       reply.calloutDescription || (element?.errorMessage ? element.errorMessage : null);
     const actionType =
@@ -437,7 +440,10 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
     privacyMode: true,
     providerDisclosure: "Google Gemini",
   });
-  const user = `${pageContext}\n\nUSER (${input.source}): ${question}`;
+  const historyBlock = input.history?.length
+    ? `\n\nRECENT CONVERSATION:\n${input.history.map((h) => `${h.role === "user" ? "USER" : persona.name}: ${h.content}`).join("\n\n")}`
+    : "";
+  const user = `${pageContext}${historyBlock}\n\nUSER (${input.source}): ${question}`;
 
   try {
     const routingParams = {
@@ -473,8 +479,7 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
       if (!resolved) reply.highlight = null;
     }
 
-    const calloutTitle =
-      reply.calloutTitle || (resolved?.name ? resolved.name.slice(0, 50) : null);
+    const calloutTitle = reply.calloutTitle || (resolved?.name ? resolved.name.slice(0, 50) : null);
     const calloutDescription =
       reply.calloutDescription || (resolved?.errorMessage ? resolved.errorMessage : null);
     const actionType =

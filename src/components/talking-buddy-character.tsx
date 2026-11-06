@@ -62,6 +62,7 @@ export function TalkingBuddyCharacter({
   lowGraphics = false,
   reducedMotion: manualReducedMotion,
   variant = "auto",
+  mouthIntensity = 0,
 }: TalkingBuddyProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -229,16 +230,20 @@ export function TalkingBuddyCharacter({
     }
   }, [state]);
 
-  // Dynamic mouth path based on emotion and speaking cadence
+  // Dynamic mouth path based on emotion, speaking cadence, and mouthIntensity
   const mouthPath = useMemo(() => {
     if (state === "speaking") {
+      const intensity = Math.max(0, Math.min(1, mouthIntensity));
+      if (intensity > 0.55) {
+        return "M44 50 Q50 58 56 50 Q50 48 44 50 Z";
+      }
       switch (mouthPhase) {
         case 1:
           return "M45 51 Q50 54 55 51 Q50 49 45 51 Z";
         case 2:
-          return "M46 51 Q50 56 54 51 Q50 50 46 51 Z";
+          return "M44 50 Q50 57 56 50 Q50 49 44 50 Z";
         case 3:
-          return "M45 51 Q50 53 55 51";
+          return "M47 50 C47 47 53 47 53 50 C53 55 47 55 47 50 Z";
         case 0:
         default:
           return "M45 51 Q50 55 55 51";
@@ -246,6 +251,9 @@ export function TalkingBuddyCharacter({
     }
     if (state === "happy" || state === "success" || state === "excited") {
       return "M44 50 Q50 56 56 50";
+    }
+    if (state === "laughing") {
+      return "M43 49 Q50 59 57 49 Z";
     }
     if (state === "sad" || state === "error") {
       return "M45 53 Q50 49 55 53";
@@ -258,7 +266,7 @@ export function TalkingBuddyCharacter({
     }
     // Default friendly smile
     return "M45 51 Q50 55 55 51";
-  }, [state, mouthPhase]);
+  }, [state, mouthPhase, mouthIntensity]);
 
   // Dynamic eye vertical radius for blinking and expression
   const eyeRy = useMemo(() => {

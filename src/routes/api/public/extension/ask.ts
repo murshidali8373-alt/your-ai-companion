@@ -46,6 +46,15 @@ const bodySchema = z.object({
     })
     .nullable()
     .default(null),
+  history: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        content: z.string().max(2000),
+      }),
+    )
+    .max(10)
+    .optional(),
   preferredModel: z.string().max(100).optional(),
   userApiKey: z.string().max(200).optional(),
   customBaseUrl: z.string().max(300).optional(),
@@ -77,6 +86,7 @@ export const Route = createFileRoute("/api/public/extension/ask")({
               intent: parsed.intent,
               snapshot: parsed.snapshot as never,
               source: "extension",
+              history: parsed.history,
               preferredModel: parsed.preferredModel,
               userApiKey: parsed.userApiKey,
               customBaseUrl: parsed.customBaseUrl,
@@ -89,6 +99,7 @@ export const Route = createFileRoute("/api/public/extension/ask")({
               intent: parsed.intent,
               snapshot: parsed.snapshot as never,
               source: "extension",
+              history: parsed.history,
               preferredModel: parsed.preferredModel,
               userApiKey: parsed.userApiKey,
               customBaseUrl: parsed.customBaseUrl,

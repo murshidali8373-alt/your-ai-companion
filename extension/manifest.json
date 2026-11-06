@@ -19,7 +19,7 @@
   "host_permissions": ["<all_urls>"],
   "content_scripts": [
     {
-      "matches": ["https://*/*connect*", "http://*/*connect*", "http://localhost:*/*connect*"],
+      "matches": ["https://*/*", "http://*/*"],
       "js": ["bridge.js"],
       "run_at": "document_idle"
     }

@@ -13,11 +13,20 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     return true;
   }
   if (msg.type === "ASK") {
-    ask(msg.question, msg.intent).then(reply, (e) => reply({ error: String(e?.message || e) }));
+    ask(msg.question, msg.intent, msg.history).then(reply, (e) =>
+      reply({ error: String(e?.message || e) }),
+    );
     return true;
   }
   if (msg.type === "SIGN_OUT") {
-    chrome.storage.local.remove("session").then(() => reply({ ok: true }));
+    conversationBuffer = [];
+    chrome.storage.local
+      .remove(["session", "conversationBuffer"])
+      .then(() => reply({ ok: true }));
+    return true;
+  }
+  if (msg.type === "GET_CONVERSATION_BUFFER") {
+    reply({ ok: true, buffer: conversationBuffer });
     return true;
   }
   if (msg.type === "OPEN_SIDE_PANEL") {
@@ -59,7 +68,50 @@ async function activeTab() {
   return tab;
 }
 
-async function ask(question, intent) {
+const DEFAULT_HOST = "https://id-preview--142f3fbd-6878-42b4-9fe5-1517e2fe8f28.lovable.app";
+
+// Maintain a buffer of the last 3 turns of conversation
+const MAX_CONVERSATION_TURNS = 3;
+let conversationBuffer = [];
+
+// Initialize buffer from local storage
+chrome.storage.local
+  .get("conversationBuffer")
+  .then((data) => {
+    if (Array.isArray(data.conversationBuffer)) {
+      conversationBuffer = data.conversationBuffer.slice(-MAX_CONVERSATION_TURNS);
+    }
+  })
+  .catch(() => {});
+
+function getFormattedHistory(incomingHistory) {
+  if (Array.isArray(incomingHistory) && incomingHistory.length > 0) {
+    // Incoming history array: retain up to the last 3 turns (up to 6 messages)
+    return incomingHistory.slice(-6);
+  }
+  // Otherwise use background buffer of the last 3 turns
+  return conversationBuffer.slice(-MAX_CONVERSATION_TURNS).flatMap((turn) => {
+    if (turn.role && turn.content) return [turn];
+    if (turn.user && turn.assistant) {
+      return [
+        { role: "user", content: turn.user },
+        { role: "assistant", content: turn.assistant },
+      ];
+    }
+    return [];
+  });
+}
+
+function recordTurn(userQuestion, assistantAnswer) {
+  if (!userQuestion || !assistantAnswer) return;
+  conversationBuffer.push({ user: userQuestion, assistant: assistantAnswer });
+  if (conversationBuffer.length > MAX_CONVERSATION_TURNS) {
+    conversationBuffer.shift();
+  }
+  chrome.storage.local.set({ conversationBuffer }).catch(() => {});
+}
+
+async function ask(question, intent, history) {
   const { session } = await chrome.storage.local.get("session");
   const { lastBase } = await chrome.storage.local.get("lastBase");
   const apiBase = session?.apiBase || lastBase || "http://localhost:3000";
@@ -83,27 +135,60 @@ async function ask(question, intent) {
     headers["authorization"] = `Bearer ${session.accessToken}`;
   }
 
+  // Ensure buffer of last 3 turns of conversation is sent as context
+  const formattedHistory = getFormattedHistory(history);
+
+  const payload = JSON.stringify({
+    question,
+    intent: intent || "answer",
+    snapshot,
+    history: formattedHistory.length > 0 ? formattedHistory : undefined,
+  });
+
   try {
-    const res = await fetch(`${apiBase}/api/public/extension/ask`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ question, intent: intent || "answer", snapshot }),
-    });
+    let res;
+    try {
+      res = await fetch(`${apiBase}/api/public/extension/ask`, {
+        method: "POST",
+        headers,
+        body: payload,
+      });
+    } catch (networkErr) {
+      // If primary apiBase failed and is different from DEFAULT_HOST, try DEFAULT_HOST
+      if (apiBase !== DEFAULT_HOST) {
+        res = await fetch(`${DEFAULT_HOST}/api/public/extension/ask`, {
+          method: "POST",
+          headers,
+          body: payload,
+        });
+      } else {
+        throw networkErr;
+      }
+    }
+
     const body = await res.json().catch(() => ({}));
     if (res.status === 401 && session) {
       await chrome.storage.local.remove("session");
       // Retry once as guest
-      return ask(question, intent);
+      return ask(question, intent, history);
     }
     if (!res.ok)
       return { error: "server", message: body.message || "Buddy could not finish that." };
+
+    if (body.reply?.answer) {
+      recordTurn(question, body.reply.answer);
+    }
 
     if (body.highlightSelector && tab?.id && snapshot) {
       chrome.scripting
         .executeScript({
           target: { tabId: tab.id },
           func: highlight,
-          args: [body.highlightSelector, body.calloutTitle || null, body.calloutDescription || null],
+          args: [
+            body.highlightSelector,
+            body.calloutTitle || null,
+            body.calloutDescription || null,
+          ],
         })
         .catch(() => undefined);
     }

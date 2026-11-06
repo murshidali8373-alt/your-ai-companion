@@ -48,6 +48,13 @@ function AuthPage() {
   const next = safeNext(search.next);
 
   useEffect(() => {
+    if (typeof window !== "undefined" && next && next !== "/dashboard") {
+      try {
+        window.sessionStorage.setItem("ai-buddy-next", next);
+      } catch {
+        // storage disabled or restricted
+      }
+    }
     supabase.auth.getSession().then(({ data }) => {
       if (data.session) navigate({ to: next, replace: true });
     });
@@ -56,8 +63,15 @@ function AuthPage() {
   const handleGoogle = async () => {
     setBusy(true);
     try {
+      if (typeof window !== "undefined" && next && next !== "/dashboard") {
+        try {
+          window.sessionStorage.setItem("ai-buddy-next", next);
+        } catch {
+          // ignore
+        }
+      }
       const result = await lovable.auth.signInWithOAuth("google", {
-        redirect_uri: `${window.location.origin}/auth/callback`,
+        redirect_uri: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
       });
       if (result.error) {
         toast.error("Google sign-in did not complete. Please try again or use email.");
@@ -79,7 +93,7 @@ function AuthPage() {
     try {
       if (mode === "reset") {
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}/auth?mode=login`,
+          redirectTo: `${window.location.origin}/auth?mode=login&next=${encodeURIComponent(next)}`,
         });
         if (error) throw error;
         toast.success("Check your inbox for the reset link.");

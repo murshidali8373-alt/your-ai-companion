@@ -231,17 +231,20 @@
 @keyframes buddy-float {
   0%,
   100% {
-    transform: translateY(0);
+    transform: translateY(0) rotate(0deg);
   }
-  50% {
-    transform: translateY(-6px);
+  30% {
+    transform: translateY(-5px) rotate(0.4deg);
+  }
+  70% {
+    transform: translateY(-7px) rotate(-0.3deg);
   }
 }
 
 @keyframes buddy-pulse {
   0%,
   100% {
-    opacity: 0.5;
+    opacity: 0.6;
     transform: scale(1);
   }
   50% {
@@ -251,7 +254,7 @@
 }
 
 @utility animate-buddy-float {
-  animation: buddy-float 4s ease-in-out infinite;
+  animation: buddy-float 4.2s cubic-bezier(0.42, 0, 0.58, 1) infinite;
 }
 
 @utility animate-buddy-pulse {
@@ -259,13 +262,13 @@
 }
 
 .buddy-avatar[data-animated="true"] .buddy-avatar-float {
-  animation: buddy-float 6s ease-in-out infinite;
+  animation: buddy-float 5.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
 }
 .buddy-avatar-tilt {
-  transition: transform 400ms ease;
+  transition: transform 380ms cubic-bezier(0.2, 0.8, 0.25, 1);
 }
 .buddy-avatar[data-animated="true"]:hover .buddy-avatar-tilt {
-  transform: rotate(2deg);
+  transform: rotate(2.5deg) translateY(-2px);
 }
 
 /* Talking-Tom style emotion states */
