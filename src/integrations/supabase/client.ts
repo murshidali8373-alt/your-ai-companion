@@ -201,17 +201,17 @@ function createFallbackClient(): ReturnType<typeof createClient<Database>> {
 
     const resolveObj = { data: defaultData, error: null };
 
-    chain.select = () => chain;
-    chain.insert = () => chain;
-    chain.update = () => chain;
-    chain.upsert = () => chain;
-    chain.delete = () => chain;
-    chain.eq = () => chain;
-    chain.order = () => chain;
-    chain.limit = () => chain;
-    chain.single = async () => resolveObj;
-    chain.maybeSingle = async () => resolveObj;
-    chain.then = (onfulfilled: (res: unknown) => unknown) =>
+    chain["select"] = () => chain;
+    chain["insert"] = () => chain;
+    chain["update"] = () => chain;
+    chain["upsert"] = () => chain;
+    chain["delete"] = () => chain;
+    chain["eq"] = () => chain;
+    chain["order"] = () => chain;
+    chain["limit"] = () => chain;
+    chain["single"] = async () => resolveObj;
+    chain["maybeSingle"] = async () => resolveObj;
+    chain["then"] = (onfulfilled: (res: unknown) => unknown) =>
       Promise.resolve(resolveObj).then(onfulfilled);
 
     return chain;

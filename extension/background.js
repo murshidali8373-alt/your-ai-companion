@@ -76,7 +76,13 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     return true;
   }
   if (msg.type === "EXECUTE_ACTION") {
-    executeAction(msg.action, msg.selector, msg.value).then(reply, (e) =>
+    executeAction(msg.action, msg.selector, msg.value, msg.options).then(reply, (e) =>
+      reply({ ok: false, error: String(e?.message || e) }),
+    );
+    return true;
+  }
+  if (msg.type === "FIND_CONTENT") {
+    findContentOnPage(msg.query, msg.options).then(reply, (e) =>
       reply({ ok: false, error: String(e?.message || e) }),
     );
     return true;
@@ -784,58 +790,426 @@ async function smartFillForm(fields, options = {}) {
   return res?.result || { ok: false, message: "Form filling execution failed." };
 }
 
-async function executeAction(action, selector, value) {
+async function findContentOnPage(query, options = {}) {
+  const tab = await activeTab();
+  if (!tab?.id || !tab.url || RESTRICTED.test(tab.url)) {
+    return { ok: false, message: "Cannot search content on this browser page." };
+  }
+
+  const [res] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: (searchQuery, opts) => {
+      if (!searchQuery || !searchQuery.trim()) {
+        return { ok: false, message: "Empty search query provided." };
+      }
+      const q = searchQuery.trim().toLowerCase();
+      const normalize = (t) => (t || "").replace(/\s+/g, " ").trim();
+
+      // CSS path helper
+      const getSelector = (el) => {
+        if (el.id && document.querySelectorAll(`#${CSS.escape(el.id)}`).length === 1) {
+          return `#${CSS.escape(el.id)}`;
+        }
+        const parts = [];
+        let cur = el;
+        while (cur && cur.nodeType === 1 && parts.length < 5) {
+          let p = cur.tagName.toLowerCase();
+          if (cur.id && document.querySelectorAll(`#${CSS.escape(cur.id)}`).length === 1) {
+            parts.unshift(`#${CSS.escape(cur.id)}`);
+            break;
+          }
+          const parent = cur.parentElement;
+          if (parent) {
+            const same = [...parent.children].filter((c) => c.tagName === cur.tagName);
+            if (same.length > 1) {
+              p += `:nth-of-type(${same.indexOf(cur) + 1})`;
+            }
+          }
+          parts.unshift(p);
+          cur = parent;
+        }
+        return parts.join(" > ");
+      };
+
+      const isVisible = (el) => {
+        if (!el || el.nodeType !== 1) return false;
+        const r = el.getBoundingClientRect();
+        const s = window.getComputedStyle(el);
+        return (
+          (r.width > 0 || r.height > 0 || el.getClientRects().length > 0) &&
+          s.visibility !== "hidden" &&
+          s.display !== "none" &&
+          s.opacity !== "0"
+        );
+      };
+
+      // Search all text-bearing and interactive elements, avoiding scripts, styles, and shadow hosts
+      const candidates = [
+        ...document.querySelectorAll(
+          "p, span, h1, h2, h3, h4, h5, h6, li, td, th, a, button, [role=button], [role=cell], [role=row], label, div.badge, div.tag, div.chip",
+        ),
+      ].filter((el) => {
+        if (!isVisible(el)) return false;
+        if (el.closest("#ai-buddy-arm-overlay")) return false;
+        const text = normalize(el.innerText || el.textContent);
+        return text && text.toLowerCase().includes(q);
+      });
+
+      // Filter out ancestor containers whose children already matched (keep the most specific leaf node)
+      const leafCandidates = candidates.filter((el) => {
+        const hasMatchingChild = candidates.some((other) => other !== el && el.contains(other));
+        return !hasMatchingChild || el.children.length === 0 || el.tagName === "BUTTON" || el.tagName === "A";
+      });
+
+      const matches = leafCandidates.slice(0, 30).map((el, idx) => {
+        const fullText = normalize(el.innerText || el.textContent || "");
+        const matchIdx = fullText.toLowerCase().indexOf(q);
+        const start = Math.max(0, matchIdx - 30);
+        const end = Math.min(fullText.length, matchIdx + q.length + 30);
+        const snippet = (start > 0 ? "…" : "") + fullText.slice(start, end) + (end < fullText.length ? "…" : "");
+
+        return {
+          index: idx + 1,
+          tag: el.tagName.toLowerCase(),
+          selector: getSelector(el),
+          textSnippet: snippet,
+          fullText: fullText.slice(0, 200),
+          isClickable:
+            el.tagName === "BUTTON" ||
+            el.tagName === "A" ||
+            el.getAttribute("role") === "button" ||
+            Boolean(el.closest("button, a")),
+        };
+      });
+
+      if (matches.length === 0) {
+        return {
+          ok: true,
+          query: searchQuery,
+          totalMatches: 0,
+          matches: [],
+          message: `No content matching "${searchQuery}" was found in the visible page structure.`,
+        };
+      }
+
+      // If requested to scroll to first match
+      let scrolled = false;
+      const targetIndex = typeof opts?.targetIndex === "number" ? opts.targetIndex : 0;
+      const targetMatch = matches[targetIndex] || matches[0];
+
+      if (opts?.scroll !== false && leafCandidates[targetIndex || 0]) {
+        const targetEl = leafCandidates[targetIndex || 0];
+
+        // Check if target is inside a scrollable container
+        let parent = targetEl.parentElement;
+        let scrolledParent = false;
+        while (parent && parent !== document.body && parent !== document.documentElement) {
+          const cs = window.getComputedStyle(parent);
+          if (cs.overflowY === "auto" || cs.overflowY === "scroll") {
+            if (parent.scrollHeight > parent.clientHeight + 20) {
+              const elRect = targetEl.getBoundingClientRect();
+              const pRect = parent.getBoundingClientRect();
+              parent.scrollBy({
+                top: elRect.top - pRect.top - parent.clientHeight / 2 + elRect.height / 2,
+                behavior: "smooth",
+              });
+              scrolledParent = true;
+              break;
+            }
+          }
+          parent = parent.parentElement;
+        }
+
+        targetEl.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+        scrolled = true;
+      }
+
+      return {
+        ok: true,
+        query: searchQuery,
+        totalMatches: matches.length,
+        matches,
+        targetMatch,
+        firstSelector: targetMatch?.selector,
+        scrolled,
+        message: `Found ${matches.length} match${matches.length > 1 ? "es" : ""} for "${searchQuery}".`,
+      };
+    },
+    args: [query, options],
+  });
+
+  const result = res?.result || { ok: false, message: "Search execution failed." };
+
+  // If highlight requested and we found a match, trigger Lamba Haath arm!
+  if (result.ok && result.firstSelector && options?.highlight !== false) {
+    await highlightElement(
+      result.firstSelector,
+      `Match: ${query}`,
+      result.matches?.[0]?.textSnippet || `Found ${result.totalMatches} match(es) for "${query}".`,
+      options?.buddyVisual,
+    );
+  }
+
+  return result;
+}
+
+async function executeAction(action, selector, value, options = {}) {
   const tab = await activeTab();
   if (!tab?.id || !tab.url || RESTRICTED.test(tab.url)) {
     return { ok: false, message: "Cannot act on this restricted browser page." };
   }
+
   const [res] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    func: (act, sel, val) => {
-      const el = sel ? document.querySelector(sel) : null;
-      if (act === "scroll") {
-        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-        else window.scrollBy({ top: 350, behavior: "smooth" });
-        return { ok: true, message: "Scrolled page smoothly" };
-      }
-      if (!el) return { ok: false, message: "Target element was not found on this page." };
+    func: (act, sel, val, opts) => {
+      const normalize = (t) => (t || "").replace(/\s+/g, " ").trim();
+      const SENSITIVE = /pass(?:word)?|pin|otp|cvv|cvc|card|secret|token|ssn|aadhaar/i;
 
-      const SENSITIVE = /pass|otp|pin|cvv|cvc|card|secret|token|ssn|aadhaar/i;
-      if (SENSITIVE.test(`${el.name} ${el.id} ${el.type}`)) {
+      // --- 1. SCROLL ACTION ---
+      if (act === "scroll" || act === "scroll_page") {
+        const direction = String(val || opts?.direction || "down").toLowerCase();
+        const amount = typeof opts?.amount === "number" ? opts.amount : 450;
+        let targetEl = sel ? document.querySelector(sel) : null;
+        let container = opts?.containerSelector ? document.querySelector(opts.containerSelector) : null;
+
+        // Auto-detect container if selector points to inside a scrollable container
+        if (targetEl && !container) {
+          let p = targetEl.parentElement;
+          while (p && p !== document.body && p !== document.documentElement) {
+            const cs = window.getComputedStyle(p);
+            if (cs.overflowY === "auto" || cs.overflowY === "scroll") {
+              if (p.scrollHeight > p.clientHeight + 20) {
+                container = p;
+                break;
+              }
+            }
+            p = p.parentElement;
+          }
+        }
+
+        // If target element specified, scroll to center it
+        if (targetEl) {
+          targetEl.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+          return {
+            ok: true,
+            action: "scroll",
+            message: `Scrolled to target element (${targetEl.tagName.toLowerCase()}) successfully.`,
+          };
+        }
+
+        // Scrolling inside container vs window
+        if (container) {
+          if (direction === "top") {
+            container.scrollTo({ top: 0, behavior: "smooth" });
+          } else if (direction === "bottom") {
+            container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+          } else if (direction === "up") {
+            container.scrollBy({ top: -amount, behavior: "smooth" });
+          } else {
+            container.scrollBy({ top: amount, behavior: "smooth" });
+          }
+          const hasMore = container.scrollHeight > container.scrollTop + container.clientHeight + 20;
+          return {
+            ok: true,
+            action: "scroll",
+            container: container.tagName.toLowerCase(),
+            direction,
+            hasMoreBelow: hasMore,
+            message: `Scrolled container (${container.tagName.toLowerCase()}) ${direction}. ${hasMore ? "More items remain below." : "Reached end of container."}`,
+          };
+        }
+
+        // Window scroll
+        if (direction === "top") {
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        } else if (direction === "bottom") {
+          window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+        } else if (direction === "up") {
+          window.scrollBy({ top: -amount, behavior: "smooth" });
+        } else {
+          window.scrollBy({ top: amount, behavior: "smooth" });
+        }
+
+        const scrollH = document.documentElement.scrollHeight || document.body.scrollHeight || 0;
+        const scrollT = window.scrollY || document.documentElement.scrollTop || 0;
+        const clientH = window.innerHeight || document.documentElement.clientHeight || 0;
+        const hasMore = scrollH > scrollT + clientH + 40;
+
         return {
-          ok: false,
-          message: "Action blocked: Buddy never types into password or financial fields.",
+          ok: true,
+          action: "scroll",
+          direction,
+          scrollPercent: scrollH > clientH ? Math.round((scrollT / (scrollH - clientH)) * 100) : 100,
+          hasMoreBelow: hasMore,
+          message: `Scrolled webpage ${direction}. ${hasMore ? "More content exists below." : "Reached bottom of page."}`,
         };
       }
 
-      if (act === "click") {
+      // --- 2. CLICK & BUTTON PRESS ACTION ---
+      if (act === "click" || act === "press_button") {
+        let el = sel ? document.querySelector(sel) : null;
+
+        // If no selector or element not found, resolve button/link by text content
+        if (!el && (val || opts?.text)) {
+          const targetText = String(val || opts?.text).trim().toLowerCase();
+          const clickables = [
+            ...document.querySelectorAll('button, a, [role="button"], input[type="submit"], input[type="button"], summary, [role="tab"]'),
+          ];
+          el = clickables.find((cand) => {
+            const t = normalize(cand.innerText || cand.value || cand.getAttribute("aria-label") || "").toLowerCase();
+            return t === targetText || t.includes(targetText) || targetText.includes(t);
+          });
+        }
+
+        if (!el) {
+          return {
+            ok: false,
+            message: `Could not find button or link matching "${sel || val || opts?.text || "target"}".`,
+          };
+        }
+
+        // Security check
+        if (SENSITIVE.test(`${el.name} ${el.id} ${el.type}`)) {
+          return {
+            ok: false,
+            message: "Action blocked: Buddy never interacts with sensitive payment or credential submission triggers without explicit user approval.",
+          };
+        }
+
+        // Interactability check
+        if (el.disabled || el.getAttribute("aria-disabled") === "true") {
+          return { ok: false, message: `Button "${normalize(el.innerText || el.value)}" is currently disabled.` };
+        }
+
         el.scrollIntoView({ behavior: "smooth", block: "center" });
+
+        // Dispatch realistic sequence of mouse and pointer events
+        const optsEv = { bubbles: true, cancelable: true, view: window };
+        el.dispatchEvent(new PointerEvent("pointerdown", optsEv));
+        el.dispatchEvent(new MouseEvent("mousedown", optsEv));
+        el.focus();
+        el.dispatchEvent(new PointerEvent("pointerup", optsEv));
+        el.dispatchEvent(new MouseEvent("mouseup", optsEv));
         el.click();
-        return { ok: true, message: `Clicked ${el.tagName.toLowerCase()} element` };
+
+        return {
+          ok: true,
+          action: "click",
+          tag: el.tagName.toLowerCase(),
+          text: normalize(el.innerText || el.value || el.getAttribute("aria-label") || "").slice(0, 100),
+          message: `Successfully clicked "${normalize(el.innerText || el.value || el.tagName).slice(0, 50)}".`,
+        };
       }
-      if (act === "type") {
+
+      // --- 3. COPY TO CLIPBOARD ACTION ---
+      if (act === "copy_to_clipboard" || act === "copy") {
+        const query = String(val || opts?.query || "").trim();
+        let textsToCopy = [];
+
+        if (sel) {
+          const els = [...document.querySelectorAll(sel)].slice(0, opts?.limit || 10);
+          textsToCopy = els.map((el) => normalize(el.innerText || el.value || el.textContent)).filter(Boolean);
+        } else if (query) {
+          const q = query.toLowerCase();
+          const cand = [...document.querySelectorAll("td, span, div, li, p")].filter((el) => {
+            const t = normalize(el.innerText || el.textContent).toLowerCase();
+            return t.includes(q) && (!el.children.length || el.children.length < 3);
+          });
+          textsToCopy = cand.slice(0, opts?.limit || 10).map((el) => normalize(el.innerText || el.textContent));
+        }
+
+        if (textsToCopy.length === 0) {
+          return { ok: false, message: "No matching content found to copy to clipboard." };
+        }
+
+        const combinedText = textsToCopy.join("\n");
+        let copied = false;
+
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(combinedText);
+            copied = true;
+          }
+        } catch {
+          // fallback textarea
+        }
+
+        if (!copied) {
+          const ta = document.createElement("textarea");
+          ta.value = combinedText;
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+          copied = true;
+        }
+
+        return {
+          ok: true,
+          action: "copy_to_clipboard",
+          count: textsToCopy.length,
+          copiedItems: textsToCopy.slice(0, 5),
+          previewText: combinedText.slice(0, 200),
+          message: `Copied ${textsToCopy.length} item${textsToCopy.length > 1 ? "s" : ""} to clipboard.`,
+        };
+      }
+
+      // --- 4. TYPE / FILL ACTION ---
+      if (act === "type" || act === "fill_field") {
+        const el = sel ? document.querySelector(sel) : null;
+        if (!el) return { ok: false, message: "Target input field was not found on this page." };
+
+        if (SENSITIVE.test(`${el.name} ${el.id} ${el.type}`)) {
+          return {
+            ok: false,
+            message: "Action blocked: Buddy never types into password or financial fields.",
+          };
+        }
+
         el.scrollIntoView({ behavior: "smooth", block: "center" });
         el.focus();
-        if ("value" in el) {
+
+        const strVal = String(val || "");
+        if (el.tagName === "SELECT") {
+          const opt = [...el.options].find((o) => o.value === strVal || o.text.toLowerCase().includes(strVal.toLowerCase()));
+          el.value = opt ? opt.value : strVal;
+        } else if (el.type === "checkbox") {
+          el.checked = Boolean(val);
+        } else if (el.type === "radio") {
+          el.checked = true;
+        } else if (el.getAttribute("contenteditable") === "true") {
+          el.innerText = strVal;
+        } else {
           const proto =
             el.tagName === "TEXTAREA"
               ? window.HTMLTextAreaElement.prototype
               : window.HTMLInputElement.prototype;
           const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
           if (nativeSetter) {
-            nativeSetter.call(el, val || "");
+            nativeSetter.call(el, strVal);
           } else {
-            el.value = val || "";
+            el.value = strVal;
           }
-          el.dispatchEvent(new Event("input", { bubbles: true }));
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-          el.dispatchEvent(new Event("blur", { bubbles: true }));
         }
-        return { ok: true, message: "Filled input field safely" };
+
+        el.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        el.dispatchEvent(new Event("blur", { bubbles: true }));
+
+        return {
+          ok: true,
+          action: "type",
+          field: el.name || el.id || el.tagName.toLowerCase(),
+          message: `Safely filled "${el.name || el.id || "input"}" with requested value.`,
+        };
       }
-      return { ok: false, message: `Unknown action: ${act}` };
+
+      return { ok: false, message: `Unknown browser action: ${act}` };
     },
-    args: [action, selector, value],
+    args: [action, selector, value, options],
   });
-  return res?.result || { ok: false };
+
+  return res?.result || { ok: false, message: "Action failed to execute." };
 }

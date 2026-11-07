@@ -44,6 +44,7 @@ const bodySchema = z.object({
       text: z.string().max(20000).default(""),
       truncated: z.boolean().default(false),
     })
+    .passthrough()
     .nullable()
     .default(null),
   history: z

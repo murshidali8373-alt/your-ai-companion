@@ -48,17 +48,17 @@ function createDemoServerClient() {
 
     const resolveObj = { data: defaultData, error: null };
 
-    chain.select = () => chain;
-    chain.insert = () => chain;
-    chain.update = () => chain;
-    chain.upsert = () => chain;
-    chain.delete = () => chain;
-    chain.eq = () => chain;
-    chain.order = () => chain;
-    chain.limit = () => chain;
-    chain.single = async () => resolveObj;
-    chain.maybeSingle = async () => resolveObj;
-    chain.then = (onfulfilled: (res: unknown) => unknown) =>
+    chain["select"] = () => chain;
+    chain["insert"] = () => chain;
+    chain["update"] = () => chain;
+    chain["upsert"] = () => chain;
+    chain["delete"] = () => chain;
+    chain["eq"] = () => chain;
+    chain["order"] = () => chain;
+    chain["limit"] = () => chain;
+    chain["single"] = async () => resolveObj;
+    chain["maybeSingle"] = async () => resolveObj;
+    chain["then"] = (onfulfilled: (res: unknown) => unknown) =>
       Promise.resolve(resolveObj).then(onfulfilled);
 
     return chain;
@@ -80,11 +80,15 @@ export const requireSupabaseAuth = createMiddleware({ type: "function" }).server
     const token = authHeader?.startsWith("Bearer ") ? authHeader.replace("Bearer ", "").trim() : "";
 
     if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY || token.startsWith("demo_token_") || !token) {
+      const demoClaims: Record<string, unknown> = {
+        sub: "usr_demo_user",
+        email: "demo@example.com",
+      };
       return next({
         context: {
           supabase: createDemoServerClient(),
           userId: "usr_demo_user",
-          claims: { sub: "usr_demo_user", email: "demo@example.com" },
+          claims: demoClaims,
         },
       });
     }
@@ -116,15 +120,17 @@ export const requireSupabaseAuth = createMiddleware({ type: "function" }).server
       throw new Error("Unauthorized: Invalid token");
     }
 
-    if (!data.claims.sub) {
-      throw new Error("Unauthorized: No user ID found in token");
-    }
+    const userClaims: Record<string, unknown> = {
+      ...data.claims,
+      sub: data.claims.sub,
+      email: typeof data.claims["email"] === "string" ? data.claims["email"] : "demo@example.com",
+    };
 
     return next({
       context: {
         supabase,
         userId: data.claims.sub,
-        claims: data.claims,
+        claims: userClaims,
       },
     });
   },

@@ -43,7 +43,8 @@ function Gallery() {
   const profile = dashboard.data?.profile;
   const current = profile?.selected_custom_buddy_id ?? profile?.selected_buddy_slug ?? "friendly";
   const customLook = dashboard.data?.customBuddies.find(
-    (b) => b.id === profile?.selected_custom_buddy_id,
+    (b: { id: string; accent_color?: string | null }) =>
+      b.id === profile?.selected_custom_buddy_id,
   )?.accent_color;
   const shown = preview ?? customLook ?? profile?.selected_buddy_slug ?? "friendly";
   const graphics = (profile?.graphics_mode as "low" | "balanced" | "high") ?? "balanced";
@@ -104,8 +105,14 @@ function Gallery() {
             <p className="text-sm text-muted-foreground">None yet.</p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
-              {(dashboard.data?.customBuddies ?? []).map((c) => (
-                <div key={c.id} className="panel flex items-center justify-between gap-3 p-4">
+              {(dashboard.data?.customBuddies ?? []).map(
+                (c: {
+                  id: string;
+                  name: string;
+                  tagline?: string | null;
+                  personality?: string | null;
+                }) => (
+                  <div key={c.id} className="panel flex items-center justify-between gap-3 p-4">
                   <div>
                     <h3 className="font-semibold">{c.name}</h3>
                     <p className="text-xs text-muted-foreground">{c.tagline || c.personality}</p>

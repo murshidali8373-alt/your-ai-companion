@@ -47,6 +47,32 @@ export interface SnapshotElement {
   };
 }
 
+export interface PageCompleteness {
+  scrollPercent: number;
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+  hasMoreBelow: boolean;
+  hasMoreAbove: boolean;
+}
+
+export interface PaginationInfo {
+  currentPage?: number | string;
+  totalPages?: number | string;
+  hasNextPage?: boolean;
+  hasPrevPage?: boolean;
+  pageIndicatorText?: string;
+}
+
+export interface ScrollableContainerInfo {
+  selector: string;
+  tag: string;
+  ariaLabel?: string;
+  scrollHeight: number;
+  clientHeight: number;
+  canScrollDown: boolean;
+}
+
 export interface PageSnapshot {
   url: string;
   origin: string;
@@ -58,6 +84,10 @@ export interface PageSnapshot {
   alerts: SnapshotElement[];
   text: string;
   truncated: boolean;
+  pageCompleteness?: PageCompleteness;
+  pagination?: PaginationInfo;
+  scrollableContainers?: ScrollableContainerInfo[];
+  statusCounts?: Record<string, number>;
 }
 
 export const MAX_TEXT_CHARS = 6000;
@@ -89,11 +119,43 @@ function section(title: string, elements: SnapshotElement[]): string[] {
 
 /**
  * Build the page context sent to the model, inside a token budget.
- * Priority: page identity → alerts/errors → form fields → controls → headings → body
+ * Priority: page identity + completeness → alerts/errors → form fields → controls → headings → body
  * text. Body text is trimmed first because it is the least actionable.
  */
 export function buildPageContext(snapshot: PageSnapshot, tokenBudget = 2200): string {
   const head = [`PAGE: ${snapshot.title}`, `URL: ${snapshot.url}`];
+
+  if (snapshot.pageCompleteness) {
+    const pc = snapshot.pageCompleteness;
+    const completenessStr = pc.hasMoreBelow
+      ? `Scroll position: ${pc.scrollPercent}% down. CAUTION: More content exists below the visible viewport (${pc.scrollHeight - (pc.scrollTop + pc.clientHeight)}px unrendered/unscrolled). If the user asks about missing rows or counts, note that scrolling down or pagination may reveal more.`
+      : `Scroll position: 100% (Entire page length visible in DOM).`;
+    head.push(`PAGE COMPLETENESS: ${completenessStr}`);
+  }
+
+  if (snapshot.pagination) {
+    const pag = snapshot.pagination;
+    head.push(
+      `PAGINATION: ${pag.pageIndicatorText || `Page ${pag.currentPage || "?"} of ${pag.totalPages || "?"}`}${pag.hasNextPage ? " (Next page available)" : ""}`,
+    );
+  }
+
+  if (snapshot.statusCounts && Object.keys(snapshot.statusCounts).length > 0) {
+    const countsStr = Object.entries(snapshot.statusCounts)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(", ");
+    head.push(`EXACT STATUS COUNTS DETECTED ON PAGE: ${countsStr}`);
+  }
+
+  if (snapshot.scrollableContainers && snapshot.scrollableContainers.length > 0) {
+    head.push(
+      `SCROLLABLE CONTAINERS (${snapshot.scrollableContainers.length}): ${snapshot.scrollableContainers
+        .map((c) => `${c.selector} (canScrollDown=${c.canScrollDown})`)
+        .slice(0, 5)
+        .join("; ")}`,
+    );
+  }
+
   const blocks = [
     ...section("ERRORS / ALERTS", snapshot.alerts),
     ...section("FORM FIELDS", snapshot.forms),

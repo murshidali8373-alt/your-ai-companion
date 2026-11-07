@@ -538,13 +538,13 @@ export function useBuddyStateManager(
   initialEmotion: BuddyEmotionInput = "idle",
   initialSlug?: string,
 ): BuddyStateManagerValue {
-  // Character Registry State
+  // Character Registry State (defaults ensure identical SSR and client hydration markup)
   const [buddies, setBuddies] = React.useState<ActiveBuddyCharacter[]>(BUDDY_CHARACTERS);
   const [selectedSlug, setSelectedSlugState] = React.useState<string>(() => {
     if (initialSlug && initialSlug.trim()) return initialSlug.trim();
-    return getSavedSlug();
+    return "friendly";
   });
-  const [selectedCustomId, setSelectedCustomId] = React.useState<string | null>(getSavedCustomId);
+  const [selectedCustomId, setSelectedCustomId] = React.useState<string | null>(null);
   const [isReady, setIsReady] = React.useState<boolean>(false);
 
   // Emotion Engine State
@@ -555,7 +555,7 @@ export function useBuddyStateManager(
     getDefaultStatus(normalizeEmotion(initialEmotion)),
   );
   const [history, setHistory] = React.useState<StateHistoryEntry[]>(() => [
-    { emotion: normalizeEmotion(initialEmotion), timestamp: Date.now() },
+    { emotion: normalizeEmotion(initialEmotion), timestamp: 0 },
   ]);
 
   const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -563,8 +563,8 @@ export function useBuddyStateManager(
   // Helper to safely get active buddy
   const resolveActiveBuddy = React.useCallback(
     (slug: string, list: ActiveBuddyCharacter[]): ActiveBuddyCharacter => {
-      const match = list.find((b) => b.slug === slug || b.id === slug);
-      return match || list[0] || BUDDY_CHARACTERS[0];
+      const fallback = BUDDY_CHARACTERS[0] as ActiveBuddyCharacter;
+      return match || list[0] || fallback;
     },
     [],
   );
@@ -634,7 +634,7 @@ export function useBuddyStateManager(
     const active = resolveActiveBuddy(selectedSlug, buddies);
     if (!active) {
       setSelectedSlugState("friendly");
-      return BUDDY_CHARACTERS[0];
+      return BUDDY_CHARACTERS[0] as ActiveBuddyCharacter;
     }
     return active;
   }, [buddies, resolveActiveBuddy, selectedSlug]);
@@ -643,10 +643,14 @@ export function useBuddyStateManager(
   React.useEffect(() => {
     setIsReady(true);
 
-    // Initial check from localStorage
+    // Initial check from localStorage after hydration
     const saved = getSavedSlug();
     if (saved && saved !== selectedSlug) {
       setSelectedSlugState(saved);
+    }
+    const savedCustom = getSavedCustomId();
+    if (savedCustom) {
+      setSelectedCustomId(savedCustom);
     }
 
     // Load custom buddies from localStorage if available

@@ -96,12 +96,16 @@ function Dashboard() {
   }, [buddy]);
 
   const [activeTab, setActiveTab] = useState<"stage" | "hub" | "inspector">("stage");
-  const [selectedModelId, setSelectedModelId] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("buddy_active_model_id") || "gemini-3.8-flash";
+  const [selectedModelId, setSelectedModelId] = useState<string>("gemini-3.8-flash");
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("buddy_active_model_id");
+      if (saved) setSelectedModelId(saved);
+    } catch {
+      // Non-fatal
     }
-    return "gemini-3.8-flash";
-  });
+  }, []);
 
   const choose = useMutation({
     mutationFn: (slug: string) => runSelect({ data: { slug, customId: null } }),
@@ -229,7 +233,8 @@ function Dashboard() {
     dashboard.data;
   const requestsToday = usage[0]?.requests ?? 0;
   const activeBuddy =
-    customBuddies.find((b) => b.id === profile?.selected_custom_buddy_id)?.name ??
+    customBuddies.find((b: { id: string; name: string }) => b.id === profile?.selected_custom_buddy_id)
+      ?.name ??
     profile?.selected_buddy_slug ??
     "friendly";
 
@@ -406,12 +411,18 @@ function Dashboard() {
                 )}
               </div>
               <div className="border-t border-border pt-4">
-                <p className="text-sm">{trialLabel(subscription)}</p>
+                <p className="text-sm" suppressHydrationWarning>
+                  {trialLabel(subscription)}
+                </p>
                 <Badge variant="secondary" className="mt-2">
                   {permissions?.level ?? "explain"}
                 </Badge>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  {PERMISSION_DESCRIPTIONS[permissions?.level ?? "explain"]}
+                  {
+                    PERMISSION_DESCRIPTIONS[
+                      (permissions?.level as keyof typeof PERMISSION_DESCRIPTIONS) ?? "explain"
+                    ]
+                  }
                 </p>
                 <Link
                   to="/settings"
@@ -461,7 +472,16 @@ function Dashboard() {
                 </p>
               ) : (
                 <ul className="mt-3 space-y-2">
-                  {tasks.slice(0, 6).map((task) => (
+                  {tasks
+                    .slice(0, 6)
+                    .map(
+                      (task: {
+                        id: string;
+                        title: string;
+                        status: string;
+                        page_title?: string | null;
+                        error?: string | null;
+                      }) => (
                     <li key={task.id} className="rounded-md border border-border/70 p-3 text-sm">
                       <div className="flex items-center justify-between gap-2">
                         <span className="truncate font-medium">{task.title}</span>
@@ -526,7 +546,9 @@ function Dashboard() {
                 Passwords, OTPs, PINs, cards and keys are refused — by the app and by the database.
               </p>
               <ul className="mt-3 space-y-2">
-                {memories.slice(0, 8).map((memory) => (
+                {memories
+                  .slice(0, 8)
+                  .map((memory: { id: string; key: string; value: string }) => (
                   <li
                     key={memory.id}
                     className="flex items-start justify-between gap-2 rounded-md border border-border/70 p-3 text-sm"

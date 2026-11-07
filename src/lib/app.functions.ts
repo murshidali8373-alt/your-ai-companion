@@ -290,7 +290,7 @@ export const listTasks = createServerFn({ method: "GET" })
       .select("*")
       .order("created_at", { ascending: false })
       .limit(50);
-    const ids = (tasks ?? []).map((t) => t.id);
+    const ids = (tasks ?? []).map((t: { id: string }) => t.id);
     const { data: events } = ids.length
       ? await context.supabase
           .from("task_events")

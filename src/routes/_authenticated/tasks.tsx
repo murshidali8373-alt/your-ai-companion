@@ -38,7 +38,7 @@ function Tasks() {
         reason: "Failed to load task history.",
       });
     } else if (q.data) {
-      const hasFailed = q.data.tasks.some((t) => t.status === "failed");
+      const hasFailed = q.data.tasks.some((t: { status: string }) => t.status === "failed");
       if (hasFailed) {
         setEmotion(BUDDY_EMOTION_STATES.CONFUSED, {
           durationMs: 3000,
@@ -162,33 +162,47 @@ function Tasks() {
         <p className="text-sm text-muted-foreground">No tasks yet.</p>
       )}
       <div className="space-y-3">
-        {q.data?.tasks.map((task) => (
-          <details key={task.id} className="panel p-4">
-            <summary className="flex cursor-pointer items-center justify-between gap-3">
-              <span className="truncate font-medium">{task.title}</span>
-              <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                {new Date(task.created_at).toLocaleString()}
-                <Badge variant={task.status === "failed" ? "destructive" : "secondary"}>
-                  {task.status}
-                </Badge>
-              </span>
-            </summary>
-            <div className="mt-3 space-y-2 text-sm">
-              {task.page_url && (
-                <p className="truncate text-xs text-muted-foreground">{task.page_url}</p>
-              )}
-              {task.answer && <p className="whitespace-pre-wrap">{task.answer}</p>}
-              {task.error && <p className="text-destructive">{task.error}</p>}
-              <ol className="mt-2 space-y-1 border-l border-border pl-3 text-xs text-muted-foreground">
-                {q.data.events
-                  .filter((e) => e.task_id === task.id)
-                  .map((e, i) => (
-                    <li key={i}>
-                      <span className="font-medium uppercase text-foreground">{e.phase}</span> —{" "}
-                      {e.detail}
-                    </li>
-                  ))}
-              </ol>
+        {q.data?.tasks.map(
+          (task: {
+            id: string;
+            title: string;
+            status: string;
+            created_at: string;
+            page_url?: string | null;
+            answer?: string | null;
+            error?: string | null;
+            model?: string | null;
+            latency_ms?: number | null;
+          }) => (
+            <details key={task.id} className="panel p-4">
+              <summary className="flex cursor-pointer items-center justify-between gap-3">
+                <span className="truncate font-medium">{task.title}</span>
+                <span
+                  suppressHydrationWarning
+                  className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground"
+                >
+                  {new Date(task.created_at).toLocaleString()}
+                  <Badge variant={task.status === "failed" ? "destructive" : "secondary"}>
+                    {task.status}
+                  </Badge>
+                </span>
+              </summary>
+              <div className="mt-3 space-y-2 text-sm">
+                {task.page_url && (
+                  <p className="truncate text-xs text-muted-foreground">{task.page_url}</p>
+                )}
+                {task.answer && <p className="whitespace-pre-wrap">{task.answer}</p>}
+                {task.error && <p className="text-destructive">{task.error}</p>}
+                <ol className="mt-2 space-y-1 border-l border-border pl-3 text-xs text-muted-foreground">
+                  {q.data.events
+                    .filter((e: { task_id: string }) => e.task_id === task.id)
+                    .map((e: { phase: string; detail: string }, i: number) => (
+                      <li key={i}>
+                        <span className="font-medium uppercase text-foreground">{e.phase}</span> —{" "}
+                        {e.detail}
+                      </li>
+                    ))}
+                </ol>
               {task.model && (
                 <p className="text-xs text-muted-foreground">
                   Model: {task.model}

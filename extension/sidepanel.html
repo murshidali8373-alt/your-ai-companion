@@ -813,9 +813,29 @@
       <div id="answerCard" class="answer-card" hidden></div>
       <div id="signedOut" class="auth-banner" hidden></div>
 
+      <!-- Page Completeness Notice Banner -->
+      <div id="pageCompletenessBanner" class="confirm-card" style="border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.12); display: flex; align-items: center; justify-content: space-between; padding: 4px 8px;" hidden>
+        <span id="completenessText" style="font-size: 11px; color: #fbbf24;">📜 More content exists below visible fold</span>
+        <button id="scrollDownBannerBtn" class="ghost" style="padding: 2px 7px; font-size: 10px; color: #fbbf24; border-color: rgba(245, 158, 11, 0.4);">⬇️ Scroll Down</button>
+      </div>
+
       <!-- Main Interface -->
       <div id="signedIn" class="content-area">
         <div class="quick-chips">
+          <span
+            class="chip"
+            id="scrollDownChip"
+            title="Scroll page down"
+          >
+            ⬇️ Scroll Down
+          </span>
+          <span
+            class="chip"
+            id="scrollUpChip"
+            title="Scroll page up"
+          >
+            ⬆️ Scroll Up
+          </span>
           <span
             class="chip"
             data-q="Analyze what this page is about simply and summarize key points."

@@ -58,34 +58,45 @@ export function VoiceDemo() {
   const buddy = useBuddyStateManager("idle");
   const [characterMode, setCharacterMode] = useState<"living" | "avatar">("living");
 
-  // Selected Buddy Persona (default: friendly)
-  const [selectedSlug, setSelectedSlug] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("buddy_selected_slug") || "friendly";
-    }
-    return "friendly";
-  });
+  // Selected Buddy Persona (default: friendly for SSR consistency)
+  const [selectedSlug, setSelectedSlug] = useState<string>("friendly");
 
   const activePreset = getBuddyPreset(selectedSlug);
 
-  // Conversation history persisted in localStorage per Buddy
-  const [turns, setTurns] = useState<ChatTurn[]>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const saved = localStorage.getItem(`buddy_turns_${selectedSlug}`);
-        if (saved) return JSON.parse(saved);
-      } catch {
-        // fallback
+  // Conversation history (default for SSR consistency)
+  const [turns, setTurns] = useState<ChatTurn[]>([
+    {
+      role: "buddy",
+      text: "Hey! I am Friendly Buddy. Your everyday browser companion. Ask me anything or let me guide you!",
+      buddyName: "Friendly Buddy",
+    },
+  ]);
+
+  // Read persisted selection and history after hydration so server and client markup match
+  useEffect(() => {
+    try {
+      const savedSlug = localStorage.getItem("buddy_selected_slug");
+      if (savedSlug && savedSlug !== "friendly") {
+        setSelectedSlug(savedSlug);
       }
+      const activeSlug = savedSlug || "friendly";
+      const savedTurns = localStorage.getItem(`buddy_turns_${activeSlug}`);
+      if (savedTurns) {
+        setTurns(JSON.parse(savedTurns));
+      } else if (savedSlug && savedSlug !== "friendly") {
+        const preset = getBuddyPreset(savedSlug);
+        setTurns([
+          {
+            role: "buddy",
+            text: `Hey! I am ${preset.name}. ${preset.tagline}. Ask me anything or let me guide you!`,
+            buddyName: preset.name,
+          },
+        ]);
+      }
+    } catch {
+      // Non-fatal
     }
-    return [
-      {
-        role: "buddy",
-        text: `Hey! I am ${activePreset.name}. ${activePreset.tagline}. Ask me anything or let me guide you!`,
-        buddyName: activePreset.name,
-      },
-    ];
-  });
+  }, []);
 
   const [transcript, setTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -132,6 +143,46 @@ export function VoiceDemo() {
     }
   }, [turns, transcript]);
 
+  // Switch Buddy persona
+  const handleSelectBuddy = useCallback(
+    (slug: string) => {
+      if (slug === selectedSlug) return;
+      setSelectedSlug(slug);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("buddy_selected_slug", slug);
+      }
+
+      const newPreset = getBuddyPreset(slug);
+      let existingTurns: ChatTurn[] = [];
+      if (typeof window !== "undefined") {
+        try {
+          const saved = localStorage.getItem(`buddy_turns_${slug}`);
+          if (saved) existingTurns = JSON.parse(saved);
+        } catch {
+          // fallback
+        }
+      }
+
+      if (existingTurns.length === 0) {
+        existingTurns = [
+          {
+            role: "buddy",
+            text: `Switched to ${newPreset.name}! ${newPreset.tagline}. How can I help you today?`,
+            buddyName: newPreset.name,
+          },
+        ];
+      }
+
+      setTurns(existingTurns);
+      buddy.setEmotion(BUDDY_EMOTION_STATES.HAPPY, {
+        durationMs: 2000,
+        revertTo: BUDDY_EMOTION_STATES.IDLE,
+        reason: `Switched to ${newPreset.name}`,
+      });
+    },
+    [selectedSlug, buddy],
+  );
+
   // Listen for global Buddy selection events
   useEffect(() => {
     const handleCustomSelect = (e: Event) => {
@@ -140,44 +191,7 @@ export function VoiceDemo() {
     };
     window.addEventListener("buddy:selected", handleCustomSelect);
     return () => window.removeEventListener("buddy:selected", handleCustomSelect);
-  }, [selectedSlug]);
-
-  // Switch Buddy persona
-  const handleSelectBuddy = (slug: string) => {
-    if (slug === selectedSlug) return;
-    setSelectedSlug(slug);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("buddy_selected_slug", slug);
-    }
-
-    const newPreset = getBuddyPreset(slug);
-    let existingTurns: ChatTurn[] = [];
-    if (typeof window !== "undefined") {
-      try {
-        const saved = localStorage.getItem(`buddy_turns_${slug}`);
-        if (saved) existingTurns = JSON.parse(saved);
-      } catch {
-        // fallback
-      }
-    }
-
-    if (existingTurns.length === 0) {
-      existingTurns = [
-        {
-          role: "buddy",
-          text: `Switched to ${newPreset.name}! ${newPreset.tagline}. How can I help you today?`,
-          buddyName: newPreset.name,
-        },
-      ];
-    }
-
-    setTurns(existingTurns);
-    buddy.setEmotion(BUDDY_EMOTION_STATES.HAPPY, {
-      durationMs: 2000,
-      revertTo: BUDDY_EMOTION_STATES.IDLE,
-      reason: `Switched to ${newPreset.name}`,
-    });
-  };
+  }, [handleSelectBuddy]);
 
   // Send message to Gemini backend
   const send = async (text: string) => {

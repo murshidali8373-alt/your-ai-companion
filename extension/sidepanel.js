@@ -873,13 +873,110 @@ async function checkPageForErrors() {
   }
 }
 
+async function executeScroll(direction = "down", amount = 450) {
+  setRigEmotion("working", "Scrolling");
+  $("statusText").textContent = `Scrolling page ${direction}…`;
+  const res = await chrome.runtime.sendMessage({
+    type: "EXECUTE_ACTION",
+    action: "scroll",
+    value: direction,
+    options: { direction, amount },
+  });
+  if (res?.ok) {
+    $("statusText").textContent = res.message || `Scrolled ${direction}.`;
+    if (res.hasMoreBelow !== undefined && $("pageCompletenessBanner")) {
+      $("pageCompletenessBanner").hidden = !res.hasMoreBelow;
+    }
+  }
+  setTimeout(() => setRigEmotion("idle", "Idle"), 1000);
+}
+
+async function executeFind(query) {
+  setRigEmotion("thinking", "Finding");
+  $("statusText").textContent = `Searching page for "${query}"…`;
+  const active = getActiveBuddy();
+  const res = await chrome.runtime.sendMessage({
+    type: "FIND_CONTENT",
+    query,
+    options: {
+      scroll: true,
+      highlight: true,
+      buddyVisual: {
+        outfitColor: active.outfitColors?.[0] || "#0d9488",
+        name: active.name,
+      },
+    },
+  });
+  if (res?.ok && res.totalMatches > 0) {
+    setRigEmotion("pointing", "Found!");
+    lastHighlightSelector = res.firstSelector;
+    $("highlightBtn").hidden = false;
+    const msg = `Found ${res.totalMatches} match${res.totalMatches > 1 ? "es" : ""} for "${query}". Pointing with Lamba Haath!`;
+    $("statusText").textContent = msg;
+    appendHistory("buddy", `🎯 ${msg}\nSnippet: "${res.targetMatch?.textSnippet || ""}"`);
+    speakResponse(`I found ${res.totalMatches} match on this page.`);
+  } else {
+    setRigEmotion("idle", "Not found");
+    const msg = `Could not find "${query}" in visible page content.`;
+    $("statusText").textContent = msg;
+    appendHistory("buddy", msg);
+  }
+}
+
 async function sendQuery(question, intent) {
   if (busy || !question.trim()) return;
+
+  const trimmed = question.trim();
+  const lower = trimmed.toLowerCase();
+
+  // 1. Direct browser command intercepts for zero-latency execution
+  if (/^(?:scroll\s+(?:down|up|to top|top|to bottom|bottom)|neeche jao|upar jao|page down|page up)$/i.test(lower)) {
+    let dir = "down";
+    if (lower.includes("up") || lower.includes("upar")) dir = "up";
+    else if (lower.includes("top")) dir = "top";
+    else if (lower.includes("bottom")) dir = "bottom";
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    await executeScroll(dir);
+    return;
+  }
+
+  const findMatch = lower.match(/^(?:find|search|dhoondho|locate|show me)\s+(.+)/i);
+  if (findMatch && !lower.includes("form") && !lower.includes("error") && !lower.includes("page")) {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    await executeFind(findMatch[1]);
+    return;
+  }
+
+  const copyMatch = lower.match(/^copy\s+(.+)/i);
+  if (copyMatch) {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    setRigEmotion("working", "Copying");
+    const res = await chrome.runtime.sendMessage({
+      type: "EXECUTE_ACTION",
+      action: "copy_to_clipboard",
+      value: copyMatch[1],
+      options: { limit: 4 },
+    });
+    if (res?.ok) {
+      setRigEmotion("happy", "Copied");
+      const msg = `📋 ${res.message || "Copied to clipboard."}\nItems:\n${(res.copiedItems || []).map((it) => `• ${it}`).join("\n")}`;
+      appendHistory("buddy", msg);
+      $("statusText").textContent = res.message;
+    } else {
+      setRigEmotion("idle", "Idle");
+      appendHistory("buddy", res?.message || "Could not find items to copy.");
+    }
+    return;
+  }
+
   busy = true;
   $("sendBtn").disabled = true;
 
   const historyPayload = getRecentHistoryContext();
-  appendHistory("user", question.trim());
+  appendHistory("user", trimmed);
   $("promptInput").value = "";
 
   setRigEmotion("thinking", "Thinking…");
@@ -911,7 +1008,7 @@ async function sendQuery(question, intent) {
 
     currentAnswer = res.reply?.answer || "I could not find information on this page.";
     appendHistory("buddy", currentAnswer);
-    recordConversationTurn(question.trim(), currentAnswer);
+    recordConversationTurn(trimmed, currentAnswer);
 
     lastHighlightSelector = res.highlightSelector || null;
     lastCallout = { title: res.calloutTitle || null, description: res.calloutDescription || null };
@@ -921,6 +1018,11 @@ async function sendQuery(question, intent) {
       pointArmAtElement();
     }
     $("speakAnswerBtn").hidden = false;
+
+    // Check page completeness from snapshot or metadata
+    if (res.snapshot?.pageCompleteness?.hasMoreBelow && $("pageCompletenessBanner")) {
+      $("pageCompletenessBanner").hidden = false;
+    }
 
     // Detect if high-impact action needs confirmation
     const qLower = question.toLowerCase();
@@ -1054,6 +1156,10 @@ $("promptInput").addEventListener("keydown", (e) => {
 document.querySelectorAll("[data-q]").forEach((btn) => {
   btn.onclick = () => sendQuery(btn.dataset.q, btn.dataset.i);
 });
+
+if ($("scrollDownChip")) $("scrollDownChip").onclick = () => executeScroll("down");
+if ($("scrollUpChip")) $("scrollUpChip").onclick = () => executeScroll("up");
+if ($("scrollDownBannerBtn")) $("scrollDownBannerBtn").onclick = () => executeScroll("down");
 
 $("openFormAssistantChip").onclick = () => startSmartFormFill();
 $("autoFillSampleBtn").onclick = () => startSmartFormFill();

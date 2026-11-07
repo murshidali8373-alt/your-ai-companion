@@ -46,7 +46,7 @@ const SAMPLE_PAGES: Record<string, PageSnapshot> = {
     url: "https://travel-demo.com/flights/search",
     origin: "https://travel-demo.com",
     title: "Book Flight — New Delhi (DEL) to London (LHR)",
-    capturedAt: new Date().toISOString(),
+    capturedAt: "2026-01-01T00:00:00.000Z",
     headings: [
       {
         ref: "e1",
@@ -124,7 +124,7 @@ const SAMPLE_PAGES: Record<string, PageSnapshot> = {
     url: "https://myaccount-demo.com/profile",
     origin: "https://myaccount-demo.com",
     title: "User Profile & Security Settings",
-    capturedAt: new Date().toISOString(),
+    capturedAt: "2026-01-01T00:00:00.000Z",
     headings: [
       {
         ref: "e1",

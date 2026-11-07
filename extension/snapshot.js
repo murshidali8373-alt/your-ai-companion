@@ -217,6 +217,116 @@
     });
   });
 
+  // --- PAGE COMPLETENESS & VIEWPORT METRICS ---
+  const docEl = document.documentElement || {};
+  const docBody = document.body || {};
+  const scrollTop = window.scrollY || docEl.scrollTop || docBody.scrollTop || 0;
+  const scrollHeight = Math.max(docEl.scrollHeight || 0, docBody.scrollHeight || 0, window.innerHeight || 0);
+  const clientHeight = window.innerHeight || docEl.clientHeight || 0;
+  const scrollPercent =
+    scrollHeight > clientHeight ? Math.min(100, Math.round((scrollTop / (scrollHeight - clientHeight)) * 100)) : 100;
+  const hasMoreBelow = scrollHeight > scrollTop + clientHeight + 40;
+  const hasMoreAbove = scrollTop > 40;
+
+  const pageCompleteness = {
+    scrollPercent,
+    scrollTop: Math.round(scrollTop),
+    scrollHeight: Math.round(scrollHeight),
+    clientHeight: Math.round(clientHeight),
+    hasMoreBelow,
+    hasMoreAbove,
+  };
+
+  // --- PAGINATION DETECTION ---
+  let pagination = null;
+  try {
+    const pagRoot = document.querySelector(
+      '.pagination, [role="navigation"][aria-label*="pagin" i], [aria-label*="pagin" i], .page-numbers, .paginate, nav[aria-label="Pagination"]',
+    );
+    const pagTextMatch = (document.body?.innerText || "").match(
+      /(?:page\s+(\d+)\s+of\s+(\d+)|showing\s+(\d+)[–-](\d+)\s+of\s+(\d+))/i,
+    );
+
+    const nextBtn = document.querySelector(
+      'a[rel="next"], [aria-label*="next" i], button[aria-label*="next" i], .pagination .next, .next-page, a:not([disabled]):has(> [aria-label*="next" i])',
+    );
+
+    if (pagRoot || pagTextMatch || nextBtn) {
+      pagination = {
+        currentPage: pagTextMatch ? pagTextMatch[1] || pagTextMatch[3] : undefined,
+        totalPages: pagTextMatch ? pagTextMatch[2] || pagTextMatch[5] : undefined,
+        hasNextPage: Boolean(nextBtn && !nextBtn.hasAttribute("disabled") && nextBtn.getAttribute("aria-disabled") !== "true"),
+        pageIndicatorText: pagTextMatch ? pagTextMatch[0] : (pagRoot ? pagRoot.innerText?.trim()?.slice(0, 100) : undefined),
+      };
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  // --- SCROLLABLE CONTAINERS (MODALS, TABLES, SPLIT PANELS) ---
+  const scrollableContainers = [];
+  try {
+    const candidates = queryAll("table, tbody, div, section, ul, ol, main, [role=region], [role=dialog], [role=grid]");
+    for (const el of candidates) {
+      if (scrollableContainers.length >= 8) break;
+      if (!visible(el)) continue;
+      const cs = window.getComputedStyle(el);
+      if (cs.overflowY === "auto" || cs.overflowY === "scroll" || cs.overflow === "auto" || cs.overflow === "scroll") {
+        if (el.scrollHeight > el.clientHeight + 40) {
+          scrollableContainers.push({
+            selector: cssPath(el),
+            tag: el.tagName.toLowerCase(),
+            ariaLabel: el.getAttribute("aria-label") || undefined,
+            scrollHeight: Math.round(el.scrollHeight),
+            clientHeight: Math.round(el.clientHeight),
+            canScrollDown: el.scrollHeight > el.scrollTop + el.clientHeight + 10,
+          });
+        }
+      }
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  // --- DETERMINISTIC STATUS COUNTS (ELIMINATES ARITHMETIC HALLUCINATIONS) ---
+  const statusCounts = {};
+  const KNOWN_STATUSES = [
+    "paused",
+    "active",
+    "pending qc",
+    "qc pending",
+    "under review",
+    "rejected",
+    "approved",
+    "completed",
+    "draft",
+    "failed",
+    "in progress",
+    "processing",
+    "live",
+    "disabled",
+    "enabled",
+  ];
+
+  try {
+    const badgesAndCells = queryAll(
+      ".badge, .status, .pill, [data-status], td, th, [role=cell], span.tag, span.chip, div.tag",
+    ).filter(visible);
+
+    for (const el of badgesAndCells) {
+      const txt = (el.innerText || el.getAttribute("data-status") || "").trim().toLowerCase();
+      if (!txt || txt.length > 35) continue;
+      for (const st of KNOWN_STATUSES) {
+        if (txt === st || txt.includes(st)) {
+          statusCounts[st] = (statusCounts[st] || 0) + 1;
+          break;
+        }
+      }
+    }
+  } catch {
+    // Non-fatal
+  }
+
   const raw = (document.body?.innerText || "").replace(/\s+/g, " ");
 
   return {
@@ -231,5 +341,9 @@
     alerts,
     text: raw.slice(0, 8000),
     truncated: raw.length > 8000,
+    pageCompleteness,
+    pagination,
+    scrollableContainers,
+    statusCounts,
   };
 })();

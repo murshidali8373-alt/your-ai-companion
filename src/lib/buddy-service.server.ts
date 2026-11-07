@@ -161,12 +161,13 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
   const question = input.question.trim().slice(0, 2000);
   if (!question) throw new AiError("bad_request", "Ask me something first.");
 
-  const explicitPersonaPromise: Promise<Persona> = input.customBuddyId
+  const cId = input.customBuddyId;
+  const explicitPersonaPromise: Promise<Persona> = cId
     ? (async () => {
         const { data: custom } = await db
           .from("custom_buddies")
           .select("*")
-          .eq("id", input.customBuddyId)
+          .eq("id", cId)
           .maybeSingle();
         if (custom) {
           return {
