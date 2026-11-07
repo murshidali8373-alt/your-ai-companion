@@ -13,6 +13,7 @@
 import { isRestrictedUrl } from "./restricted-url";
 import { isSensitiveField } from "./sensitive";
 import { can, type PermissionLevel, type BuddyAction } from "./permissions";
+import type { PageSnapshot } from "./page-snapshot";
 
 export type ActionType = "highlight" | "scroll" | "focus" | "fill_field" | "click";
 
@@ -25,15 +26,25 @@ export type BrowserActionType =
   | "click"
   | "click_submit"
   | "click_delete"
+  | "select"
+  | "check"
+  | "uncheck"
+  | "keyboard"
+  | "extract"
+  | "wait_for"
+  | "switch_tab"
+  | "open_tab"
+  | "close_tab"
+  | "navigate"
   | "purchase"
-  | "send_message"
-  | "navigate";
+  | "send_message";
 
 export interface ActionTarget {
   ref: string;
   selector: string;
   role?: string;
   tag?: string;
+  text?: string;
 }
 
 export interface BrowserAction {
@@ -42,6 +53,47 @@ export interface BrowserAction {
   target: ActionTarget;
   value?: string;
   description?: string;
+}
+
+export interface MultiActionStep {
+  id: string;
+  stepNumber: number;
+  title: string;
+  action: BrowserActionType;
+  target?: ActionTarget;
+  selector?: string;
+  textTarget?: string;
+  value?: string;
+  status: "pending" | "running" | "completed" | "failed" | "skipped" | "awaiting_approval";
+  isConsequential?: boolean;
+  requiresApproval?: boolean;
+  approvalPrompt?: string;
+  verified?: boolean;
+  result?: string;
+  extractedData?: Record<string, unknown> | Array<Record<string, unknown>> | string[];
+  error?: string;
+  tabUrl?: string;
+  tabId?: number;
+}
+
+export interface MultiActionTaskPlan {
+  id: string;
+  title: string;
+  originalInstruction: string;
+  targetWebsite?: string;
+  targetOrigin?: string;
+  activeTabId?: number;
+  steps: MultiActionStep[];
+  currentStepIndex: number;
+  totalSteps: number;
+  status:
+    "pending" | "running" | "paused" | "completed" | "failed" | "cancelled" | "awaiting_approval";
+  extractedData: Array<Record<string, unknown> | string> | Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  pendingApprovalStepId?: string;
+  error?: string;
 }
 
 /** Full context a browser action needs before it may run (permission gate input). */
@@ -68,6 +120,7 @@ export interface BrowserActionResult {
   verified: boolean;
   blockedReason?: string | undefined;
   timestamp: string;
+  extractedData?: unknown;
 }
 
 export type ConsentDecision = "allow_once" | "always_for_origin" | "deny";
@@ -210,5 +263,333 @@ export function createActionResult(
     verified,
     blockedReason,
     timestamp: new Date().toISOString(),
+  };
+}
+
+/**
+ * Generates an intelligent, multi-step browser execution plan from a user instruction
+ * and an optional page snapshot.
+ */
+export function generateMultiActionPlan(
+  instruction: string,
+  snapshot?: PageSnapshot | null,
+): MultiActionTaskPlan {
+  const trimmed = (instruction || "").trim();
+  const lower = trimmed.toLowerCase();
+  const planId = `plan_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const now = new Date().toISOString();
+
+  // Detect destination website or origin
+  let targetWebsite = snapshot?.url || "";
+  let targetOrigin = snapshot?.origin || "";
+
+  if (lower.includes("meesho")) {
+    targetWebsite = "https://supplier.meesho.com";
+    targetOrigin = "https://supplier.meesho.com";
+  } else if (lower.includes("amazon")) {
+    targetWebsite = "https://sellercentral.amazon.in";
+    targetOrigin = "https://sellercentral.amazon.in";
+  } else if (lower.includes("flipkart")) {
+    targetWebsite = "https://seller.flipkart.com";
+    targetOrigin = "https://seller.flipkart.com";
+  } else {
+    const urlMatch = trimmed.match(/https?:\/\/[^\s]+/i);
+    if (urlMatch) {
+      targetWebsite = urlMatch[0];
+      try {
+        targetOrigin = new URL(targetWebsite).origin;
+      } catch {}
+    }
+  }
+
+  const steps: MultiActionStep[] = [];
+
+  // Specialized workflow 1: Meesho Supplier Panel orders extraction
+  if (lower.includes("meesho") && (lower.includes("order") || lower.includes("supplier"))) {
+    steps.push({
+      id: `${planId}_s1`,
+      stepNumber: 1,
+      title: "Open Meesho Supplier Panel",
+      action: "navigate",
+      value: "https://supplier.meesho.com/panel/orders",
+      selector: "body",
+      status: "pending",
+      verified: false,
+    });
+    steps.push({
+      id: `${planId}_s2`,
+      stepNumber: 2,
+      title: "Go to Orders section",
+      action: "click",
+      selector: 'a[href*="orders"], button:has-text("Orders"), nav [role="tab"]:has-text("Orders")',
+      textTarget: "Orders",
+      status: "pending",
+      verified: false,
+    });
+    steps.push({
+      id: `${planId}_s3`,
+      stepNumber: 3,
+      title: "Filter today's orders",
+      action: "click",
+      selector: 'button:has-text("Today"), [data-filter="today"], input[value="today"]',
+      textTarget: "Today",
+      status: "pending",
+      verified: false,
+    });
+    steps.push({
+      id: `${planId}_s4`,
+      stepNumber: 4,
+      title: "Find pending orders",
+      action: "click",
+      selector: 'button:has-text("Pending"), [data-tab="pending"], input[value="pending"]',
+      textTarget: "Pending",
+      status: "pending",
+      verified: false,
+    });
+    steps.push({
+      id: `${planId}_s5`,
+      stepNumber: 5,
+      title: "Copy pending order IDs",
+      action: "extract",
+      selector: 'table tbody tr, [data-testid="order-row"], td[class*="order-id"], td:first-child',
+      value: "order_id",
+      textTarget: "Order ID",
+      status: "pending",
+      verified: false,
+    });
+    steps.push({
+      id: `${planId}_s6`,
+      stepNumber: 6,
+      title: "Prepare verified order list",
+      action: "extract",
+      value: "copy_list",
+      status: "pending",
+      verified: false,
+    });
+  } else if (
+    snapshot &&
+    snapshot.forms.length > 0 &&
+    (lower.includes("fill") || lower.includes("form") || lower.includes("book"))
+  ) {
+    // Specialized workflow 2: Form filling from snapshot
+    let sNum = 1;
+    for (const formEl of snapshot.forms) {
+      if (formEl.sensitive) continue; // Skip sensitive fields
+      steps.push({
+        id: `${planId}_s${sNum}`,
+        stepNumber: sNum,
+        title: `Fill ${formEl.name || formEl.placeholder || "input field"}`,
+        action: "fill_field",
+        selector: formEl.selector,
+        value: formEl.value || (formEl.placeholder ? `Sample ${formEl.name}` : "Verified input"),
+        status: "pending",
+        verified: false,
+      });
+      sNum++;
+    }
+
+    // Add submit/consequential step if a button exists
+    const submitBtn = snapshot.controls.find(
+      (c) =>
+        c.role === "button" &&
+        /submit|purchase|confirm|pay|book|buy|save|delete/i.test(c.name || ""),
+    );
+    if (submitBtn) {
+      const isConsequential = /purchase|confirm|pay|delete|submit/i.test(submitBtn.name);
+      steps.push({
+        id: `${planId}_s${sNum}`,
+        stepNumber: sNum,
+        title: submitBtn.name || "Submit Form",
+        action: isConsequential ? "click_submit" : "click",
+        selector: submitBtn.selector,
+        isConsequential,
+        requiresApproval: isConsequential,
+        approvalPrompt: `Please confirm: Buddy is about to execute "${submitBtn.name}". Proceed?`,
+        status: "pending",
+        verified: false,
+      });
+    }
+  } else {
+    // General workflow: decompose natural language instruction into discrete steps
+    // Split on numbered steps (1. 2. 3.), bullet points, conjunctions ("then", "and then", "after that"), or semicolons/commas/and
+    const segments = trimmed
+      .split(
+        /(?:\r?\n|\s*(?:then|and then|after that|next|finally)\s*|[;]\s*|,\s*(?:and\s+)?|\s+and\s+(?=(?:go|open|click|press|select|find|copy|type|fill|submit|search|verify|extract|purchase|delete|confirm)\b)|\s*\d+[\.\)]\s+)/i,
+      )
+      .map((s) =>
+        s
+          .trim()
+          .replace(/^[\d+.*)\-]\s*/, "")
+          .replace(/^and\s+/i, ""),
+      )
+      .filter((s) => s.length > 2);
+
+    if (segments.length <= 1) {
+      // Single action or compact phrase
+      const isConsequential = /delete|purchase|buy|pay|transfer|send\s*money|submit/i.test(lower);
+      const actType: BrowserActionType = isConsequential
+        ? lower.includes("delete")
+          ? "click_delete"
+          : lower.includes("purchase") || lower.includes("buy")
+            ? "purchase"
+            : "click_submit"
+        : lower.includes("copy") || lower.includes("extract") || lower.includes("list")
+          ? "extract"
+          : lower.includes("scroll")
+            ? "scroll"
+            : lower.includes("type") || lower.includes("fill")
+              ? "fill_field"
+              : lower.includes("navigate") || lower.includes("open")
+                ? "navigate"
+                : "click";
+
+      steps.push({
+        id: `${planId}_s1`,
+        stepNumber: 1,
+        title: trimmed,
+        action: actType,
+        selector: snapshot?.controls?.[0]?.selector || "body",
+        status: "pending",
+        isConsequential,
+        requiresApproval: isConsequential,
+        approvalPrompt: isConsequential
+          ? `Confirmation required: Buddy requests approval to execute consequential step: "${trimmed}"`
+          : undefined,
+        verified: false,
+      });
+    } else {
+      let sNum = 1;
+      for (const seg of segments) {
+        const segLower = seg.toLowerCase();
+        let act: BrowserActionType = "click";
+        let isConsequential = false;
+        let requiresApproval = false;
+        let selector = "";
+        let textTarget: string | undefined = undefined;
+        let val: string | undefined = undefined;
+
+        if (
+          segLower.startsWith("open ") ||
+          segLower.startsWith("go to ") ||
+          segLower.startsWith("navigate ")
+        ) {
+          if (segLower.includes("http") || segLower.includes(".com") || segLower.includes(".in")) {
+            act = "navigate";
+            const m = seg.match(/https?:\/\/[^\s]+/i);
+            val = m ? m[0] : undefined;
+          } else {
+            act = "click";
+            textTarget = seg.replace(/^(?:open|go to|navigate to)\s+/i, "").trim();
+          }
+        } else if (
+          segLower.includes("copy") ||
+          segLower.includes("extract") ||
+          segLower.includes("prepare a list") ||
+          segLower.includes("find pending")
+        ) {
+          act = "extract";
+          textTarget = seg.replace(/^(?:copy|extract|find and copy|prepare)\s+/i, "").trim();
+          val = "extract_data";
+        } else if (segLower.includes("scroll")) {
+          act = "scroll";
+          val = segLower.includes("up") ? "up" : "down";
+        } else if (
+          segLower.startsWith("type ") ||
+          segLower.startsWith("fill ") ||
+          segLower.startsWith("enter ")
+        ) {
+          act = "fill_field";
+          const parts = seg.split(/["']/);
+          if (parts.length >= 2) {
+            val = parts[1];
+          }
+        } else if (segLower.includes("delete") || segLower.includes("remove")) {
+          act = "click_delete";
+          isConsequential = true;
+          requiresApproval = true;
+        } else if (
+          segLower.includes("purchase") ||
+          segLower.includes("buy") ||
+          segLower.includes("pay")
+        ) {
+          act = "purchase";
+          isConsequential = true;
+          requiresApproval = true;
+        } else if (segLower.includes("submit") || segLower.includes("confirm")) {
+          act = "click_submit";
+          isConsequential = true;
+          requiresApproval = true;
+        } else if (segLower.includes("select") || segLower.includes("choose")) {
+          act = "select";
+          textTarget = seg.replace(/^(?:select|choose)\s+/i, "").trim();
+        } else {
+          act = "click";
+          textTarget = seg.replace(/^(?:click|press|tap)\s+/i, "").trim();
+        }
+
+        // Try to match against snapshot elements if available
+        if (snapshot) {
+          if (
+            act === "click" ||
+            act === "click_submit" ||
+            act === "click_delete" ||
+            act === "purchase"
+          ) {
+            const matchedControl = snapshot.controls.find((c) => {
+              const nameLower = (c.name || "").toLowerCase();
+              return textTarget ? nameLower.includes(textTarget.toLowerCase()) : false;
+            });
+            if (matchedControl) {
+              selector = matchedControl.selector;
+            }
+          } else if (act === "fill_field") {
+            const matchedForm = snapshot.forms.find((f) => {
+              const nameLower = (f.name || f.placeholder || "").toLowerCase();
+              return segLower.includes(nameLower);
+            });
+            if (matchedForm) {
+              selector = matchedForm.selector;
+            }
+          }
+        }
+
+        steps.push({
+          id: `${planId}_s${sNum}`,
+          stepNumber: sNum,
+          title: seg.charAt(0).toUpperCase() + seg.slice(1),
+          action: act,
+          selector:
+            selector ||
+            (textTarget
+              ? `button:has-text("${textTarget}"), a:has-text("${textTarget}")`
+              : undefined),
+          textTarget,
+          value: val,
+          status: "pending",
+          isConsequential,
+          requiresApproval,
+          approvalPrompt: requiresApproval
+            ? `Confirmation required: Buddy is about to execute "${seg}". Proceed?`
+            : undefined,
+          verified: false,
+        });
+        sNum++;
+      }
+    }
+  }
+
+  return {
+    id: planId,
+    title: trimmed.length > 60 ? trimmed.slice(0, 57) + "..." : trimmed,
+    originalInstruction: trimmed,
+    targetWebsite: targetWebsite || undefined,
+    targetOrigin: targetOrigin || undefined,
+    steps,
+    currentStepIndex: 0,
+    totalSteps: steps.length,
+    status: "pending",
+    extractedData: [],
+    createdAt: now,
+    updatedAt: now,
   };
 }

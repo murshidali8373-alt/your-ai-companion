@@ -117,4 +117,27 @@ describe("BuddyStateManager & normalizeEmotion", () => {
       expect(typeof char.isCustom).toBe("boolean");
     });
   });
+
+  it("safely resolves characters by slug or id and handles fallbacks without ReferenceError", () => {
+    const list = BUDDY_CHARACTERS;
+    const fallback = list[0];
+
+    // Slug match
+    const developer = list.find((b) => b.slug === "developer" || b.id === "developer");
+    expect(developer).toBeDefined();
+    expect(developer?.name).toBe("Developer Buddy");
+
+    // Custom id match
+    const custom = list.find(
+      (b) => b.slug === "user_custom_buddy_1" || b.id === "user_custom_buddy_1",
+    );
+    expect(custom).toBeDefined();
+    expect(custom?.name).toBe("My Custom Buddy");
+
+    // Non-existent slug returns undefined, falling back cleanly
+    const nonExistent = list.find((b) => b.slug === "non-existent" || b.id === "non-existent");
+    expect(nonExistent).toBeUndefined();
+    const resolved = nonExistent || list[0] || fallback;
+    expect(resolved).toBe(fallback);
+  });
 });

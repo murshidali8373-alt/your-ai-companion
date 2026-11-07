@@ -233,8 +233,9 @@ function Dashboard() {
     dashboard.data;
   const requestsToday = usage[0]?.requests ?? 0;
   const activeBuddy =
-    customBuddies.find((b: { id: string; name: string }) => b.id === profile?.selected_custom_buddy_id)
-      ?.name ??
+    customBuddies.find(
+      (b: { id: string; name: string }) => b.id === profile?.selected_custom_buddy_id,
+    )?.name ??
     profile?.selected_buddy_slug ??
     "friendly";
 
@@ -482,21 +483,27 @@ function Dashboard() {
                         page_title?: string | null;
                         error?: string | null;
                       }) => (
-                    <li key={task.id} className="rounded-md border border-border/70 p-3 text-sm">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="truncate font-medium">{task.title}</span>
-                        <Badge variant={task.status === "failed" ? "destructive" : "secondary"}>
-                          {task.status}
-                        </Badge>
-                      </div>
-                      {task.page_title && (
-                        <p className="mt-1 truncate text-xs text-muted-foreground">
-                          {task.page_title}
-                        </p>
-                      )}
-                      {task.error && <p className="mt-1 text-xs text-destructive">{task.error}</p>}
-                    </li>
-                  ))}
+                        <li
+                          key={task.id}
+                          className="rounded-md border border-border/70 p-3 text-sm"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate font-medium">{task.title}</span>
+                            <Badge variant={task.status === "failed" ? "destructive" : "secondary"}>
+                              {task.status}
+                            </Badge>
+                          </div>
+                          {task.page_title && (
+                            <p className="mt-1 truncate text-xs text-muted-foreground">
+                              {task.page_title}
+                            </p>
+                          )}
+                          {task.error && (
+                            <p className="mt-1 text-xs text-destructive">{task.error}</p>
+                          )}
+                        </li>
+                      ),
+                    )}
                 </ul>
               )}
             </section>
@@ -546,9 +553,7 @@ function Dashboard() {
                 Passwords, OTPs, PINs, cards and keys are refused — by the app and by the database.
               </p>
               <ul className="mt-3 space-y-2">
-                {memories
-                  .slice(0, 8)
-                  .map((memory: { id: string; key: string; value: string }) => (
+                {memories.slice(0, 8).map((memory: { id: string; key: string; value: string }) => (
                   <li
                     key={memory.id}
                     className="flex items-start justify-between gap-2 rounded-md border border-border/70 p-3 text-sm"

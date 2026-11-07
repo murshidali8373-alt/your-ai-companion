@@ -221,10 +221,16 @@
   const docEl = document.documentElement || {};
   const docBody = document.body || {};
   const scrollTop = window.scrollY || docEl.scrollTop || docBody.scrollTop || 0;
-  const scrollHeight = Math.max(docEl.scrollHeight || 0, docBody.scrollHeight || 0, window.innerHeight || 0);
+  const scrollHeight = Math.max(
+    docEl.scrollHeight || 0,
+    docBody.scrollHeight || 0,
+    window.innerHeight || 0,
+  );
   const clientHeight = window.innerHeight || docEl.clientHeight || 0;
   const scrollPercent =
-    scrollHeight > clientHeight ? Math.min(100, Math.round((scrollTop / (scrollHeight - clientHeight)) * 100)) : 100;
+    scrollHeight > clientHeight
+      ? Math.min(100, Math.round((scrollTop / (scrollHeight - clientHeight)) * 100))
+      : 100;
   const hasMoreBelow = scrollHeight > scrollTop + clientHeight + 40;
   const hasMoreAbove = scrollTop > 40;
 
@@ -255,8 +261,16 @@
       pagination = {
         currentPage: pagTextMatch ? pagTextMatch[1] || pagTextMatch[3] : undefined,
         totalPages: pagTextMatch ? pagTextMatch[2] || pagTextMatch[5] : undefined,
-        hasNextPage: Boolean(nextBtn && !nextBtn.hasAttribute("disabled") && nextBtn.getAttribute("aria-disabled") !== "true"),
-        pageIndicatorText: pagTextMatch ? pagTextMatch[0] : (pagRoot ? pagRoot.innerText?.trim()?.slice(0, 100) : undefined),
+        hasNextPage: Boolean(
+          nextBtn &&
+          !nextBtn.hasAttribute("disabled") &&
+          nextBtn.getAttribute("aria-disabled") !== "true",
+        ),
+        pageIndicatorText: pagTextMatch
+          ? pagTextMatch[0]
+          : pagRoot
+            ? pagRoot.innerText?.trim()?.slice(0, 100)
+            : undefined,
       };
     }
   } catch {
@@ -266,12 +280,19 @@
   // --- SCROLLABLE CONTAINERS (MODALS, TABLES, SPLIT PANELS) ---
   const scrollableContainers = [];
   try {
-    const candidates = queryAll("table, tbody, div, section, ul, ol, main, [role=region], [role=dialog], [role=grid]");
+    const candidates = queryAll(
+      "table, tbody, div, section, ul, ol, main, [role=region], [role=dialog], [role=grid]",
+    );
     for (const el of candidates) {
       if (scrollableContainers.length >= 8) break;
       if (!visible(el)) continue;
       const cs = window.getComputedStyle(el);
-      if (cs.overflowY === "auto" || cs.overflowY === "scroll" || cs.overflow === "auto" || cs.overflow === "scroll") {
+      if (
+        cs.overflowY === "auto" ||
+        cs.overflowY === "scroll" ||
+        cs.overflow === "auto" ||
+        cs.overflow === "scroll"
+      ) {
         if (el.scrollHeight > el.clientHeight + 40) {
           scrollableContainers.push({
             selector: cssPath(el),

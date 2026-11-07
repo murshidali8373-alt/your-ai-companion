@@ -17,9 +17,12 @@ import {
   classifyAction,
   verifyTargetElement,
   verifyActionResult,
+  generateMultiActionPlan,
   type BrowserAction,
   type BrowserActionType,
   type ActionTarget,
+  type MultiActionStep,
+  type MultiActionTaskPlan,
 } from "./browser-action";
 
 export type TaskLifecycleStage =
@@ -238,4 +241,215 @@ export async function executePlanStep(
     failed.error = String(err);
     return failed;
   }
+}
+
+/**
+ * Creates a multi-step task execution plan from an instruction and optional snapshot.
+ */
+export function createMultiActionPlan(
+  instruction: string,
+  snapshot?: PageSnapshot | null,
+): MultiActionTaskPlan {
+  return generateMultiActionPlan(instruction, snapshot);
+}
+
+/**
+ * Executes the next step in a multi-action plan, managing lifecycle states,
+ * consequential approval gates, and data aggregation.
+ */
+export async function executeNextPlanStep(
+  plan: MultiActionTaskPlan,
+  executor: (step: MultiActionStep) => Promise<{
+    success: boolean;
+    result?: string;
+    extractedData?: Record<string, unknown> | Array<Record<string, unknown>> | string[];
+    error?: string;
+  }>,
+): Promise<MultiActionTaskPlan> {
+  const now = new Date().toISOString();
+  if (plan.status === "paused" || plan.status === "cancelled" || plan.status === "failed") {
+    return plan;
+  }
+
+  if (plan.currentStepIndex >= plan.steps.length) {
+    return {
+      ...plan,
+      status: "completed",
+      completedAt: now,
+      updatedAt: now,
+    };
+  }
+
+  const step = plan.steps[plan.currentStepIndex]!;
+
+  // 1. Check if step requires consequential user approval
+  if (step.requiresApproval && step.status !== "awaiting_approval") {
+    const updatedSteps = [...plan.steps];
+    updatedSteps[plan.currentStepIndex] = {
+      ...step,
+      status: "awaiting_approval",
+    };
+    return {
+      ...plan,
+      status: "awaiting_approval",
+      pendingApprovalStepId: step.id,
+      steps: updatedSteps,
+      updatedAt: now,
+    };
+  }
+
+  // 2. Mark step as running
+  const runningSteps = [...plan.steps];
+  runningSteps[plan.currentStepIndex] = {
+    ...step,
+    status: "running",
+  };
+  const runningPlan: MultiActionTaskPlan = {
+    ...plan,
+    status: "running",
+    steps: runningSteps,
+    updatedAt: now,
+  };
+
+  try {
+    const res = await executor(step);
+    const completedSteps = [...runningPlan.steps];
+    if (res.success) {
+      completedSteps[plan.currentStepIndex] = {
+        ...step,
+        status: "completed",
+        verified: true,
+        result: res.result || "Step completed and verified",
+        extractedData: res.extractedData,
+      };
+
+      // Aggregate extracted data if present
+      let updatedExtractedData: Array<Record<string, unknown> | string> | Record<string, unknown> =
+        plan.extractedData;
+      if (res.extractedData) {
+        if (Array.isArray(updatedExtractedData)) {
+          if (Array.isArray(res.extractedData)) {
+            updatedExtractedData = [...updatedExtractedData, ...res.extractedData] as Array<
+              Record<string, unknown> | string
+            >;
+          } else {
+            updatedExtractedData = [...updatedExtractedData, res.extractedData] as Array<
+              Record<string, unknown> | string
+            >;
+          }
+        } else if (typeof updatedExtractedData === "object" && updatedExtractedData !== null) {
+          if (typeof res.extractedData === "object" && !Array.isArray(res.extractedData)) {
+            updatedExtractedData = { ...updatedExtractedData, ...res.extractedData };
+          }
+        }
+      }
+
+      const nextIndex = plan.currentStepIndex + 1;
+      const isAllDone = nextIndex >= plan.steps.length;
+
+      return {
+        ...runningPlan,
+        currentStepIndex: nextIndex,
+        steps: completedSteps,
+        extractedData: updatedExtractedData,
+        status: isAllDone ? "completed" : "pending",
+        completedAt: isAllDone ? now : undefined,
+        updatedAt: now,
+      };
+    } else {
+      completedSteps[plan.currentStepIndex] = {
+        ...step,
+        status: "failed",
+        error: res.error || "Action execution failed",
+      };
+      return {
+        ...runningPlan,
+        status: "failed",
+        error: res.error || `Step ${step.stepNumber} (${step.title}) failed`,
+        steps: completedSteps,
+        updatedAt: now,
+      };
+    }
+  } catch (err) {
+    const failedSteps = [...runningPlan.steps];
+    failedSteps[plan.currentStepIndex] = {
+      ...step,
+      status: "failed",
+      error: err instanceof Error ? err.message : String(err),
+    };
+    return {
+      ...runningPlan,
+      status: "failed",
+      error: err instanceof Error ? err.message : String(err),
+      steps: failedSteps,
+      updatedAt: now,
+    };
+  }
+}
+
+export function pauseMultiActionPlan(plan: MultiActionTaskPlan): MultiActionTaskPlan {
+  return {
+    ...plan,
+    status: "paused",
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export function resumeMultiActionPlan(plan: MultiActionTaskPlan): MultiActionTaskPlan {
+  if (plan.status !== "paused") return plan;
+  return {
+    ...plan,
+    status: "pending",
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export function skipCurrentPlanStep(plan: MultiActionTaskPlan): MultiActionTaskPlan {
+  if (plan.currentStepIndex >= plan.steps.length) return plan;
+  const now = new Date().toISOString();
+  const updatedSteps = [...plan.steps];
+  const currentStep = updatedSteps[plan.currentStepIndex]!;
+  updatedSteps[plan.currentStepIndex] = {
+    ...currentStep,
+    status: "skipped",
+    result: "Skipped by user",
+  };
+  const nextIndex = plan.currentStepIndex + 1;
+  const isDone = nextIndex >= plan.steps.length;
+  return {
+    ...plan,
+    currentStepIndex: nextIndex,
+    steps: updatedSteps,
+    status: isDone ? "completed" : "pending",
+    completedAt: isDone ? now : undefined,
+    pendingApprovalStepId: undefined,
+    updatedAt: now,
+  };
+}
+
+export function cancelMultiActionPlan(plan: MultiActionTaskPlan): MultiActionTaskPlan {
+  return {
+    ...plan,
+    status: "cancelled",
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export function approveAndContinuePlan(plan: MultiActionTaskPlan): MultiActionTaskPlan {
+  const now = new Date().toISOString();
+  if (plan.currentStepIndex >= plan.steps.length) return plan;
+  const updatedSteps = [...plan.steps];
+  const step = updatedSteps[plan.currentStepIndex]!;
+  updatedSteps[plan.currentStepIndex] = {
+    ...step,
+    requiresApproval: false,
+    status: "pending",
+  };
+  return {
+    ...plan,
+    status: "pending",
+    pendingApprovalStepId: undefined,
+    steps: updatedSteps,
+    updatedAt: now,
+  };
 }

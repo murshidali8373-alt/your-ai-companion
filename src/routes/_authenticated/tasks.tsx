@@ -196,22 +196,23 @@ function Tasks() {
                 <ol className="mt-2 space-y-1 border-l border-border pl-3 text-xs text-muted-foreground">
                   {q.data.events
                     .filter((e: { task_id: string }) => e.task_id === task.id)
-                    .map((e: { phase: string; detail: string }, i: number) => (
+                    .map((e: { phase: string; detail: string | null }, i: number) => (
                       <li key={i}>
-                        <span className="font-medium uppercase text-foreground">{e.phase}</span> —{" "}
-                        {e.detail}
+                        <span className="font-medium uppercase text-foreground">{e.phase}</span>
+                        {e.detail ? ` — ${e.detail}` : ""}
                       </li>
                     ))}
                 </ol>
-              {task.model && (
-                <p className="text-xs text-muted-foreground">
-                  Model: {task.model}
-                  {task.latency_ms ? ` · ${task.latency_ms} ms` : ""}
-                </p>
-              )}
-            </div>
-          </details>
-        ))}
+                {task.model && (
+                  <p className="text-xs text-muted-foreground">
+                    Model: {task.model}
+                    {task.latency_ms ? ` · ${task.latency_ms} ms` : ""}
+                  </p>
+                )}
+              </div>
+            </details>
+          ),
+        )}
       </div>
     </AppShell>
   );

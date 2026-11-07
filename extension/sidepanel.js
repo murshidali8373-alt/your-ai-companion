@@ -930,7 +930,11 @@ async function sendQuery(question, intent) {
   const lower = trimmed.toLowerCase();
 
   // 1. Direct browser command intercepts for zero-latency execution
-  if (/^(?:scroll\s+(?:down|up|to top|top|to bottom|bottom)|neeche jao|upar jao|page down|page up)$/i.test(lower)) {
+  if (
+    /^(?:scroll\s+(?:down|up|to top|top|to bottom|bottom)|neeche jao|upar jao|page down|page up)$/i.test(
+      lower,
+    )
+  ) {
     let dir = "down";
     if (lower.includes("up") || lower.includes("upar")) dir = "up";
     else if (lower.includes("top")) dir = "top";
@@ -1144,14 +1148,483 @@ async function startSmartFormFill(sampleData = null) {
   }
 }
 
+// --- MULTI-ACTION TASK OPERATOR ENGINE ---
+let activePlan = null;
+let isPlanPaused = false;
+let pendingApprovalStep = null;
+
+function buildMultiActionPlan(instruction) {
+  const trimmed = (instruction || "").trim();
+  const lower = trimmed.toLowerCase();
+  const planId = `plan_${Date.now()}`;
+  const steps = [];
+
+  // 1. Meesho Supplier Panel workflow
+  if (lower.includes("meesho") && (lower.includes("order") || lower.includes("supplier"))) {
+    steps.push({
+      id: `${planId}_1`,
+      stepNumber: 1,
+      title: "Open Meesho Supplier Panel",
+      action: "navigate",
+      value: "https://supplier.meesho.com/panel/orders",
+      status: "pending",
+    });
+    steps.push({
+      id: `${planId}_2`,
+      stepNumber: 2,
+      title: "Navigate to Orders",
+      action: "click",
+      textTarget: "Orders",
+      status: "pending",
+    });
+    steps.push({
+      id: `${planId}_3`,
+      stepNumber: 3,
+      title: "Filter today's orders",
+      action: "click",
+      textTarget: "Today",
+      status: "pending",
+    });
+    steps.push({
+      id: `${planId}_4`,
+      stepNumber: 4,
+      title: "Find pending orders",
+      action: "click",
+      textTarget: "Pending",
+      status: "pending",
+    });
+    steps.push({
+      id: `${planId}_5`,
+      stepNumber: 5,
+      title: "Copy pending order IDs",
+      action: "extract",
+      value: "order_id",
+      status: "pending",
+    });
+    steps.push({
+      id: `${planId}_6`,
+      stepNumber: 6,
+      title: "Prepare verified order list",
+      action: "extract",
+      value: "copy_list",
+      status: "pending",
+    });
+  } else if (lower.includes("table") && lower.includes("copy")) {
+    steps.push({
+      id: `${planId}_1`,
+      stepNumber: 1,
+      title: "Locate table on active page",
+      action: "wait_for",
+      selector: "table",
+      status: "pending",
+    });
+    steps.push({
+      id: `${planId}_2`,
+      stepNumber: 2,
+      title: "Extract table rows and cells",
+      action: "extract",
+      value: "table",
+      status: "pending",
+    });
+    steps.push({
+      id: `${planId}_3`,
+      stepNumber: 3,
+      title: "Copy table list to clipboard",
+      action: "extract",
+      value: "copy_list",
+      status: "pending",
+    });
+  } else {
+    // General parser: split on conjunctions, semicolons, and commas
+    const segments = trimmed
+      .split(
+        /(?:\r?\n|\s*(?:then|and then|after that|next|finally)\s*|[;]\s*|,\s*(?:and\s+)?|\s+and\s+(?=(?:go|open|click|press|select|find|copy|type|fill|submit|search|verify|extract|purchase|delete|confirm)\b)|\s*\d+[\.\)]\s+)/i,
+      )
+      .map((s) =>
+        s
+          .trim()
+          .replace(/^[\d+\.\-\*\)]\s*/, "")
+          .replace(/^and\s+/i, ""),
+      )
+      .filter((s) => s.length > 2);
+
+    let idx = 1;
+    for (const seg of segments) {
+      const segLower = seg.toLowerCase();
+      const isConsequential = /purchase|buy|pay|delete|submit|confirm/i.test(segLower);
+      let act = "click";
+      let val = undefined;
+      let textTarget = undefined;
+
+      if (
+        segLower.startsWith("open ") ||
+        segLower.startsWith("go to ") ||
+        segLower.startsWith("navigate ")
+      ) {
+        if (segLower.includes("http") || segLower.includes(".com") || segLower.includes(".in")) {
+          act = "navigate";
+          const m = seg.match(/https?:\/\/[^\s]+/i);
+          val = m ? m[0] : undefined;
+        } else {
+          act = "click";
+          textTarget = seg.replace(/^(?:open|go to|navigate to)\s+/i, "").trim();
+        }
+      } else if (
+        segLower.includes("copy") ||
+        segLower.includes("extract") ||
+        segLower.includes("prepare a list")
+      ) {
+        act = "extract";
+        val = "order_id";
+      } else if (segLower.includes("scroll")) {
+        act = "scroll";
+        val = segLower.includes("up") ? "up" : "down";
+      } else if (segLower.startsWith("type ") || segLower.startsWith("fill ")) {
+        act = "fill_field";
+      } else if (segLower.includes("delete")) {
+        act = "click_delete";
+      } else if (
+        segLower.includes("purchase") ||
+        segLower.includes("buy") ||
+        segLower.includes("pay")
+      ) {
+        act = "purchase";
+      } else if (segLower.includes("submit") || segLower.includes("confirm")) {
+        act = "click_submit";
+      } else {
+        act = "click";
+        textTarget = seg.replace(/^(?:click|press|tap)\s+/i, "").trim();
+      }
+
+      steps.push({
+        id: `${planId}_${idx}`,
+        stepNumber: idx,
+        title: seg.charAt(0).toUpperCase() + seg.slice(1),
+        action: act,
+        value: val,
+        textTarget,
+        status: "pending",
+        isConsequential,
+        requiresApproval: isConsequential,
+        approvalPrompt: isConsequential
+          ? `Please confirm: Buddy is about to execute "${seg}". Proceed?`
+          : undefined,
+      });
+      idx++;
+    }
+  }
+
+  return {
+    id: planId,
+    title: trimmed.length > 45 ? trimmed.slice(0, 42) + "..." : trimmed,
+    originalInstruction: trimmed,
+    steps,
+    currentStepIndex: 0,
+    status: "pending",
+    extractedData: [],
+  };
+}
+
+function renderTaskPlanUI() {
+  if (!activePlan) {
+    if ($("taskPlanCard")) $("taskPlanCard").hidden = true;
+    return;
+  }
+  $("taskPlanCard").hidden = false;
+  $("planTitle").textContent = activePlan.title;
+  $("planMeta").textContent =
+    `${activePlan.steps.length} sequential steps · status: ${activePlan.status}`;
+  $("planStatusBadge").textContent = activePlan.status.toUpperCase();
+  $("planStatusBadge").className = `status-badge ${activePlan.status}`;
+
+  const completedCount = activePlan.steps.filter((s) => s.status === "completed").length;
+  const total = activePlan.steps.length;
+  const pct = total > 0 ? Math.round((completedCount / total) * 100) : 0;
+
+  $("progressStepsLabel").textContent = `${completedCount} of ${total} steps completed`;
+  $("progressPercentLabel").textContent = `${pct}%`;
+  $("progressBarFill").style.width = `${pct}%`;
+
+  // Render steps list
+  const listEl = $("planStepsList");
+  listEl.innerHTML = "";
+  activePlan.steps.forEach((st, idx) => {
+    const row = document.createElement("div");
+    row.className = `plan-step-row ${st.status}`;
+    row.innerHTML = `
+      <div class="step-info">
+        <span class="step-num">${idx + 1}.</span>
+        <span class="step-text" title="${st.title}">${st.title}</span>
+      </div>
+      <span class="step-status-tag ${st.status}">${st.status}</span>
+    `;
+    listEl.appendChild(row);
+  });
+
+  // Pause button label
+  $("planPauseResumeBtn").textContent = isPlanPaused ? "▶️ Resume" : "⏸️ Pause";
+}
+
+async function startMultiActionPlan(instruction) {
+  const plan = buildMultiActionPlan(instruction);
+  activePlan = plan;
+  isPlanPaused = false;
+  pendingApprovalStep = null;
+  if ($("consequentialApprovalCard")) $("consequentialApprovalCard").hidden = true;
+  if ($("extractedDataCard")) $("extractedDataCard").hidden = true;
+
+  appendHistory("user", instruction);
+  appendHistory(
+    "buddy",
+    `🎯 Created ${plan.steps.length}-step execution plan for: "${plan.title}"`,
+  );
+  setRigEmotion("working", "Planning");
+  renderTaskPlanUI();
+
+  // Execute steps sequentially
+  await runPlanLoop();
+}
+
+async function runPlanLoop() {
+  if (!activePlan) return;
+
+  while (activePlan.currentStepIndex < activePlan.steps.length) {
+    if (isPlanPaused) {
+      activePlan.status = "paused";
+      renderTaskPlanUI();
+      return;
+    }
+
+    const currentStep = activePlan.steps[activePlan.currentStepIndex];
+
+    // Consequential Approval Gate
+    if (currentStep.requiresApproval && currentStep.status !== "awaiting_approval") {
+      currentStep.status = "awaiting_approval";
+      activePlan.status = "awaiting_approval";
+      pendingApprovalStep = currentStep;
+      renderTaskPlanUI();
+
+      if ($("consequentialApprovalCard")) {
+        $("consequentialApprovalCard").hidden = false;
+        $("consequentialPrompt").textContent =
+          currentStep.approvalPrompt ||
+          `Buddy needs your confirmation to execute "${currentStep.title}". This step performs changes.`;
+      }
+      setRigEmotion("thinking", "Approval");
+      return; // Wait for user approval click
+    }
+
+    currentStep.status = "running";
+    activePlan.status = "running";
+    renderTaskPlanUI();
+    setRigEmotion("working", `Step ${currentStep.stepNumber}`);
+
+    const res = await chrome.runtime.sendMessage({
+      type: "EXECUTE_STEP",
+      step: currentStep,
+    });
+
+    if (res?.ok) {
+      currentStep.status = "completed";
+      currentStep.verified = true;
+      currentStep.result = res.result;
+
+      if (res.extractedData) {
+        currentStep.extractedData = res.extractedData;
+        if (Array.isArray(res.extractedData)) {
+          activePlan.extractedData.push(...res.extractedData);
+        } else {
+          activePlan.extractedData.push(res.extractedData);
+        }
+        renderExtractedDataUI();
+      }
+
+      activePlan.currentStepIndex++;
+      renderTaskPlanUI();
+      await new Promise((r) => setTimeout(r, 600));
+    } else {
+      currentStep.status = "failed";
+      currentStep.error = res?.error || "Action execution failed";
+      activePlan.status = "failed";
+      renderTaskPlanUI();
+      setRigEmotion("error", "Failed");
+      appendHistory("buddy", `⚠️ Step ${currentStep.stepNumber} failed: ${currentStep.error}`);
+      if ($("planRetryBtn")) $("planRetryBtn").hidden = false;
+      return;
+    }
+  }
+
+  // All steps completed
+  activePlan.status = "completed";
+  renderTaskPlanUI();
+  setRigEmotion("happy", "Done");
+  const extractedCount = activePlan.extractedData.length;
+  appendHistory(
+    "buddy",
+    `✅ Multi-action workflow completed! Executed and verified all ${activePlan.steps.length} steps.${extractedCount > 0 ? ` Extracted ${extractedCount} items.` : ""}`,
+  );
+}
+
+function renderExtractedDataUI() {
+  if (!activePlan || activePlan.extractedData.length === 0) return;
+  const card = $("extractedDataCard");
+  if (!card) return;
+  card.hidden = false;
+
+  const count = activePlan.extractedData.length;
+  $("extractedCountTitle").textContent = `📊 Extracted Data (${count} items)`;
+
+  let contentText = "";
+  if (activePlan.extractedData.every((d) => typeof d === "string")) {
+    contentText = activePlan.extractedData.join("\n");
+  } else if (activePlan.extractedData.some((d) => d.orderId)) {
+    contentText = activePlan.extractedData
+      .map((d) => `• ${d.orderId} (${d.status || "pending"}) — ${d.details || ""}`)
+      .join("\n");
+  } else {
+    contentText = JSON.stringify(activePlan.extractedData, null, 2);
+  }
+
+  $("extractedContent").textContent = contentText;
+}
+
 // Handlers
-$("sendBtn").onclick = () => sendQuery($("promptInput").value, "answer");
+$("sendBtn").onclick = () => {
+  const val = $("promptInput").value;
+  if (!val.trim()) return;
+  const lower = val.toLowerCase();
+  if (
+    lower.includes("meesho") ||
+    lower.includes("and then") ||
+    lower.includes("copy their order") ||
+    lower.includes("prepare a list") ||
+    (lower.includes("open") && lower.includes("find")) ||
+    (lower.includes("go to") && lower.includes("click"))
+  ) {
+    $("promptInput").value = "";
+    startMultiActionPlan(val);
+  } else {
+    sendQuery(val, "answer");
+  }
+};
+
 $("promptInput").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
-    sendQuery($("promptInput").value, "answer");
+    const val = $("promptInput").value;
+    if (!val.trim()) return;
+    const lower = val.toLowerCase();
+    if (
+      lower.includes("meesho") ||
+      lower.includes("and then") ||
+      lower.includes("copy their order") ||
+      lower.includes("prepare a list") ||
+      (lower.includes("open") && lower.includes("find"))
+    ) {
+      $("promptInput").value = "";
+      startMultiActionPlan(val);
+    } else {
+      sendQuery(val, "answer");
+    }
   }
 });
+
+// Multi-task chip clicks
+document.querySelectorAll("[data-multi-task]").forEach((chip) => {
+  chip.onclick = () => {
+    const task = chip.dataset.multiTask;
+    if (task) startMultiActionPlan(task);
+  };
+});
+
+if ($("planPauseResumeBtn")) {
+  $("planPauseResumeBtn").onclick = () => {
+    if (!activePlan) return;
+    isPlanPaused = !isPlanPaused;
+    if (!isPlanPaused && activePlan.status === "paused") {
+      activePlan.status = "running";
+      renderTaskPlanUI();
+      runPlanLoop();
+    } else {
+      renderTaskPlanUI();
+    }
+  };
+}
+
+if ($("planSkipBtn")) {
+  $("planSkipBtn").onclick = () => {
+    if (!activePlan || activePlan.currentStepIndex >= activePlan.steps.length) return;
+    const st = activePlan.steps[activePlan.currentStepIndex];
+    st.status = "skipped";
+    activePlan.currentStepIndex++;
+    if ($("consequentialApprovalCard")) $("consequentialApprovalCard").hidden = true;
+    renderTaskPlanUI();
+    runPlanLoop();
+  };
+}
+
+if ($("planStopBtn")) {
+  $("planStopBtn").onclick = () => {
+    if (!activePlan) return;
+    activePlan.status = "cancelled";
+    isPlanPaused = false;
+    if ($("consequentialApprovalCard")) $("consequentialApprovalCard").hidden = true;
+    renderTaskPlanUI();
+    setRigEmotion("idle", "Stopped");
+    appendHistory("buddy", "⏹️ Multi-action execution plan stopped by user.");
+  };
+}
+
+if ($("planRetryBtn")) {
+  $("planRetryBtn").onclick = () => {
+    if (!activePlan) return;
+    const st = activePlan.steps[activePlan.currentStepIndex];
+    if (st) st.status = "pending";
+    activePlan.status = "running";
+    if ($("planRetryBtn")) $("planRetryBtn").hidden = true;
+    renderTaskPlanUI();
+    runPlanLoop();
+  };
+}
+
+if ($("approveConsequentialBtn")) {
+  $("approveConsequentialBtn").onclick = async () => {
+    if (!pendingApprovalStep || !activePlan) return;
+    if ($("consequentialApprovalCard")) $("consequentialApprovalCard").hidden = true;
+    pendingApprovalStep.requiresApproval = false;
+    pendingApprovalStep.status = "pending";
+    pendingApprovalStep = null;
+    activePlan.status = "running";
+    renderTaskPlanUI();
+    await runPlanLoop();
+  };
+}
+
+if ($("rejectConsequentialBtn")) {
+  $("rejectConsequentialBtn").onclick = () => {
+    if (!pendingApprovalStep || !activePlan) return;
+    if ($("consequentialApprovalCard")) $("consequentialApprovalCard").hidden = true;
+    pendingApprovalStep.status = "skipped";
+    pendingApprovalStep = null;
+    activePlan.currentStepIndex++;
+    activePlan.status = "running";
+    renderTaskPlanUI();
+    runPlanLoop();
+  };
+}
+
+if ($("copyExtractedBtn")) {
+  $("copyExtractedBtn").onclick = () => {
+    const text = $("extractedContent")?.textContent || "";
+    if (text && navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      $("copyExtractedBtn").textContent = "✅ Copied!";
+      setTimeout(() => {
+        if ($("copyExtractedBtn")) $("copyExtractedBtn").textContent = "📋 Copy List";
+      }, 2000);
+    }
+  };
+}
 
 document.querySelectorAll("[data-q]").forEach((btn) => {
   btn.onclick = () => sendQuery(btn.dataset.q, btn.dataset.i);

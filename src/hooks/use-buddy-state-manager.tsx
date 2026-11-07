@@ -564,6 +564,7 @@ export function useBuddyStateManager(
   const resolveActiveBuddy = React.useCallback(
     (slug: string, list: ActiveBuddyCharacter[]): ActiveBuddyCharacter => {
       const fallback = BUDDY_CHARACTERS[0] as ActiveBuddyCharacter;
+      const match = list.find((b) => b.slug === slug || b.id === slug);
       return match || list[0] || fallback;
     },
     [],

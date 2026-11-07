@@ -67,19 +67,19 @@ export async function callGemini(model: ModelEntry, opts: ProviderCallOptions): 
     },
   });
 
-  // Protect against deprecated model IDs (e.g. 2.5-flash/1.5-flash no longer available to new users)
+  // Protect against deprecated model IDs
   let targetModelId = model.providerModelId || model.id;
-  if (targetModelId.includes("2.5-flash") || targetModelId.includes("1.5-flash")) {
-    targetModelId = "gemini-3.5-flash";
+  if (
+    targetModelId.includes("2.5-flash") ||
+    targetModelId.includes("1.5-flash") ||
+    targetModelId.includes("2.0-flash") ||
+    targetModelId.includes("3.5-flash")
+  ) {
+    targetModelId = "gemini-3.8-flash";
   }
 
-  // Model trial sequence: target model first, then verified active models (3.5-flash, 3.8-flash, 3.1-flash-lite)
-  const candidateModels = [
-    targetModelId,
-    "gemini-3.5-flash",
-    "gemini-3.8-flash",
-    "gemini-3.1-flash-lite",
-  ];
+  // Model trial sequence: target model first, then verified active models (gemini-3.8-flash, gemini-3.1-flash-lite)
+  const candidateModels = [targetModelId, "gemini-3.8-flash", "gemini-3.1-flash-lite"];
   const trialModels = candidateModels.filter((m, idx, arr) => arr.indexOf(m) === idx);
 
   let lastErr: unknown;

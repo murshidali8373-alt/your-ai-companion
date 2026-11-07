@@ -418,6 +418,181 @@
         gap: 5px;
       }
 
+      /* Multi-Action Task Execution Engine */
+      .task-plan-card {
+        background: rgba(20, 184, 166, 0.08);
+        border: 1px solid rgba(20, 184, 166, 0.35);
+        border-radius: 10px;
+        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        font-size: 11px;
+      }
+      .task-plan-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 6px;
+      }
+      .task-plan-title {
+        font-weight: 700;
+        font-size: 12px;
+        color: var(--text);
+        line-height: 1.3;
+      }
+      .task-plan-meta {
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .progress-container {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .progress-label-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .progress-bar-bg {
+        width: 100%;
+        height: 6px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      .progress-bar-fill {
+        height: 100%;
+        background: var(--accent);
+        width: 0%;
+        transition: width 0.3s ease;
+      }
+      .plan-steps-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        max-height: 160px;
+        overflow-y: auto;
+        padding-right: 2px;
+      }
+      .plan-step-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 5px 8px;
+        font-size: 11px;
+        gap: 6px;
+      }
+      .plan-step-row.running {
+        border-color: var(--accent);
+        background: rgba(20, 184, 166, 0.12);
+      }
+      .plan-step-row.completed {
+        border-color: rgba(16, 185, 129, 0.4);
+      }
+      .plan-step-row.awaiting_approval {
+        border-color: var(--warning);
+        background: rgba(245, 158, 11, 0.12);
+      }
+      .plan-step-row.failed {
+        border-color: var(--destructive);
+        background: rgba(239, 68, 68, 0.12);
+      }
+      .step-info {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        overflow: hidden;
+      }
+      .step-num {
+        font-weight: 700;
+        font-size: 10px;
+        color: var(--muted);
+        min-width: 16px;
+      }
+      .step-text {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: var(--text);
+      }
+      .step-status-tag {
+        font-size: 9px;
+        padding: 1px 5px;
+        border-radius: 4px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+      }
+      .step-status-tag.pending {
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--muted);
+      }
+      .step-status-tag.running {
+        background: rgba(20, 184, 166, 0.2);
+        color: var(--accent);
+        animation: pulse 1s infinite;
+      }
+      .step-status-tag.completed {
+        background: rgba(16, 185, 129, 0.2);
+        color: var(--success);
+      }
+      .step-status-tag.awaiting_approval {
+        background: rgba(245, 158, 11, 0.2);
+        color: var(--warning);
+      }
+      .step-status-tag.failed {
+        background: rgba(239, 68, 68, 0.2);
+        color: var(--destructive);
+      }
+      .step-status-tag.skipped {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--muted);
+      }
+      .plan-controls-bar {
+        display: flex;
+        gap: 5px;
+        align-items: center;
+        margin-top: 2px;
+      }
+
+      /* Extracted Data Card */
+      .extracted-card {
+        background: rgba(56, 189, 248, 0.08);
+        border: 1px solid rgba(56, 189, 248, 0.35);
+        border-radius: 10px;
+        padding: 8px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: 11px;
+      }
+      .extracted-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-weight: 600;
+        color: #38bdf8;
+      }
+      .extracted-content {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 6px 8px;
+        max-height: 90px;
+        overflow-y: auto;
+        font-family: monospace;
+        font-size: 10px;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+
       /* Form Filling Panel */
       .form-fill-panel {
         background: rgba(20, 184, 166, 0.08);
@@ -773,6 +948,85 @@
         </div>
       </div>
 
+      <!-- MULTI-ACTION BROWSER OPERATOR PANEL -->
+      <div id="taskPlanCard" class="task-plan-card" hidden>
+        <div class="task-plan-header">
+          <div>
+            <div id="planTitle" class="task-plan-title">Multi-Action Task Plan</div>
+            <div id="planMeta" class="task-plan-meta">Target: current tab · 0 steps</div>
+          </div>
+          <span id="planStatusBadge" class="status-badge">Pending</span>
+        </div>
+
+        <div class="progress-container">
+          <div class="progress-label-row">
+            <span id="progressStepsLabel">0 of 0 steps completed</span>
+            <span id="progressPercentLabel">0%</span>
+          </div>
+          <div class="progress-bar-bg">
+            <div id="progressBarFill" class="progress-bar-fill"></div>
+          </div>
+        </div>
+
+        <div id="planStepsList" class="plan-steps-list"></div>
+
+        <div class="plan-controls-bar">
+          <button id="planPauseResumeBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
+            ⏸️ Pause
+          </button>
+          <button id="planSkipBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
+            ⏭️ Skip
+          </button>
+          <button
+            id="planStopBtn"
+            class="ghost"
+            style="
+              padding: 3px 8px;
+              font-size: 10px;
+              color: var(--destructive);
+              border-color: rgba(239, 68, 68, 0.4);
+            "
+          >
+            ⏹️ Stop
+          </button>
+          <button id="planRetryBtn" class="ghost" style="padding: 3px 8px; font-size: 10px" hidden>
+            🔄 Retry
+          </button>
+        </div>
+      </div>
+
+      <!-- EXTRACTED DATA & REPORT CARD -->
+      <div id="extractedDataCard" class="extracted-card" hidden>
+        <div class="extracted-header">
+          <span id="extractedCountTitle">📊 Extracted Page Data (0 items)</span>
+          <button id="copyExtractedBtn" style="padding: 2px 7px; font-size: 10px">
+            📋 Copy List
+          </button>
+        </div>
+        <div id="extractedContent" class="extracted-content"></div>
+      </div>
+
+      <!-- CONSEQUENTIAL ACTION APPROVAL CARD -->
+      <div id="consequentialApprovalCard" class="confirm-card" hidden>
+        <h4>🛡️ Consequential Step Approval</h4>
+        <p id="consequentialPrompt" style="font-size: 11px; color: #fef08a">
+          Buddy is about to perform a consequential action (e.g. submit, purchase, payment, or
+          delete).
+        </p>
+        <div style="display: flex; gap: 6px; margin-top: 4px">
+          <button id="approveConsequentialBtn" style="padding: 4px 10px; font-size: 11px">
+            ✅ Approve & Continue
+          </button>
+          <button
+            id="rejectConsequentialBtn"
+            class="ghost"
+            style="padding: 4px 10px; font-size: 11px"
+          >
+            ❌ Skip Step
+          </button>
+        </div>
+      </div>
+
       <!-- SMART FORM FILLING HELPER (Collapsible / Active) -->
       <div id="formFillCard" class="form-fill-panel" hidden>
         <div class="form-fill-title">
@@ -814,9 +1068,34 @@
       <div id="signedOut" class="auth-banner" hidden></div>
 
       <!-- Page Completeness Notice Banner -->
-      <div id="pageCompletenessBanner" class="confirm-card" style="border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.12); display: flex; align-items: center; justify-content: space-between; padding: 4px 8px;" hidden>
-        <span id="completenessText" style="font-size: 11px; color: #fbbf24;">📜 More content exists below visible fold</span>
-        <button id="scrollDownBannerBtn" class="ghost" style="padding: 2px 7px; font-size: 10px; color: #fbbf24; border-color: rgba(245, 158, 11, 0.4);">⬇️ Scroll Down</button>
+      <div
+        id="pageCompletenessBanner"
+        class="confirm-card"
+        style="
+          border-color: rgba(245, 158, 11, 0.4);
+          background: rgba(245, 158, 11, 0.12);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 4px 8px;
+        "
+        hidden
+      >
+        <span id="completenessText" style="font-size: 11px; color: #fbbf24"
+          >📜 More content exists below visible fold</span
+        >
+        <button
+          id="scrollDownBannerBtn"
+          class="ghost"
+          style="
+            padding: 2px 7px;
+            font-size: 10px;
+            color: #fbbf24;
+            border-color: rgba(245, 158, 11, 0.4);
+          "
+        >
+          ⬇️ Scroll Down
+        </button>
       </div>
 
       <!-- Main Interface -->
@@ -824,18 +1103,23 @@
         <div class="quick-chips">
           <span
             class="chip"
-            id="scrollDownChip"
-            title="Scroll page down"
+            id="meeshoTaskChip"
+            style="border-color: rgba(20, 184, 166, 0.4); color: var(--accent)"
+            title="Execute multi-step Meesho supplier workflow"
+            data-multi-task="Open Meesho Supplier Panel, go to Orders, open today's orders, find pending orders, copy their order IDs, and prepare a list of them"
           >
-            ⬇️ Scroll Down
+            📦 Meesho: Pending Orders
           </span>
           <span
             class="chip"
-            id="scrollUpChip"
-            title="Scroll page up"
+            id="scrapeTableChip"
+            title="Extract table data and copy to clipboard"
+            data-multi-task="Find tables on this page, extract all rows and columns, copy list to clipboard"
           >
-            ⬆️ Scroll Up
+            📋 Copy Table
           </span>
+          <span class="chip" id="scrollDownChip" title="Scroll page down"> ⬇️ Scroll Down </span>
+          <span class="chip" id="scrollUpChip" title="Scroll page up"> ⬆️ Scroll Up </span>
           <span
             class="chip"
             data-q="Analyze what this page is about simply and summarize key points."

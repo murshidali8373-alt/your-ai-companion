@@ -43,8 +43,7 @@ function Gallery() {
   const profile = dashboard.data?.profile;
   const current = profile?.selected_custom_buddy_id ?? profile?.selected_buddy_slug ?? "friendly";
   const customLook = dashboard.data?.customBuddies.find(
-    (b: { id: string; accent_color?: string | null }) =>
-      b.id === profile?.selected_custom_buddy_id,
+    (b: { id: string; accent_color?: string | null }) => b.id === profile?.selected_custom_buddy_id,
   )?.accent_color;
   const shown = preview ?? customLook ?? profile?.selected_buddy_slug ?? "friendly";
   const graphics = (profile?.graphics_mode as "low" | "balanced" | "high") ?? "balanced";
@@ -113,36 +112,37 @@ function Gallery() {
                   personality?: string | null;
                 }) => (
                   <div key={c.id} className="panel flex items-center justify-between gap-3 p-4">
-                  <div>
-                    <h3 className="font-semibold">{c.name}</h3>
-                    <p className="text-xs text-muted-foreground">{c.tagline || c.personality}</p>
+                    <div>
+                      <h3 className="font-semibold">{c.name}</h3>
+                      <p className="text-xs text-muted-foreground">{c.tagline || c.personality}</p>
+                    </div>
+                    <div className="flex gap-1">
+                      <Button
+                        size="sm"
+                        disabled={current === c.id}
+                        onClick={() => pick.mutate({ slug: null, customId: c.id })}
+                      >
+                        {current === c.id ? "Current" : "Use"}
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label={`Delete ${c.name}`}
+                        onClick={async () => {
+                          try {
+                            await remove({ data: { id: c.id } });
+                            queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+                          } catch {
+                            toast.error("Could not delete that Buddy.");
+                          }
+                        }}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex gap-1">
-                    <Button
-                      size="sm"
-                      disabled={current === c.id}
-                      onClick={() => pick.mutate({ slug: null, customId: c.id })}
-                    >
-                      {current === c.id ? "Current" : "Use"}
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      aria-label={`Delete ${c.name}`}
-                      onClick={async () => {
-                        try {
-                          await remove({ data: { id: c.id } });
-                          queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-                        } catch {
-                          toast.error("Could not delete that Buddy.");
-                        }
-                      }}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
+                ),
+              )}
             </div>
           )}
         </div>
