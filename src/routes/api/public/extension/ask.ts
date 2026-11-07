@@ -58,6 +58,8 @@ const bodySchema = z.object({
   preferredModel: z.string().max(100).optional(),
   userApiKey: z.string().max(200).optional(),
   customBaseUrl: z.string().max(300).optional(),
+  buddySlug: z.string().max(80).optional(),
+  customBuddyId: z.string().max(80).optional(),
 });
 
 const json = (body: unknown, status = 200) =>
@@ -90,6 +92,8 @@ export const Route = createFileRoute("/api/public/extension/ask")({
               preferredModel: parsed.preferredModel,
               userApiKey: parsed.userApiKey,
               customBaseUrl: parsed.customBaseUrl,
+              buddySlug: parsed.buddySlug,
+              customBuddyId: parsed.customBuddyId,
             });
             return json(result);
           } else {
@@ -103,6 +107,8 @@ export const Route = createFileRoute("/api/public/extension/ask")({
               preferredModel: parsed.preferredModel,
               userApiKey: parsed.userApiKey,
               customBaseUrl: parsed.customBaseUrl,
+              buddySlug: parsed.buddySlug,
+              customBuddyId: parsed.customBuddyId,
             });
             return json({ ...result, guest: true });
           }

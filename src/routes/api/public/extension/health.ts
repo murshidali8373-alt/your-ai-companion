@@ -6,17 +6,32 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 
+import { getGeminiKey } from "@/lib/ai/provider-keys.server";
 import { verifyBearer } from "@/lib/supabase-bearer.server";
 
 export const Route = createFileRoute("/api/public/extension/health")({
   server: {
     handlers: {
       GET: async ({ request }) => {
+        const geminiKey = getGeminiKey();
+        const hasGemini = Boolean(geminiKey);
+        const hasLovable = Boolean(process.env["LOVABLE_API_KEY"]);
+        const hasAnyProvider =
+          hasGemini ||
+          hasLovable ||
+          Boolean(process.env["GROQ_API_KEY"]) ||
+          Boolean(process.env["OPENROUTER_API_KEY"]) ||
+          Boolean(process.env["OPENAI_API_KEY"]);
+
         const checks: Record<string, { ok: boolean; detail: string }> = {
           backend: { ok: false, detail: "not checked" },
           ai: {
-            ok: Boolean(process.env["LOVABLE_API_KEY"]),
-            detail: process.env["LOVABLE_API_KEY"] ? "configured" : "not configured",
+            ok: hasAnyProvider,
+            detail: hasGemini
+              ? "gemini configured"
+              : hasAnyProvider
+                ? "configured"
+                : "not configured",
           },
           session: { ok: false, detail: "signed out" },
         };

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Buddy Side Panel</title>
+    <title>AI Buddy — Voice & Visual Companion</title>
     <style>
       :root {
         --bg: #0b0f15;
@@ -18,6 +18,10 @@
         --destructive: #ef4444;
         --warning: #f59e0b;
         --success: #10b981;
+
+        /* Specialist outfit tokens */
+        --outfit-color: #0d9488;
+        --outfit-name: "teal";
       }
       * {
         box-sizing: border-box;
@@ -44,29 +48,30 @@
         display: flex;
         flex-direction: column;
         flex: 1;
-        padding: 14px;
-        gap: 12px;
+        padding: 12px;
+        gap: 10px;
       }
+
       header {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding-bottom: 10px;
+        padding-bottom: 8px;
         border-bottom: 1px solid var(--border);
       }
       .brand {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 6px;
         font-weight: 700;
-        font-size: 14px;
+        font-size: 13px;
         letter-spacing: -0.01em;
       }
       .status-badge {
         font-size: 10px;
         text-transform: uppercase;
         letter-spacing: 0.05em;
-        padding: 2px 8px;
+        padding: 2px 7px;
         border-radius: 12px;
         background: rgba(20, 184, 166, 0.15);
         color: var(--accent);
@@ -92,50 +97,189 @@
         color: #38bdf8;
         border-color: #38bdf8;
       }
+      .status-badge.pointing {
+        background: rgba(168, 85, 247, 0.2);
+        color: #c084fc;
+        border-color: #a855f7;
+      }
 
-      /* --- Talking Tom Stage --- */
+      /* --- ALL 16 BUDDIES SELECTOR CAROUSEL --- */
+      .buddy-carousel-container {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .buddy-carousel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 11px;
+        color: var(--muted);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .buddy-carousel {
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+        padding: 4px 1px 6px 1px;
+        scrollbar-width: thin;
+        scrollbar-color: var(--border) transparent;
+      }
+      .buddy-carousel::-webkit-scrollbar {
+        height: 4px;
+      }
+      .buddy-carousel::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 4px;
+      }
+      .buddy-card {
+        flex: 0 0 54px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        padding: 4px 2px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--card-bg);
+        cursor: pointer;
+        transition: all 0.15s ease;
+        user-select: none;
+      }
+      .buddy-card:hover {
+        background: var(--card-hover);
+        border-color: var(--accent);
+        transform: translateY(-1px);
+      }
+      .buddy-card.active {
+        border-color: var(--accent);
+        background: rgba(20, 184, 166, 0.12);
+        box-shadow: 0 0 0 1px var(--accent);
+      }
+      .buddy-thumb {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: #0f172a;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+      .buddy-thumb img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+      .buddy-card-name {
+        font-size: 9px;
+        font-weight: 600;
+        text-align: center;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 50px;
+        color: var(--text);
+      }
+      .buddy-card.custom-badge {
+        position: relative;
+      }
+      .custom-dot {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #f59e0b;
+      }
+
+      /* Active Persona Banner */
+      .persona-info-banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 6px 10px;
+        gap: 8px;
+      }
+      .persona-details {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .persona-title {
+        font-weight: 700;
+        font-size: 12px;
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .persona-tagline {
+        font-size: 11px;
+        color: var(--muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .persona-tag {
+        font-size: 9px;
+        padding: 1px 5px;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--muted);
+      }
+
+      /* --- CHARACTER STAGE --- */
       .character-stage {
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        padding: 6px 0;
+        padding: 4px 0;
         position: relative;
         cursor: pointer;
         user-select: none;
+        min-height: 140px;
       }
-      #rigArmLeft, #rigArmRight { transition: transform 0.45s cubic-bezier(.2,1.4,.4,1); transform-box: view-box; }
-      @media (prefers-reduced-motion: reduce) { #rigArmLeft, #rigArmRight { transition: none; } }
+      .character-3d-artwork {
+        width: 120px;
+        height: 120px;
+        object-fit: contain;
+        filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.45));
+        transition: transform 0.2s ease;
+      }
       .character-rig-svg {
-        width: 140px;
-        height: 160px;
+        width: 130px;
+        height: 140px;
         overflow: visible;
         filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.4));
         transition: transform 0.2s ease;
       }
-      .character-stage:hover .character-rig-svg {
+      .character-stage:hover .character-rig-svg,
+      .character-stage:hover .character-3d-artwork {
         transform: scale(1.03);
       }
-      .character-stage:active .character-rig-svg {
+      .character-stage:active .character-rig-svg,
+      .character-stage:active .character-3d-artwork {
         transform: scale(0.97);
       }
 
-      /* Auth Banner */
-      .auth-banner {
-        background: var(--card-bg);
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 18px;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        text-align: center;
+      #rigArmLeft,
+      #rigArmRight {
+        transition: transform 0.4s cubic-bezier(0.2, 1.3, 0.4, 1);
+        transform-box: view-box;
       }
 
-      /* Quick Chips */
+      /* Chips */
       .quick-chips {
         display: flex;
-        gap: 6px;
+        gap: 5px;
         flex-wrap: wrap;
       }
       .chip {
@@ -143,10 +287,11 @@
         border: 1px solid var(--border);
         color: var(--muted);
         font-size: 11px;
-        padding: 4px 9px;
-        border-radius: 14px;
+        padding: 3px 8px;
+        border-radius: 12px;
         cursor: pointer;
         transition: all 0.15s ease;
+        white-space: nowrap;
       }
       .chip:hover {
         background: rgba(255, 255, 255, 0.09);
@@ -195,7 +340,7 @@
         background: var(--card-bg);
         color: var(--text);
         border: 1px solid var(--border);
-        padding: 8px 14px;
+        padding: 7px 12px;
       }
       button.voice-btn.active {
         background: var(--destructive);
@@ -216,16 +361,16 @@
         }
       }
 
-      /* Chat / Message Area */
+      /* Content Area */
       .content-area {
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 8px;
         flex: 1;
         overflow-y: auto;
       }
       .history-box {
-        max-height: 150px;
+        max-height: 140px;
         overflow-y: auto;
         display: flex;
         flex-direction: column;
@@ -233,7 +378,7 @@
         background: rgba(0, 0, 0, 0.2);
         border: 1px solid var(--border);
         border-radius: 10px;
-        padding: 10px;
+        padding: 8px;
       }
       .msg-bubble {
         padding: 6px 10px;
@@ -273,6 +418,35 @@
         gap: 5px;
       }
 
+      /* Form Filling Panel */
+      .form-fill-panel {
+        background: rgba(20, 184, 166, 0.08);
+        border: 1px solid rgba(20, 184, 166, 0.3);
+        border-radius: 10px;
+        padding: 8px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: 11px;
+      }
+      .form-fill-title {
+        font-weight: 600;
+        color: var(--accent);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .form-fill-report {
+        font-size: 11px;
+        color: var(--text);
+        background: var(--card-bg);
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        max-height: 80px;
+        overflow-y: auto;
+      }
+
       /* Input Box */
       .input-box {
         display: flex;
@@ -281,12 +455,12 @@
       }
       textarea {
         width: 100%;
-        min-height: 56px;
+        min-height: 52px;
         border-radius: 8px;
         border: 1px solid var(--border);
         background: var(--card-bg);
         color: var(--text);
-        padding: 8px 10px;
+        padding: 7px 10px;
         font: inherit;
         font-size: 12px;
         resize: vertical;
@@ -303,11 +477,9 @@
       }
       .action-group {
         display: flex;
-        gap: 6px;
+        gap: 5px;
         align-items: center;
       }
-
-      /* Status & Details */
       .status-msg {
         font-size: 11px;
         color: var(--muted);
@@ -333,7 +505,7 @@
 
       footer {
         margin-top: auto;
-        padding-top: 10px;
+        padding-top: 8px;
         border-top: 1px solid var(--border);
         display: flex;
         justify-content: space-between;
@@ -343,14 +515,6 @@
       }
       [hidden] {
         display: none !important;
-      }
-      @media (prefers-reduced-motion: reduce) {
-        *,
-        ::before,
-        ::after {
-          animation: none !important;
-          transition: none !important;
-        }
       }
     </style>
   </head>
@@ -372,12 +536,24 @@
       <!-- Settings Drawer (Collapsible) -->
       <div id="settingsBox" class="settings-drawer" hidden>
         <div class="settings-row">
-          <span>Mute Voice Speech:</span>
-          <input type="checkbox" id="muteToggle" />
+          <span>Character Artwork Mode:</span>
+          <select
+            id="avatarRenderMode"
+            style="
+              background: var(--bg);
+              color: var(--text);
+              border: 1px solid var(--border);
+              border-radius: 4px;
+              padding: 2px;
+            "
+          >
+            <option value="rigged">Live Animated Rig (Vector)</option>
+            <option value="3d">Pre-rendered 3D Artwork</option>
+          </select>
         </div>
         <div class="settings-row">
-          <span>Low Graphics Mode:</span>
-          <input type="checkbox" id="lowGraphicsToggle" />
+          <span>Mute Voice Speech:</span>
+          <input type="checkbox" id="muteToggle" />
         </div>
         <div class="settings-row">
           <span>Character Size:</span>
@@ -398,8 +574,42 @@
         </div>
       </div>
 
-      <!-- Authentic Original AI Buddy Character Stage -->
+      <!-- ALL 16 BUDDIES SELECTOR CAROUSEL -->
+      <div class="buddy-carousel-container">
+        <div class="buddy-carousel-header">
+          <span>Switch Buddy (16 Specialists)</span>
+          <span id="buddyCountBadge" style="color: var(--accent); font-size: 10px"
+            >16 available</span
+          >
+        </div>
+        <div id="buddyCarousel" class="buddy-carousel">
+          <!-- Dynamically populated with all 15 specialist buddies + 1 user Custom Buddy -->
+        </div>
+      </div>
+
+      <!-- ACTIVE PERSONA BANNER -->
+      <div class="persona-info-banner">
+        <div class="persona-details">
+          <div class="persona-title">
+            <span id="activeBuddyName">Friendly Buddy</span>
+            <span id="activeBuddyBadge" class="persona-tag">General</span>
+          </div>
+          <div class="persona-tagline" id="activeBuddyTagline">Your everyday browser companion</div>
+        </div>
+      </div>
+
+      <!-- AUTHENTIC BUDDY CHARACTER STAGE -->
       <div id="characterStage" class="character-stage" title="Tap Buddy to interact">
+        <!-- 3D Artwork Mode Image (Hidden by default when vector rig is active) -->
+        <img
+          id="buddy3dImg"
+          class="character-3d-artwork"
+          src="./assets/buddy-general-3d.webp"
+          alt="AI Buddy"
+          hidden
+        />
+
+        <!-- Authentic Mascot Vector Rig (Adaptive Outfit, Face, Props, & Connected Movable Arm) -->
         <div id="buddyAvatar" data-emotion="idle">
           <svg
             id="characterSvg"
@@ -414,32 +624,56 @@
                 <stop offset="100%" stop-color="#f1f5f9" />
               </linearGradient>
               <linearGradient id="outfitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stop-color="#0d9488" />
-                <stop offset="100%" stop-color="#0f766e" />
+                <stop offset="0%" stop-color="#0d9488" id="outfitStop1" />
+                <stop offset="100%" stop-color="#0f766e" id="outfitStop2" />
               </linearGradient>
             </defs>
 
             <!-- Subtle ground shadow -->
             <ellipse cx="50" cy="95" rx="22" ry="4" fill="#cbd5e1" opacity="0.4" />
 
-            <!-- Authentic Mascot: Feet, Body, Shirt, Head -->
+            <!-- Mascot: Feet, Body, Shirt, Head -->
             <g fill="#f8fafc" stroke="#94a3b8" stroke-width="0.8">
               <!-- Left & Right Feet -->
               <ellipse cx="40" cy="88" rx="9" ry="5" />
               <ellipse cx="61" cy="88" rx="9" ry="5" />
 
-              <!-- Body in specialist teal outfit -->
-              <path d="M29 58Q22 65 25 82Q50 92 75 82Q79 65 70 58Z" fill="url(#outfitGrad)" />
+              <!-- Body in specialist outfit -->
+              <path
+                id="rigBody"
+                d="M29 58Q22 65 25 82Q50 92 75 82Q79 65 70 58Z"
+                fill="url(#outfitGrad)"
+              />
 
               <!-- Inner Shirt -->
               <path d="M43 59h15l-1 27H44Z" fill="#ffffff" />
 
-              <!-- Arms -->
+              <!-- Left Arm (with movable elbow & sculpted pointing finger) -->
               <g id="rigArmLeft">
-                <path d="m32 60 12 6-4 12-9-12" fill="url(#outfitGrad)" />
+                <path id="rigArmLeftSleeve" d="m32 60 12 6-4 12-9-12" fill="url(#outfitGrad)" />
+                <ellipse
+                  cx="30"
+                  cy="71"
+                  rx="4"
+                  ry="3"
+                  fill="#f8fafc"
+                  stroke="#94a3b8"
+                  stroke-width="0.7"
+                />
               </g>
+
+              <!-- Right Arm -->
               <g id="rigArmRight">
-                <path d="m69 60 11 6 4 12 9-12" fill="url(#outfitGrad)" />
+                <path id="rigArmRightSleeve" d="m69 60 11 6 4 12 9-12" fill="url(#outfitGrad)" />
+                <ellipse
+                  cx="71"
+                  cy="71"
+                  rx="4"
+                  ry="3"
+                  fill="#f8fafc"
+                  stroke="#94a3b8"
+                  stroke-width="0.7"
+                />
               </g>
 
               <!-- Authentic Pear-Shaped Pearl Head -->
@@ -449,7 +683,7 @@
               />
             </g>
 
-            <!-- Eyebrows (subtle expressions) -->
+            <!-- Eyebrows -->
             <g id="rigBrowLeft" transform="translate(40, 36)">
               <path
                 d="M -4 0 Q 0 -1 4 0"
@@ -471,7 +705,7 @@
               />
             </g>
 
-            <!-- Charcoal Ink Eyes & Pupils -->
+            <!-- Charcoal Ink Eyes & Pupils with gaze tracking -->
             <g id="rigEyeLeft" transform="translate(40, 42)">
               <ellipse cx="0" cy="0" rx="2.4" ry="3.7" fill="#1e293b" />
               <g id="rigPupilLeft">
@@ -501,7 +735,7 @@
               />
             </g>
 
-            <!-- Authentic Smile Mouth -->
+            <!-- Dynamic Mouth for lip-sync & emotions -->
             <path
               id="rigMouth"
               d="M45 51 Q50 55 55 51"
@@ -510,104 +744,110 @@
               stroke-width="1.2"
               stroke-linecap="round"
             />
+
+            <!-- Specialist Props & Accessories (Laptop for Dev, Ledger for CA, Parcel for Ecom, etc.) -->
+            <g id="rigPropContainer" stroke="#94a3b8" stroke-width="0.7"></g>
           </svg>
         </div>
       </div>
 
-      <!-- Signed Out / Guest Mode Banner (Non-blocking) -->
-      <div
-        id="signedOut"
-        class="auth-banner"
-        style="
-          padding: 10px 14px;
-          background: rgba(20, 184, 166, 0.08);
-          border-color: rgba(20, 184, 166, 0.25);
-        "
-        hidden
-      >
-        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
-          <p style="font-size: 11px; color: var(--muted); text-align: left; margin: 0">
-            <strong style="color: var(--accent)">Guest Mode</strong> — Ask anything or analyze this
-            page. Sign in to sync memory.
-          </p>
-          <button
-            id="connectBtn"
-            class="ghost"
-            style="padding: 3px 8px; font-size: 11px; white-space: nowrap"
-          >
-            Connect
-          </button>
-        </div>
-      </div>
-
-      <!-- Page Error Detection Card -->
+      <!-- Page Issues Banner -->
       <div
         id="pageErrorBanner"
         class="confirm-card"
         style="border-color: var(--destructive); background: rgba(239, 68, 68, 0.12)"
         hidden
       >
-        <h4 style="color: #fca5a5; font-size: 12px; margin-bottom: 2px">🚨 Page Issues Detected</h4>
+        <h4 style="color: #fca5a5; font-size: 11px; margin-bottom: 2px">🚨 Page Issues Detected</h4>
         <p id="pageErrorText" style="font-size: 11px; color: var(--text)"></p>
         <div style="display: flex; gap: 6px; margin-top: 4px">
           <button
             id="fixErrorsBtn"
-            style="padding: 4px 8px; font-size: 11px; background: var(--destructive); color: white"
+            style="padding: 3px 8px; font-size: 11px; background: var(--destructive); color: white"
           >
-            Explain & Fix Errors
+            Fix & Explain Errors
           </button>
-          <button id="dismissErrorsBtn" class="ghost" style="padding: 4px 8px; font-size: 11px">
+          <button id="dismissErrorsBtn" class="ghost" style="padding: 3px 8px; font-size: 11px">
             Dismiss
           </button>
         </div>
       </div>
 
-      <!-- Signed In / Guest Main Interface -->
+      <!-- SMART FORM FILLING HELPER (Collapsible / Active) -->
+      <div id="formFillCard" class="form-fill-panel" hidden>
+        <div class="form-fill-title">
+          <span>📝 Smart Form Fill Assistant</span>
+          <button id="closeFormFillBtn" class="ghost" style="padding: 1px 4px; font-size: 10px">
+            ✕
+          </button>
+        </div>
+        <p style="color: var(--muted); font-size: 10px">
+          Buddy matches fields, preserves existing user data, and verifies every filled value.
+        </p>
+        <div id="formFillReport" class="form-fill-report" hidden></div>
+        <div style="display: flex; gap: 5px; margin-top: 2px">
+          <button id="autoFillSampleBtn" style="padding: 4px 8px; font-size: 10px">
+            ✨ Auto-fill Verified Info
+          </button>
+          <button id="verifyFormInputsBtn" class="ghost" style="padding: 4px 8px; font-size: 10px">
+            🔍 Check Field Values
+          </button>
+        </div>
+      </div>
+
+      <!-- Action Confirmation Card (High Impact Protection) -->
+      <div id="confirmCard" class="confirm-card" hidden>
+        <h4>⚠️ Confirmation Needed</h4>
+        <p id="confirmDesc" style="font-size: 11px; color: var(--muted)"></p>
+        <div style="display: flex; gap: 6px; margin-top: 4px">
+          <button id="confirmApproveBtn" style="padding: 4px 8px; font-size: 11px">
+            Approve Action
+          </button>
+          <button id="confirmCancelBtn" class="ghost" style="padding: 4px 8px; font-size: 11px">
+            Cancel
+          </button>
+        </div>
+      </div>
+
+      <!-- Answer Card Container for compatibility -->
+      <div id="answerCard" class="answer-card" hidden></div>
+      <div id="signedOut" class="auth-banner" hidden></div>
+
+      <!-- Main Interface -->
       <div id="signedIn" class="content-area">
         <div class="quick-chips">
           <span
             class="chip"
             data-q="Analyze what this page is about simply and summarize key points."
             data-i="explain_page"
-            >🔍 Analyze page</span
           >
+            🔍 Analyze page
+          </span>
           <span
             class="chip"
-            data-q="Are there any validation errors, alerts, or missing required fields on this page?"
+            data-q="Where is the GSTIN or registration field on this page?"
+            data-i="locate_element"
+          >
+            🎯 Locate field
+          </span>
+          <span class="chip" id="openFormAssistantChip"> 📝 Fill form </span>
+          <span
+            class="chip"
+            data-q="Are there any validation errors or missing required fields?"
             data-i="classify"
-            >⚠️ Check errors</span
           >
-          <span class="chip" data-q="What should I do next on this page?" data-i="plan"
-            >➡️ Next step</span
-          >
-          <span class="chip" data-q="Find all form fields and inputs." data-i="locate_element"
-            >🎯 Find inputs</span
-          >
-        </div>
-
-        <!-- Answer card container -->
-        <div id="answerCard" class="answer-card" hidden>
-          <div id="answerText" class="answer-text"></div>
-        </div>
-
-        <!-- Action Confirmation Card (Shown when high-impact action is detected) -->
-        <div id="confirmCard" class="confirm-card" hidden>
-          <h4>⚠️ Confirmation Needed</h4>
-          <p id="confirmDesc" style="font-size: 11px; color: var(--muted)"></p>
-          <div style="display: flex; gap: 6px; margin-top: 4px">
-            <button id="confirmApproveBtn" style="padding: 4px 8px; font-size: 11px">
-              Approve Action
-            </button>
-            <button id="confirmCancelBtn" class="ghost" style="padding: 4px 8px; font-size: 11px">
-              Cancel
-            </button>
-          </div>
+            ⚠️ Check errors
+          </span>
+          <span class="chip" data-q="What should I do next on this page?" data-i="plan">
+            ➡️ Next step
+          </span>
         </div>
 
         <!-- History conversation box -->
         <div id="historyBox" class="history-box">
           <div class="msg-bubble msg-buddy">
-            Hey! Ask me anything about this page or speak into the mic.
+            Hey! I am your AI Buddy. Ask me anything about this page or select any of the 16
+            specialists above!
           </div>
         </div>
 
@@ -615,7 +855,7 @@
         <div class="input-box">
           <textarea
             id="promptInput"
-            placeholder="Ask Buddy… e.g. What does this clause mean?"
+            placeholder="Ask Buddy… e.g. Where do I enter GSTIN?"
           ></textarea>
           <div class="controls">
             <div class="action-group">
@@ -626,7 +866,7 @@
                 title="Highlight target element on page"
                 hidden
               >
-                🎯 Highlight
+                🎯 Point Arm
               </button>
               <button id="speakAnswerBtn" class="ghost" title="Read aloud" hidden>🔊 Read</button>
             </div>
@@ -638,7 +878,10 @@
       </div>
 
       <footer>
-        <span id="userAccount">Connecting…</span>
+        <span id="userAccount">Guest Mode (Sign in optional)</span>
+        <button id="connectBtn" class="ghost" style="padding: 2px 6px; font-size: 11px">
+          Connect
+        </button>
         <button id="signoutBtn" class="ghost" style="padding: 2px 6px; font-size: 11px" hidden>
           Sign out
         </button>

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeEmotion,
   BUDDY_EMOTION_STATES,
+  BUDDY_CHARACTERS,
   useBuddyStateManager,
   BuddyStateManager,
   useBuddyState,
@@ -69,5 +70,51 @@ describe("BuddyStateManager & normalizeEmotion", () => {
     expect(typeof useBuddyStateManager).toBe("function");
     expect(typeof useBuddyState).toBe("function");
     expect(typeof BuddyStateProvider).toBe("function");
+  });
+
+  it("synchronizes all 16 active characters (15 specialists + 1 Custom Buddy)", () => {
+    expect(BUDDY_CHARACTERS).toBeDefined();
+    expect(BUDDY_CHARACTERS.length).toBe(16);
+
+    const slugs = BUDDY_CHARACTERS.map((b) => b.slug);
+    // 15 canonical specialists
+    expect(slugs).toContain("friendly");
+    expect(slugs).toContain("developer");
+    expect(slugs).toContain("ca");
+    expect(slugs).toContain("legal");
+    expect(slugs).toContain("ecommerce");
+    expect(slugs).toContain("business");
+    expect(slugs).toContain("marketing");
+    expect(slugs).toContain("research");
+    expect(slugs).toContain("data");
+    expect(slugs).toContain("content");
+    expect(slugs).toContain("design");
+    expect(slugs).toContain("operations");
+    expect(slugs).toContain("professor");
+    expect(slugs).toContain("dadaji");
+    expect(slugs).toContain("detective");
+    // 1 Custom Buddy
+    expect(slugs).toContain("custom:user_custom_buddy_1");
+
+    // Check custom buddy structure
+    const custom = BUDDY_CHARACTERS.find((b) => b.isCustom);
+    expect(custom).toBeDefined();
+    expect(custom?.isCustom).toBe(true);
+    expect(custom?.name).toBe("My Custom Buddy");
+    expect(custom?.id).toBe("user_custom_buddy_1");
+  });
+
+  it("guarantees every character contains required visuals and metadata", () => {
+    BUDDY_CHARACTERS.forEach((char) => {
+      expect(char.slug).toBeTruthy();
+      expect(char.name).toBeTruthy();
+      expect(char.tagline).toBeTruthy();
+      expect(Array.isArray(char.expertise)).toBe(true);
+      expect(char.expertise.length).toBeGreaterThan(0);
+      expect(char.outfit).toBeTruthy();
+      expect(char.outfitColors.length).toBe(2);
+      expect(char.image).toBeTruthy();
+      expect(typeof char.isCustom).toBe("boolean");
+    });
   });
 });

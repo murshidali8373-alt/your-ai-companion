@@ -39,6 +39,8 @@ export interface AskInput {
   preferredModel?: string | null;
   userApiKey?: string | null;
   customBaseUrl?: string | null;
+  buddySlug?: string | null;
+  customBuddyId?: string | null;
 }
 
 export interface AskOutput {
@@ -159,13 +161,55 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
   const question = input.question.trim().slice(0, 2000);
   if (!question) throw new AiError("bad_request", "Ask me something first.");
 
+  const explicitPersonaPromise: Promise<Persona> = input.customBuddyId
+    ? (async () => {
+        const { data: custom } = await db
+          .from("custom_buddies")
+          .select("*")
+          .eq("id", input.customBuddyId)
+          .maybeSingle();
+        if (custom) {
+          return {
+            slug: `custom:${custom.id}`,
+            name: custom.name,
+            personality: custom.personality || DEFAULT_PERSONA.personality,
+            teachingStyle: custom.teaching_style,
+            humorLevel: custom.humor_level,
+            seriousness: custom.seriousness,
+            language: custom.language,
+            expertise: custom.expertise ?? [],
+            systemPrompt:
+              custom.system_prompt ||
+              `You are ${custom.name}, a custom AI companion built by this user.`,
+          };
+        }
+        return loadPersona(db, userId);
+      })()
+    : input.buddySlug
+      ? (async () => {
+          const { getBuddyPreset } = await import("./ai/buddy-personas");
+          const preset = getBuddyPreset(input.buddySlug);
+          return {
+            slug: preset.slug,
+            name: preset.name,
+            personality: preset.personality,
+            teachingStyle: preset.teaching_style,
+            humorLevel: preset.humor_level,
+            seriousness: preset.seriousness,
+            language: preset.default_language,
+            expertise: preset.expertise,
+            systemPrompt: preset.system_prompt,
+          };
+        })()
+      : loadPersona(db, userId);
+
   const [{ data: settings }, persona] = await Promise.all([
     db
       .from("permission_settings")
       .select("level, privacy_mode, allow_memory, blocked_domains, confirm_high_impact")
       .eq("user_id", userId)
       .maybeSingle(),
-    loadPersona(db, userId),
+    explicitPersonaPromise,
   ]);
 
   const permission = (settings?.level ?? "explain") as PermissionLevel;
@@ -398,7 +442,46 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
   const question = input.question.trim().slice(0, 2000);
   if (!question) throw new AiError("bad_request", "Ask me something first.");
 
-  const persona = getBuddyPreset("friendly");
+  const selectedSlug = input.buddySlug || "friendly";
+  let persona: {
+    slug: string;
+    name: string;
+    personality: string;
+    teaching_style: string;
+    humor_level: number;
+    seriousness: number;
+    default_language: string;
+    expertise: string[];
+    system_prompt: string;
+  };
+
+  if (selectedSlug.startsWith("custom:") || input.customBuddyId) {
+    persona = {
+      slug: selectedSlug,
+      name: "Custom Buddy",
+      personality: "Attentive, proactive, tailored to my workflow",
+      teaching_style: "step-by-step",
+      humor_level: 3,
+      seriousness: 3,
+      default_language: "hinglish",
+      expertise: ["Custom Workflows", "Form Automation", "Document Review", "Specialized Guidance"],
+      system_prompt:
+        "You are Custom Buddy, the user's personalized AI companion. Ground every answer in the actual webpage and document, fill forms accurately, and explain steps clearly.",
+    };
+  } else {
+    const preset = getBuddyPreset(selectedSlug);
+    persona = {
+      slug: preset.slug,
+      name: preset.name,
+      personality: preset.personality,
+      teaching_style: preset.teaching_style,
+      humor_level: preset.humor_level,
+      seriousness: preset.seriousness,
+      default_language: preset.default_language,
+      expertise: preset.expertise,
+      system_prompt: preset.system_prompt,
+    };
+  }
   const permission: PermissionLevel = "explain";
 
   if (input.snapshot) {
