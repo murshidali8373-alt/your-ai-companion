@@ -10,3 +10,5 @@
 - [ ] Docs/changelog update
 
 - [x] Obsidian Glass premium look (dark-first) + 3-zone dashboard (dock / 3D stage + voice bar / activity)
+
+- [ ] Repair existing Chrome side panel: Buddy roster/selection, character rendering, fresh page context, grounded targeting, safe form fill, Gemini request path, and verified tests.
