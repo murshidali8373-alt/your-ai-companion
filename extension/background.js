@@ -423,6 +423,7 @@ function highlight(selector, title, description, options = {}) {
       <path class="arm-cuff" id="cuffPath" />
       <!-- Sculpted Connected Pearl Hand with Pointing Finger -->
       <g id="handGroup" filter="url(#handShadow)">
+        <g transform="scale(-1,1)">
         <!-- Palm -->
         <circle cx="0" cy="0" r="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="0.8" />
         <!-- Extended Pointing Index Finger -->
@@ -433,6 +434,7 @@ function highlight(selector, title, description, options = {}) {
         <ellipse cx="2" cy="4" rx="4" ry="2.5" fill="#f1f5f9" stroke="#94a3b8" stroke-width="0.6" />
         <!-- Thumb resting inward -->
         <path d="M-1 -5 Q-4 -8 -6 -5 Q-4 -2 -1 -3 Z" fill="#f8fafc" stroke="#94a3b8" stroke-width="0.6" />
+      </g>
       </g>
     </svg>
     <!-- Target Element Highlight Pulse Ring -->
@@ -509,7 +511,9 @@ function highlight(selector, title, description, options = {}) {
     const shoulderY = anchorY + 54;
 
     // Target: right edge or center of the element with finger touch offset
-    const targetX = Math.min(vw - 30, r.right + 8);
+    // Fingertip extends 22px past the hand centre; land the tip on the element edge.
+    const edgeX = r.right > vw - 90 ? r.left + r.width / 2 : r.right;
+    const targetX = Math.min(vw - 30, edgeX + 22);
     const targetY = r.top + r.height / 2;
 
     // Organic natural curve: elbow bends naturally with slight curvature
