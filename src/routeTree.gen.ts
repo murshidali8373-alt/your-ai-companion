@@ -22,6 +22,7 @@ import { Route as AuthenticatedTasksRouteImport } from './routes/_authenticated/
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthenticatedBuddiesNewRouteImport } from './routes/_authenticated/buddies.new'
 import { Route as ApiPublicExtensionAskRouteImport } from './routes/api/public/extension/ask'
+import { Route as ApiPublicExtensionBuddiesRouteImport } from './routes/api/public/extension/buddies'
 import { Route as ApiPublicExtensionHealthRouteImport } from './routes/api/public/extension/health'
 
 const IndexRoute = IndexRouteImport.update({
@@ -88,6 +89,12 @@ const ApiPublicExtensionAskRoute = ApiPublicExtensionAskRouteImport.update({
   path: '/api/public/extension/ask',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicExtensionBuddiesRoute =
+  ApiPublicExtensionBuddiesRouteImport.update({
+    id: '/api/public/extension/buddies',
+    path: '/api/public/extension/buddies',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicExtensionHealthRoute =
   ApiPublicExtensionHealthRouteImport.update({
     id: '/api/public/extension/health',
@@ -108,6 +115,7 @@ export interface FileRoutesByFullPath {
   '/auth/callback': typeof AuthCallbackRoute
   '/buddies/new': typeof AuthenticatedBuddiesNewRoute
   '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
+  '/api/public/extension/buddies': typeof ApiPublicExtensionBuddiesRoute
   '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
 }
 export interface FileRoutesByTo {
@@ -123,6 +131,7 @@ export interface FileRoutesByTo {
   '/auth/callback': typeof AuthCallbackRoute
   '/buddies/new': typeof AuthenticatedBuddiesNewRoute
   '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
+  '/api/public/extension/buddies': typeof ApiPublicExtensionBuddiesRoute
   '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
 }
 export interface FileRoutesById {
@@ -140,6 +149,7 @@ export interface FileRoutesById {
   '/auth/callback': typeof AuthCallbackRoute
   '/_authenticated/buddies/new': typeof AuthenticatedBuddiesNewRoute
   '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
+  '/api/public/extension/buddies': typeof ApiPublicExtensionBuddiesRoute
   '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
 }
 export interface FileRouteTypes {
@@ -157,6 +167,7 @@ export interface FileRouteTypes {
     | '/auth/callback'
     | '/buddies/new'
     | '/api/public/extension/ask'
+    | '/api/public/extension/buddies'
     | '/api/public/extension/health'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -172,6 +183,7 @@ export interface FileRouteTypes {
     | '/auth/callback'
     | '/buddies/new'
     | '/api/public/extension/ask'
+    | '/api/public/extension/buddies'
     | '/api/public/extension/health'
   id:
     | '__root__'
@@ -188,6 +200,7 @@ export interface FileRouteTypes {
     | '/auth/callback'
     | '/_authenticated/buddies/new'
     | '/api/public/extension/ask'
+    | '/api/public/extension/buddies'
     | '/api/public/extension/health'
   fileRoutesById: FileRoutesById
 }
@@ -198,6 +211,7 @@ export interface RootRouteChildren {
   DownloadRoute: typeof DownloadRoute
   PrivacyRoute: typeof PrivacyRoute
   ApiPublicExtensionAskRoute: typeof ApiPublicExtensionAskRoute
+  ApiPublicExtensionBuddiesRoute: typeof ApiPublicExtensionBuddiesRoute
   ApiPublicExtensionHealthRoute: typeof ApiPublicExtensionHealthRoute
 }
 
@@ -294,6 +308,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicExtensionAskRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/extension/buddies': {
+      id: '/api/public/extension/buddies'
+      path: '/api/public/extension/buddies'
+      fullPath: '/api/public/extension/buddies'
+      preLoaderRoute: typeof ApiPublicExtensionBuddiesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/extension/health': {
       id: '/api/public/extension/health'
       path: '/api/public/extension/health'
@@ -351,6 +372,7 @@ const rootRouteChildren: RootRouteChildren = {
   DownloadRoute: DownloadRoute,
   PrivacyRoute: PrivacyRoute,
   ApiPublicExtensionAskRoute: ApiPublicExtensionAskRoute,
+  ApiPublicExtensionBuddiesRoute: ApiPublicExtensionBuddiesRoute,
   ApiPublicExtensionHealthRoute: ApiPublicExtensionHealthRoute,
 }
 export const routeTree = rootRouteImport
