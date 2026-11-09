@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { generateMultiActionPlan, type MultiActionStep } from "../src/shared/browser-action";
+import {
+  generateMultiActionPlan,
+  resolveLiveStepTarget,
+  type MultiActionStep,
+} from "../src/shared/browser-action";
 import {
   createMultiActionPlan,
   executeNextPlanStep,
@@ -197,5 +201,46 @@ describe("Multi-Action Browser Operator Engine", () => {
       (s) => s.selector?.includes("pass") || s.title.toLowerCase().includes("password"),
     );
     expect(hasPasswordStep).toBe(false);
+  });
+
+  // OAV Phase 1: Live Element Target Re-Resolution Test
+  it("OAV Phase 1: resolveLiveStepTarget dynamically re-resolves target on mutated snapshot", () => {
+    // Snapshot after navigating or opening a modal with mutated class/IDs
+    const mutatedSnapshot: PageSnapshot = {
+      url: "https://supplier.meesho.com/panel/orders/today",
+      origin: "https://supplier.meesho.com",
+      title: "Today's Orders",
+      capturedAt: new Date().toISOString(),
+      headings: [],
+      forms: [],
+      controls: [
+        {
+          ref: "ctrl_new_99",
+          role: "button",
+          name: "Pending Orders",
+          tag: "button",
+          selector: "button.tab-nav-pending-orders-v2", // changed from initial guess
+        },
+      ],
+      alerts: [],
+      text: "Orders",
+      truncated: false,
+    };
+
+    const step: MultiActionStep = {
+      id: "s_pending",
+      stepNumber: 3,
+      title: "Find pending orders",
+      action: "click",
+      selector: "button.stale-initial-guess",
+      dynamicTargetQuery: "pending orders",
+      status: "pending",
+    };
+
+    const res = resolveLiveStepTarget(step, mutatedSnapshot);
+    expect(res.matched).toBe(true);
+    expect(res.selector).toBe("button.tab-nav-pending-orders-v2");
+    expect(res.strategy).toBe("semantic");
+    expect(res.confidence).toBeGreaterThanOrEqual(0.8);
   });
 });

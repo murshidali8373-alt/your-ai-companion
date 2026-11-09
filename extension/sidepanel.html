@@ -43,7 +43,12 @@
       body {
         width: 100%;
         min-height: 100vh;
-        font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font:
+          13px/1.5 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
         background: var(--bg);
         color: var(--text);
         display: flex;
@@ -336,7 +341,11 @@
 
       /* ================= INTELLIGENT GREETING & QUICK ACTIONS ================= */
       .greeting-card {
-        background: linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(6, 182, 212, 0.04) 100%);
+        background: linear-gradient(
+          135deg,
+          rgba(99, 102, 241, 0.08) 0%,
+          rgba(6, 182, 212, 0.04) 100%
+        );
         border: 1px solid var(--border-accent);
         border-radius: var(--radius-lg);
         padding: 10px 12px;
@@ -763,8 +772,19 @@
       <header>
         <div class="brand-lockup">
           <div class="brand-icon-box">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#ffffff"
+              stroke-width="2.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"
+              />
             </svg>
           </div>
           <div class="brand-title-wrap">
@@ -773,11 +793,20 @@
           </div>
         </div>
         <div class="header-actions">
-          <span id="headerModelPill" class="header-model-pill" title="Click to inspect model routing">
+          <span
+            id="headerModelPill"
+            class="header-model-pill"
+            title="Click to inspect model routing"
+          >
             ⚡ <span id="headerModelLabel">Gemini 2.5 Flash</span>
           </span>
           <span class="status-badge" id="buddyEmotionBadge">Ready</span>
-          <button id="clearChatBtn" class="ghost" style="padding: 3px 6px; font-size: 11px" title="New Conversation / Clear Chat">
+          <button
+            id="clearChatBtn"
+            class="ghost"
+            style="padding: 3px 6px; font-size: 11px"
+            title="New Conversation / Clear Chat"
+          >
             ✨
           </button>
         </div>
@@ -796,7 +825,9 @@
       <div class="buddy-carousel-container">
         <div class="buddy-carousel-header">
           <span>Active Specialist Companion</span>
-          <span id="buddyCountBadge" style="color: var(--accent); font-size: 10px">16 available</span>
+          <span id="buddyCountBadge" style="color: var(--accent); font-size: 10px"
+            >16 available</span
+          >
         </div>
         <div id="buddyCarousel" class="buddy-carousel">
           <!-- Dynamically populated with all 15 specialist buddies + 1 user Custom Buddy -->
@@ -812,15 +843,21 @@
           </div>
           <div class="persona-tagline" id="activeBuddyTagline">Your everyday browser companion</div>
         </div>
-        <span id="personaLang" style="font-size: 10px; color: var(--accent); font-weight: 600">English / Hinglish</span>
+        <span id="personaLang" style="font-size: 10px; color: var(--accent); font-weight: 600"
+          >English / Hinglish</span
+        >
       </div>
 
       <!-- ================= TAB 1: CHAT (PRIMARY COMPANION WORKSPACE) ================= -->
       <div id="tabChat" class="tab-panel">
         <!-- INTELLIGENT CONTEXTUAL GREETING & QUICK ACTIONS -->
         <div class="greeting-card">
-          <div class="greeting-title" id="greetingTitle"><span id="greetingTime">Good afternoon</span>. What are we working on?</div>
-          <div class="greeting-context" id="greetingContext">Active on current webpage · Ready for navigation, research, and analysis.</div>
+          <div class="greeting-title" id="greetingTitle">
+            <span id="greetingTime">Good afternoon</span>. What are we working on?
+          </div>
+          <div class="greeting-context" id="greetingContext">
+            Active on current webpage · Ready for navigation, research, and analysis.
+          </div>
           <div class="quick-actions-grid">
             <div class="qa-btn" id="qaExplainPage">
               <span class="qa-btn-title">🔍 Understand Page</span>
@@ -851,7 +888,13 @@
             hidden
           />
           <div id="buddyAvatar" data-emotion="idle">
-            <svg id="characterSvg" class="character-rig-svg" viewBox="0 0 100 105" width="100%" height="100%">
+            <svg
+              id="characterSvg"
+              class="character-rig-svg"
+              viewBox="0 0 100 105"
+              width="100%"
+              height="100%"
+            >
               <defs>
                 <linearGradient id="bodyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
                   <stop offset="0%" stop-color="#ffffff" />
@@ -866,35 +909,93 @@
               <g fill="#f8fafc" stroke="#94a3b8" stroke-width="0.8">
                 <ellipse cx="40" cy="88" rx="9" ry="5" />
                 <ellipse cx="61" cy="88" rx="9" ry="5" />
-                <path id="rigBody" d="M29 58Q22 65 25 82Q50 92 75 82Q79 65 70 58Z" fill="url(#outfitGrad)" />
+                <path
+                  id="rigBody"
+                  d="M29 58Q22 65 25 82Q50 92 75 82Q79 65 70 58Z"
+                  fill="url(#outfitGrad)"
+                />
                 <path d="M43 59h15l-1 27H44Z" fill="#ffffff" />
                 <g id="rigArmLeft">
                   <path id="rigArmLeftSleeve" d="m32 60 12 6-4 12-9-12" fill="url(#outfitGrad)" />
-                  <ellipse cx="30" cy="71" rx="4" ry="3" fill="#f8fafc" stroke="#94a3b8" stroke-width="0.7" />
+                  <ellipse
+                    cx="30"
+                    cy="71"
+                    rx="4"
+                    ry="3"
+                    fill="#f8fafc"
+                    stroke="#94a3b8"
+                    stroke-width="0.7"
+                  />
                 </g>
                 <g id="rigArmRight">
                   <path id="rigArmRightSleeve" d="m69 60 11 6 4 12 9-12" fill="url(#outfitGrad)" />
-                  <ellipse cx="71" cy="71" rx="4" ry="3" fill="#f8fafc" stroke="#94a3b8" stroke-width="0.7" />
+                  <ellipse
+                    cx="71"
+                    cy="71"
+                    rx="4"
+                    ry="3"
+                    fill="#f8fafc"
+                    stroke="#94a3b8"
+                    stroke-width="0.7"
+                  />
                 </g>
-                <path d="M64 9C43 5 23 26 23 41c0 14 12 22 27 22s27-8 27-22c0-11-7-20-16-25Z" fill="url(#bodyGrad)" />
+                <path
+                  d="M64 9C43 5 23 26 23 41c0 14 12 22 27 22s27-8 27-22c0-11-7-20-16-25Z"
+                  fill="url(#bodyGrad)"
+                />
               </g>
               <g id="rigBrowLeft" transform="translate(40, 36)">
-                <path d="M -4 0 Q 0 -1 4 0" fill="none" stroke="#334155" stroke-width="0.8" stroke-linecap="round" opacity="0.5" />
+                <path
+                  d="M -4 0 Q 0 -1 4 0"
+                  fill="none"
+                  stroke="#334155"
+                  stroke-width="0.8"
+                  stroke-linecap="round"
+                  opacity="0.5"
+                />
               </g>
               <g id="rigBrowRight" transform="translate(61, 36)">
-                <path d="M -4 0 Q 0 -1 4 0" fill="none" stroke="#334155" stroke-width="0.8" stroke-linecap="round" opacity="0.5" />
+                <path
+                  d="M -4 0 Q 0 -1 4 0"
+                  fill="none"
+                  stroke="#334155"
+                  stroke-width="0.8"
+                  stroke-linecap="round"
+                  opacity="0.5"
+                />
               </g>
               <g id="rigEyeLeft" transform="translate(40, 42)">
                 <ellipse cx="0" cy="0" rx="2.4" ry="3.7" fill="#1e293b" />
                 <g id="rigPupilLeft"><circle cx="-0.6" cy="-1" r="0.8" fill="#ffffff" /></g>
-                <path id="rigLidLeft" d="M -2.4 0 Q 0 2 2.4 0" fill="none" stroke="#1e293b" stroke-width="0.8" style="display: none" />
+                <path
+                  id="rigLidLeft"
+                  d="M -2.4 0 Q 0 2 2.4 0"
+                  fill="none"
+                  stroke="#1e293b"
+                  stroke-width="0.8"
+                  style="display: none"
+                />
               </g>
               <g id="rigEyeRight" transform="translate(61, 42)">
                 <ellipse cx="0" cy="0" rx="2.4" ry="3.7" fill="#1e293b" />
                 <g id="rigPupilRight"><circle cx="-0.6" cy="-1" r="0.8" fill="#ffffff" /></g>
-                <path id="rigLidRight" d="M -2.4 0 Q 0 2 2.4 0" fill="none" stroke="#1e293b" stroke-width="0.8" style="display: none" />
+                <path
+                  id="rigLidRight"
+                  d="M -2.4 0 Q 0 2 2.4 0"
+                  fill="none"
+                  stroke="#1e293b"
+                  stroke-width="0.8"
+                  style="display: none"
+                />
               </g>
-              <path id="rigMouth" d="M45 51 Q50 55 55 51" fill="none" stroke="#1e293b" stroke-width="1.2" stroke-linecap="round" />
+              <path
+                id="rigMouth"
+                d="M45 51 Q50 55 55 51"
+                fill="none"
+                stroke="#1e293b"
+                stroke-width="1.2"
+                stroke-linecap="round"
+              />
               <g id="rigPropContainer" stroke="#94a3b8" stroke-width="0.7"></g>
             </svg>
           </div>
@@ -903,7 +1004,8 @@
         <!-- CONVERSATION HISTORY -->
         <div id="historyBox" class="history-box">
           <div class="msg-bubble msg-buddy">
-            Hey! I am your AI Buddy. Ask me anything, or instruct me to take action across this webpage and your files.
+            Hey! I am your AI Buddy. Ask me anything, or instruct me to take action across this
+            webpage and your files.
           </div>
         </div>
 
@@ -927,23 +1029,43 @@
           ></textarea>
           <div class="composer-footer">
             <div class="composer-tools">
-              <button id="attachFileBtn" class="tool-btn" title="Attach spreadsheet, CSV, or document">
+              <button
+                id="attachFileBtn"
+                class="tool-btn"
+                title="Attach spreadsheet, CSV, or document"
+              >
                 📎 <span style="font-size: 10px">Attach</span>
               </button>
-              <input type="file" id="composerFileInput" style="display: none" accept=".csv,.xlsx,.xls,.pdf,.docx,.txt,.json" />
-              <button id="pageContextToggle" class="tool-btn active" title="Send live page snapshot to Buddy">
+              <input
+                type="file"
+                id="composerFileInput"
+                style="display: none"
+                accept=".csv,.xlsx,.xls,.pdf,.docx,.txt,.json"
+              />
+              <button
+                id="pageContextToggle"
+                class="tool-btn active"
+                title="Send live page snapshot to Buddy"
+              >
                 🌐 <span style="font-size: 10px" id="pageContextStatus">Page Vision On</span>
               </button>
-              <button id="highlightBtn" class="tool-btn" title="Highlight target element on page" hidden>🎯 Point</button>
-              <button id="speakAnswerBtn" class="tool-btn" title="Read response aloud" hidden>🔊 Read</button>
+              <button
+                id="highlightBtn"
+                class="tool-btn"
+                title="Highlight target element on page"
+                hidden
+              >
+                🎯 Point
+              </button>
+              <button id="speakAnswerBtn" class="tool-btn" title="Read response aloud" hidden>
+                🔊 Read
+              </button>
             </div>
             <div style="display: flex; align-items: center; gap: 4px">
               <button id="voiceBtn" class="voice-btn" title="Push to talk with AI Buddy">
                 🎤 Talk
               </button>
-              <button id="sendBtn" class="send-btn">
-                Send ↵
-              </button>
+              <button id="sendBtn" class="send-btn">Send ↵</button>
             </div>
           </div>
         </div>
@@ -955,17 +1077,55 @@
         <div class="section-card">
           <div class="section-card-title">
             <span>🌐 Webpage Intelligence</span>
-            <button id="refreshPageContextBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">🔄 Refresh</button>
+            <button
+              id="refreshPageContextBtn"
+              class="ghost"
+              style="padding: 2px 7px; font-size: 10px"
+            >
+              🔄 Refresh
+            </button>
           </div>
-          <div id="pageSummaryBox" style="font-size: 11px; color: var(--text-muted); background: #0b0f19; padding: 8px; border-radius: var(--radius-sm); border: 1px solid var(--border)">
+          <div
+            id="pageSummaryBox"
+            style="
+              font-size: 11px;
+              color: var(--text-muted);
+              background: #0b0f19;
+              padding: 8px;
+              border-radius: var(--radius-sm);
+              border: 1px solid var(--border);
+            "
+          >
             Loading live page structure…
           </div>
           <div style="display: flex; gap: 4px; flex-wrap: wrap">
-            <button id="pageExplainActionBtn" class="ghost" style="font-size: 10px; padding: 4px 8px">🔍 Deep Explain</button>
-            <button id="pageCheckErrorsActionBtn" class="ghost" style="font-size: 10px; padding: 4px 8px">⚠️ Find Page Errors</button>
-            <button id="pageExtractTableActionBtn" class="ghost" style="font-size: 10px; padding: 4px 8px">📋 Extract Tables</button>
-            <button id="pageScrollDownBtn" class="ghost" style="font-size: 10px; padding: 4px 8px">⬇️ Scroll Down</button>
-            <button id="pageScrollUpBtn" class="ghost" style="font-size: 10px; padding: 4px 8px">⬆️ Scroll Up</button>
+            <button
+              id="pageExplainActionBtn"
+              class="ghost"
+              style="font-size: 10px; padding: 4px 8px"
+            >
+              🔍 Deep Explain
+            </button>
+            <button
+              id="pageCheckErrorsActionBtn"
+              class="ghost"
+              style="font-size: 10px; padding: 4px 8px"
+            >
+              ⚠️ Find Page Errors
+            </button>
+            <button
+              id="pageExtractTableActionBtn"
+              class="ghost"
+              style="font-size: 10px; padding: 4px 8px"
+            >
+              📋 Extract Tables
+            </button>
+            <button id="pageScrollDownBtn" class="ghost" style="font-size: 10px; padding: 4px 8px">
+              ⬇️ Scroll Down
+            </button>
+            <button id="pageScrollUpBtn" class="ghost" style="font-size: 10px; padding: 4px 8px">
+              ⬆️ Scroll Up
+            </button>
           </div>
         </div>
 
@@ -973,15 +1133,51 @@
         <div class="section-card">
           <div class="section-card-title">
             <span>📝 Smart Form Filler</span>
-            <span style="font-size: 10px; color: var(--accent-cyan); font-weight: 600">Zero Risk</span>
+            <span style="font-size: 10px; color: var(--accent-cyan); font-weight: 600"
+              >Zero Risk</span
+            >
           </div>
           <p style="font-size: 10px; color: var(--text-muted)">
-            Automates form filling using verified profiles & memories. Requires explicit confirmation before submit.
+            Automates form filling using verified profiles & memories. Requires explicit
+            confirmation before submit.
           </p>
-          <div id="formFillReport" class="form-fill-report" style="font-size: 10px; max-height: 80px; overflow-y: auto; background: #0b0f19; padding: 6px; border-radius: var(--radius-sm); border: 1px solid var(--border)" hidden></div>
+          <div
+            id="formFillReport"
+            class="form-fill-report"
+            style="
+              font-size: 10px;
+              max-height: 80px;
+              overflow-y: auto;
+              background: #0b0f19;
+              padding: 6px;
+              border-radius: var(--radius-sm);
+              border: 1px solid var(--border);
+            "
+            hidden
+          ></div>
           <div style="display: flex; gap: 6px">
-            <button id="autoFillSampleBtn" style="flex: 1; font-size: 10px; padding: 5px; background: var(--accent); color: white; border: none; border-radius: var(--radius-sm); font-weight: 600">✨ Smart Fill Form</button>
-            <button id="verifyFormInputsBtn" class="ghost" style="flex: 1; font-size: 10px; padding: 5px">🔍 Verify Fields</button>
+            <button
+              id="autoFillSampleBtn"
+              style="
+                flex: 1;
+                font-size: 10px;
+                padding: 5px;
+                background: var(--accent);
+                color: white;
+                border: none;
+                border-radius: var(--radius-sm);
+                font-weight: 600;
+              "
+            >
+              ✨ Smart Fill Form
+            </button>
+            <button
+              id="verifyFormInputsBtn"
+              class="ghost"
+              style="flex: 1; font-size: 10px; padding: 5px"
+            >
+              🔍 Verify Fields
+            </button>
           </div>
         </div>
       </div>
@@ -1008,21 +1204,65 @@
           </div>
           <div id="planStepsList" class="plan-steps-list"></div>
           <div style="display: flex; gap: 4px; margin-top: 2px">
-            <button id="planPauseResumeBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">⏸️ Pause</button>
-            <button id="planSkipBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">⏭️ Skip</button>
-            <button id="planStopBtn" class="ghost" style="padding: 3px 8px; font-size: 10px; color: var(--destructive); border-color: rgba(239, 68, 68, 0.4)">⏹️ Stop</button>
+            <button id="planPauseResumeBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
+              ⏸️ Pause
+            </button>
+            <button id="planSkipBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
+              ⏭️ Skip
+            </button>
+            <button
+              id="planStopBtn"
+              class="ghost"
+              style="
+                padding: 3px 8px;
+                font-size: 10px;
+                color: var(--destructive);
+                border-color: rgba(239, 68, 68, 0.4);
+              "
+            >
+              ⏹️ Stop
+            </button>
           </div>
         </div>
 
         <!-- Proactive Assistant & Saved Checkpoints -->
-        <div id="savedCheckpointCard" class="section-card" style="border-color: rgba(99, 102, 241, 0.4); background: rgba(99, 102, 241, 0.06)" hidden>
+        <div
+          id="savedCheckpointCard"
+          class="section-card"
+          style="border-color: rgba(99, 102, 241, 0.4); background: rgba(99, 102, 241, 0.06)"
+          hidden
+        >
           <div class="section-card-title">
             <span style="color: var(--accent-cyan)">📌 Saved Task Resumption Checkpoint</span>
           </div>
-          <p id="savedTaskCheckpointDesc" style="font-size: 11px; margin: 0; color: var(--text-muted)">An interrupted background task is available to resume safely.</p>
+          <p
+            id="savedTaskCheckpointDesc"
+            style="font-size: 11px; margin: 0; color: var(--text-muted)"
+          >
+            An interrupted background task is available to resume safely.
+          </p>
           <div style="display: flex; gap: 4px; margin-top: 4px">
-            <button id="resumeSavedTaskBtn" style="padding: 4px 10px; font-size: 10px; background: var(--accent); color: white; border: none; border-radius: var(--radius-sm); font-weight: 600">▶️ Resume Task</button>
-            <button id="discardSavedTaskBtn" class="ghost" style="padding: 4px 10px; font-size: 10px">Dismiss</button>
+            <button
+              id="resumeSavedTaskBtn"
+              style="
+                padding: 4px 10px;
+                font-size: 10px;
+                background: var(--accent);
+                color: white;
+                border: none;
+                border-radius: var(--radius-sm);
+                font-weight: 600;
+              "
+            >
+              ▶️ Resume Task
+            </button>
+            <button
+              id="discardSavedTaskBtn"
+              class="ghost"
+              style="padding: 4px 10px; font-size: 10px"
+            >
+              Dismiss
+            </button>
           </div>
         </div>
 
@@ -1032,16 +1272,32 @@
             <span>⚡ Ready Automation Workflows</span>
           </div>
           <div style="display: flex; flex-direction: column; gap: 4px">
-            <button id="runMeeshoWorkflowBtn" class="ghost" style="justify-content: flex-start; text-align: left; font-size: 11px; padding: 6px">
+            <button
+              id="runMeeshoWorkflowBtn"
+              class="ghost"
+              style="justify-content: flex-start; text-align: left; font-size: 11px; padding: 6px"
+            >
               📦 Meesho: Check Pending Orders & Prepare List
             </button>
-            <button id="runReconcileWorkflowBtn" class="ghost" style="justify-content: flex-start; text-align: left; font-size: 11px; padding: 6px">
+            <button
+              id="runReconcileWorkflowBtn"
+              class="ghost"
+              style="justify-content: flex-start; text-align: left; font-size: 11px; padding: 6px"
+            >
               📑 Reconcile Orders with Spreadsheet (Non-Destructive)
             </button>
-            <button id="runResearchWorkflowBtn" class="ghost" style="justify-content: flex-start; text-align: left; font-size: 11px; padding: 6px">
+            <button
+              id="runResearchWorkflowBtn"
+              class="ghost"
+              style="justify-content: flex-start; text-align: left; font-size: 11px; padding: 6px"
+            >
               🔍 Multi-Source Research & Fact-Check
             </button>
-            <button id="runExtractTableWorkflowBtn" class="ghost" style="justify-content: flex-start; text-align: left; font-size: 11px; padding: 6px">
+            <button
+              id="runExtractTableWorkflowBtn"
+              class="ghost"
+              style="justify-content: flex-start; text-align: left; font-size: 11px; padding: 6px"
+            >
               📊 Extract Table Rows & Summary
             </button>
           </div>
@@ -1051,14 +1307,52 @@
         <div class="section-card">
           <div class="section-card-title">
             <span>🧠 Buddy Memory & Preferences</span>
-            <button id="addMemoryToggleBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">➕ Add</button>
+            <button id="addMemoryToggleBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">
+              ➕ Add
+            </button>
           </div>
           <div id="addMemoryForm" style="display: flex; flex-direction: column; gap: 4px" hidden>
-            <input id="memKeyInput" placeholder="Key (e.g. seller_gstin, city)" style="background: #0b0f19; color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px; font-size: 11px" />
-            <input id="memValInput" placeholder="Value (e.g. 24AAAAA0000A1Z5)" style="background: #0b0f19; color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px; font-size: 11px" />
+            <input
+              id="memKeyInput"
+              placeholder="Key (e.g. seller_gstin, city)"
+              style="
+                background: #0b0f19;
+                color: var(--text);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-sm);
+                padding: 5px;
+                font-size: 11px;
+              "
+            />
+            <input
+              id="memValInput"
+              placeholder="Value (e.g. 24AAAAA0000A1Z5)"
+              style="
+                background: #0b0f19;
+                color: var(--text);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-sm);
+                padding: 5px;
+                font-size: 11px;
+              "
+            />
             <div style="display: flex; gap: 4px">
-              <button id="saveMemoryBtn" style="padding: 4px 10px; font-size: 10px; background: var(--accent); color: white; border: none; border-radius: var(--radius-sm)">Save</button>
-              <button id="cancelMemoryBtn" class="ghost" style="padding: 4px 10px; font-size: 10px">Cancel</button>
+              <button
+                id="saveMemoryBtn"
+                style="
+                  padding: 4px 10px;
+                  font-size: 10px;
+                  background: var(--accent);
+                  color: white;
+                  border: none;
+                  border-radius: var(--radius-sm);
+                "
+              >
+                Save
+              </button>
+              <button id="cancelMemoryBtn" class="ghost" style="padding: 4px 10px; font-size: 10px">
+                Cancel
+              </button>
             </div>
           </div>
           <div id="memoriesList" class="items-list">
@@ -1070,7 +1364,13 @@
         <div class="section-card">
           <div class="section-card-title">
             <span>📜 Recent Task History</span>
-            <button id="refreshTasksHistoryBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">🔄</button>
+            <button
+              id="refreshTasksHistoryBtn"
+              class="ghost"
+              style="padding: 2px 7px; font-size: 10px"
+            >
+              🔄
+            </button>
           </div>
           <div id="tasksHistoryList" class="items-list">
             <!-- Populated via /api/public/extension/tasks -->
@@ -1081,29 +1381,65 @@
       <!-- ================= TAB 4: AI MODELS ================= -->
       <div id="tabModels" class="tab-panel" hidden>
         <!-- Intelligent Routing Policy Card -->
-        <div class="section-card" style="border-color: var(--border-accent); background: rgba(99, 102, 241, 0.05)">
+        <div
+          class="section-card"
+          style="border-color: var(--border-accent); background: rgba(99, 102, 241, 0.05)"
+        >
           <div class="section-card-title">
             <span style="color: var(--accent-cyan)">🧠 Intelligent Model Routing</span>
-            <span id="routingModeTag" style="font-size: 9px; color: var(--accent); font-weight: 700">AUTO ACTIVE</span>
+            <span id="routingModeTag" style="font-size: 9px; color: var(--accent); font-weight: 700"
+              >AUTO ACTIVE</span
+            >
           </div>
           <p style="font-size: 10px; color: var(--text-muted); line-height: 1.4">
-            AI Buddy automatically evaluates task complexity, vision requirements, and provider latency to dispatch the optimal model.
+            AI Buddy automatically evaluates task complexity, vision requirements, and provider
+            latency to dispatch the optimal model.
           </p>
-          <div id="activeModelRecommendation" style="margin-top: 6px; font-size: 10px; color: var(--accent-cyan); background: rgba(6, 182, 212, 0.08); padding: 6px; border-radius: var(--radius-sm); border: 1px solid rgba(6, 182, 212, 0.2)">
-            Gemini 2.5 Flash recommended for fast DOM grounding, pointing animations, and browser tasks.
+          <div
+            id="activeModelRecommendation"
+            style="
+              margin-top: 6px;
+              font-size: 10px;
+              color: var(--accent-cyan);
+              background: rgba(6, 182, 212, 0.08);
+              padding: 6px;
+              border-radius: var(--radius-sm);
+              border: 1px solid rgba(6, 182, 212, 0.2);
+            "
+          >
+            Gemini 2.5 Flash recommended for fast DOM grounding, pointing animations, and browser
+            tasks.
           </div>
         </div>
 
         <div class="section-card">
           <div class="section-card-title">
             <span>⚡ Model Selection</span>
-            <button id="toggleModelComparisonBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">📊 Compare</button>
+            <button
+              id="toggleModelComparisonBtn"
+              class="ghost"
+              style="padding: 2px 7px; font-size: 10px"
+            >
+              📊 Compare
+            </button>
           </div>
-          <select id="modelSelector" style="background: #0b0f19; color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px; font-size: 11px">
+          <select
+            id="modelSelector"
+            style="
+              background: #0b0f19;
+              color: var(--text);
+              border: 1px solid var(--border);
+              border-radius: var(--radius-sm);
+              padding: 6px;
+              font-size: 11px;
+            "
+          >
             <option value="auto">Auto Select (Brain Decides)</option>
             <option value="gemini-3.8-flash">Google Gemini 3.8 Flash (Multimodal & Fast)</option>
             <option value="groq-llama-3.3-70b">Llama 3.3 70B (GroqCloud Fast)</option>
-            <option value="openrouter-free-gemini-2.0-flash">Gemini 2.0 Flash (Free OpenRouter)</option>
+            <option value="openrouter-free-gemini-2.0-flash">
+              Gemini 2.0 Flash (Free OpenRouter)
+            </option>
             <option value="openai-gpt-4o">OpenAI GPT-4o (Vision & Reasoning)</option>
             <option value="anthropic-claude-3-5-sonnet">Claude 3.5 Sonnet (Deep Synthesis)</option>
             <option value="ollama-llama-3.2-3b">Ollama Local (100% Offline)</option>
@@ -1126,19 +1462,19 @@
                 </tr>
               </thead>
               <tbody style="color: var(--text)">
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.04)">
+                <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.04)">
                   <td style="padding: 4px; font-weight: 600">Gemini 3.8 Flash</td>
                   <td style="padding: 4px; color: var(--success)">✅ Native</td>
                   <td style="padding: 4px">~350ms</td>
                   <td style="padding: 4px">1M tokens</td>
                 </tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.04)">
+                <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.04)">
                   <td style="padding: 4px; font-weight: 600">Groq Llama 3.3</td>
                   <td style="padding: 4px; color: var(--text-dim)">Text</td>
                   <td style="padding: 4px; color: var(--accent-cyan)">~180ms</td>
                   <td style="padding: 4px">128k tokens</td>
                 </tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.04)">
+                <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.04)">
                   <td style="padding: 4px; font-weight: 600">OpenAI GPT-4o</td>
                   <td style="padding: 4px; color: var(--success)">✅ Native</td>
                   <td style="padding: 4px">~600ms</td>
@@ -1158,7 +1494,13 @@
         <div class="section-card">
           <div class="section-card-title">
             <span>🔌 Provider Health & Latency</span>
-            <button id="testActiveProviderBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">⚡ Ping Test</button>
+            <button
+              id="testActiveProviderBtn"
+              class="ghost"
+              style="padding: 2px 7px; font-size: 10px"
+            >
+              ⚡ Ping Test
+            </button>
           </div>
           <div id="providerStatusList" class="items-list">
             <!-- Populated via /api/public/extension/models -->
@@ -1175,14 +1517,34 @@
           </div>
           <div style="display: flex; justify-content: space-between; align-items: center">
             <span style="font-size: 11px">Render Mode:</span>
-            <select id="avatarRenderMode" style="background: #0b0f19; color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px; font-size: 11px">
+            <select
+              id="avatarRenderMode"
+              style="
+                background: #0b0f19;
+                color: var(--text);
+                border: 1px solid var(--border);
+                border-radius: 4px;
+                padding: 4px;
+                font-size: 11px;
+              "
+            >
               <option value="rigged">Live Animated Rig (Vector)</option>
               <option value="3d">Pre-rendered 3D Artwork</option>
             </select>
           </div>
           <div style="display: flex; justify-content: space-between; align-items: center">
             <span style="font-size: 11px">Character Scale:</span>
-            <select id="sizeSelect" style="background: #0b0f19; color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px; font-size: 11px">
+            <select
+              id="sizeSelect"
+              style="
+                background: #0b0f19;
+                color: var(--text);
+                border: 1px solid var(--border);
+                border-radius: 4px;
+                padding: 4px;
+                font-size: 11px;
+              "
+            >
               <option value="normal">Standard</option>
               <option value="compact">Compact</option>
               <option value="hidden">Hidden</option>
@@ -1193,8 +1555,74 @@
             <input type="checkbox" id="muteToggle" />
           </div>
           <div style="display: flex; gap: 4px; margin-top: 4px">
-            <button id="testArmWaveBtn" class="ghost" style="flex: 1; font-size: 10px; padding: 5px">👋 Wave Arm</button>
-            <button id="testMouthTalkBtn" class="ghost" style="flex: 1; font-size: 10px; padding: 5px">🗣️ Test Lip-sync</button>
+            <button
+              id="testArmWaveBtn"
+              class="ghost"
+              style="flex: 1; font-size: 10px; padding: 5px"
+            >
+              👋 Wave Arm
+            </button>
+            <button
+              id="testMouthTalkBtn"
+              class="ghost"
+              style="flex: 1; font-size: 10px; padding: 5px"
+            >
+              🗣️ Test Lip-sync
+            </button>
+          </div>
+        </div>
+
+        <!-- Manual Emotion Trigger Control Panel -->
+        <div class="section-card">
+          <div class="section-card-title">
+            <span>🎭 Test CSS Emotion Animations</span>
+          </div>
+          <p style="font-size: 10px; color: var(--text-muted); line-height: 1.3">
+            Manually trigger CSS emotion states to preview head tilt, sway, and facial expressions:
+          </p>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 4px">
+            <button
+              id="btnEmoCurious"
+              class="ghost"
+              style="font-size: 10px; padding: 5px; text-align: left"
+            >
+              🧐 Curious
+            </button>
+            <button
+              id="btnEmoConcerned"
+              class="ghost"
+              style="font-size: 10px; padding: 5px; text-align: left"
+            >
+              😟 Concerned
+            </button>
+            <button
+              id="btnEmoHappy"
+              class="ghost"
+              style="font-size: 10px; padding: 5px; text-align: left"
+            >
+              😄 Happy
+            </button>
+            <button
+              id="btnEmoThinking"
+              class="ghost"
+              style="font-size: 10px; padding: 5px; text-align: left"
+            >
+              🤔 Thinking
+            </button>
+            <button
+              id="btnEmoCelebrate"
+              class="ghost"
+              style="font-size: 10px; padding: 5px; text-align: left"
+            >
+              🎉 Celebrate
+            </button>
+            <button
+              id="btnEmoIdle"
+              class="ghost"
+              style="font-size: 10px; padding: 5px; text-align: left"
+            >
+              🙂 Idle / Reset
+            </button>
           </div>
         </div>
       </div>
@@ -1204,13 +1632,29 @@
       <div id="consequentialApprovalCard" class="confirm-card" hidden>
         <h4 style="font-size: 11px; color: #fef08a">🛡️ Consequential Step Approval</h4>
         <p id="consequentialPrompt" style="font-size: 11px; color: var(--text-muted)">
-          Buddy is about to perform a consequential action (e.g. submit, purchase, payment, or delete).
+          Buddy is about to perform a consequential action (e.g. submit, purchase, payment, or
+          delete).
         </p>
         <div style="display: flex; gap: 6px; margin-top: 4px">
-          <button id="approveConsequentialBtn" style="padding: 4px 10px; font-size: 11px; background: var(--accent); color: white; border: none; border-radius: var(--radius-sm); font-weight: 600">
+          <button
+            id="approveConsequentialBtn"
+            style="
+              padding: 4px 10px;
+              font-size: 11px;
+              background: var(--accent);
+              color: white;
+              border: none;
+              border-radius: var(--radius-sm);
+              font-weight: 600;
+            "
+          >
             ✅ Approve & Continue
           </button>
-          <button id="rejectConsequentialBtn" class="ghost" style="padding: 4px 10px; font-size: 11px">
+          <button
+            id="rejectConsequentialBtn"
+            class="ghost"
+            style="padding: 4px 10px; font-size: 11px"
+          >
             ❌ Skip Step
           </button>
         </div>
@@ -1221,8 +1665,23 @@
         <h4 style="font-size: 11px; color: var(--warning)">⚠️ Confirmation Needed</h4>
         <p id="confirmDesc" style="font-size: 11px; color: var(--text-muted)"></p>
         <div style="display: flex; gap: 6px; margin-top: 4px">
-          <button id="confirmApproveBtn" style="padding: 4px 10px; font-size: 11px; background: var(--accent); color: white; border: none; border-radius: var(--radius-sm); font-weight: 600">Approve Action</button>
-          <button id="confirmCancelBtn" class="ghost" style="padding: 4px 10px; font-size: 11px">Cancel</button>
+          <button
+            id="confirmApproveBtn"
+            style="
+              padding: 4px 10px;
+              font-size: 11px;
+              background: var(--accent);
+              color: white;
+              border: none;
+              border-radius: var(--radius-sm);
+              font-weight: 600;
+            "
+          >
+            Approve Action
+          </button>
+          <button id="confirmCancelBtn" class="ghost" style="padding: 4px 10px; font-size: 11px">
+            Cancel
+          </button>
         </div>
       </div>
 
@@ -1243,7 +1702,15 @@
         <div style="display: flex; gap: 6px; margin-top: 4px">
           <button
             id="fixErrorsBtn"
-            style="padding: 4px 10px; font-size: 11px; background: var(--destructive); color: white; border: none; border-radius: var(--radius-sm); font-weight: 600"
+            style="
+              padding: 4px 10px;
+              font-size: 11px;
+              background: var(--destructive);
+              color: white;
+              border: none;
+              border-radius: var(--radius-sm);
+              font-weight: 600;
+            "
           >
             Fix & Explain Errors
           </button>
@@ -1258,8 +1725,12 @@
       <footer>
         <span id="userAccount">Guest Mode (Sign in optional)</span>
         <div style="display: flex; gap: 4px">
-          <button id="connectBtn" class="ghost" style="padding: 2px 6px; font-size: 10px">Connect</button>
-          <button id="signoutBtn" class="ghost" style="padding: 2px 6px; font-size: 10px" hidden>Sign out</button>
+          <button id="connectBtn" class="ghost" style="padding: 2px 6px; font-size: 10px">
+            Connect
+          </button>
+          <button id="signoutBtn" class="ghost" style="padding: 2px 6px; font-size: 10px" hidden>
+            Sign out
+          </button>
         </div>
       </footer>
     </div>

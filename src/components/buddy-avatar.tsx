@@ -18,7 +18,9 @@ export type BuddyEmotion =
   | "happy"
   | "concerned"
   | "curious"
-  | "celebrate";
+  | "celebrate"
+  | "sleepy"
+  | "surprised";
 
 export function normalizeBuddyEmotion(e?: string): BuddyEmotion {
   const clean = (e || "neutral").toLowerCase();
@@ -27,9 +29,12 @@ export function normalizeBuddyEmotion(e?: string): BuddyEmotion {
   if (clean === "speaking") return "speaking";
   if (clean === "listening") return "listening";
   if (clean === "happy" || clean === "excited" || clean === "laughing") return "happy";
-  if (clean === "sad" || clean === "error" || clean === "scared") return "concerned";
+  if (clean === "sad" || clean === "error" || clean === "scared" || clean === "concerned")
+    return "concerned";
   if (clean === "confused" || clean === "curious") return "curious";
   if (clean === "success" || clean === "celebrate") return "celebrate";
+  if (clean === "sleepy") return "sleepy";
+  if (clean === "surprised" || clean === "shocked") return "surprised";
   return "neutral";
 }
 
@@ -46,16 +51,91 @@ function Illustration({ id, emotion }: { id: BuddyVisualId; emotion: BuddyEmotio
         <path d="M64 9C43 5 23 26 23 41c0 14 12 22 27 22s27-8 27-22c0-11-7-20-16-25Z" />
       </g>
       <g fill="var(--buddy-ink)">
-        <ellipse cx="40" cy="42" rx="2.4" ry={emotion === "thinking" ? 2 : 3.7} />
-        <ellipse cx="61" cy="42" rx="2.4" ry={emotion === "thinking" ? 2 : 3.7} />
+        {emotion === "sleepy" ? (
+          <>
+            <path
+              d="M37 42q3 2 6 0"
+              stroke="var(--buddy-ink)"
+              strokeWidth="1.5"
+              fill="none"
+              strokeLinecap="round"
+            />
+            <path
+              d="M58 42q3 2 6 0"
+              stroke="var(--buddy-ink)"
+              strokeWidth="1.5"
+              fill="none"
+              strokeLinecap="round"
+            />
+          </>
+        ) : emotion === "curious" ? (
+          <>
+            <ellipse cx="40" cy="40" rx="2.8" ry="4.2" />
+            <ellipse cx="61" cy="43" rx="2.2" ry="3.2" />
+          </>
+        ) : (
+          <>
+            <ellipse
+              cx="40"
+              cy="42"
+              rx={emotion === "surprised" ? 3 : 2.4}
+              ry={emotion === "thinking" ? 2 : emotion === "surprised" ? 4.5 : 3.7}
+            />
+            <ellipse
+              cx="61"
+              cy="42"
+              rx={emotion === "surprised" ? 3 : 2.4}
+              ry={emotion === "thinking" ? 2 : emotion === "surprised" ? 4.5 : 3.7}
+            />
+          </>
+        )}
       </g>
-      <path
-        d={emotion === "concerned" ? "M45 53q5-3 10 0" : "M45 51q5 4 10 0"}
-        stroke="var(--buddy-ink)"
-        strokeWidth="1.2"
-        fill="none"
-        strokeLinecap="round"
-      />
+      {/* Eyebrows for expressiveness */}
+      {emotion === "concerned" && (
+        <path
+          d="M37 36l6 2M64 36l-6 2"
+          stroke="var(--buddy-ink)"
+          strokeWidth="1.2"
+          strokeLinecap="round"
+        />
+      )}
+      {emotion === "curious" && (
+        <path
+          d="M36 34q4-3 8 0M58 37q4 1 7-1"
+          stroke="var(--buddy-ink)"
+          strokeWidth="1.2"
+          fill="none"
+          strokeLinecap="round"
+        />
+      )}
+      {/* Expressive mouth shapes */}
+      {emotion === "surprised" ? (
+        <ellipse cx="50" cy="52" rx="2.6" ry="4.2" fill="var(--buddy-ink)" />
+      ) : emotion === "curious" ? (
+        <path
+          d="M47 52q3 3 7 1"
+          stroke="var(--buddy-ink)"
+          strokeWidth="1.2"
+          fill="none"
+          strokeLinecap="round"
+        />
+      ) : emotion === "concerned" ? (
+        <path
+          d="M45 54q5-3 10 0"
+          stroke="var(--buddy-ink)"
+          strokeWidth="1.2"
+          fill="none"
+          strokeLinecap="round"
+        />
+      ) : (
+        <path
+          d="M45 51q5 4 10 0"
+          stroke="var(--buddy-ink)"
+          strokeWidth="1.2"
+          fill="none"
+          strokeLinecap="round"
+        />
+      )}
       {cue !== "none" && (
         <g stroke="var(--buddy-outline)" strokeWidth="0.7">
           <rect

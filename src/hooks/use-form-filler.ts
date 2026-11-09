@@ -83,6 +83,20 @@ export interface UseFormFillerOptions {
   onRequiresConfirmation?: (pending: PendingSubmissionData) => void;
 }
 
+export const FIELD_SYNONYMS: Record<string, string[]> = {
+  name: ["fullname", "legalname", "username", "contactname", "applicantname", "ownername", "firstname"],
+  fullname: ["name", "legalname", "username"],
+  legalname: ["company", "businessname", "firmname", "organization", "companyname", "name"],
+  tradename: ["businessname", "storename", "shopname", "brandname", "company"],
+  email: ["mail", "emailaddress", "contactemail"],
+  phone: ["mobile", "contact", "contactnumber", "tel", "phonenumber", "cellphone"],
+  gstin: ["gst", "taxid", "gstnumber", "gstinnumber", "tin"],
+  address: ["street", "line1", "addressline1", "shippingaddress", "billingaddress", "fulladdress"],
+  city: ["town", "district"],
+  state: ["province", "region"],
+  pincode: ["zip", "zipcode", "postalcode", "pin"],
+};
+
 const SENSITIVE_PATTERN =
   /pass(?:word)?|pin|otp|cvv|cvc|secret|token|ssn|aadhaar|card(?:_?number)?|credit|debit/i;
 
@@ -451,11 +465,14 @@ export async function executeFormFill(
     opts.onProgress?.(key, currentIndex, total);
 
     const normKey = normalizeId(key);
+    const keyCandidates = [normKey, ...(FIELD_SYNONYMS[normKey] || [])];
 
     // Find matching candidate
     const candidate = allFormElements.find((el) => {
       const ids = getFieldIdentifiers(el);
-      return ids.some((id) => id.includes(normKey) || normKey.includes(id));
+      return ids.some((id) =>
+        keyCandidates.some((k) => id.includes(k) || k.includes(id)),
+      );
     });
 
     if (!candidate) {

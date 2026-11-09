@@ -1402,9 +1402,19 @@ async function startMultiActionPlan(instruction) {
 async function runPlanLoop() {
   if (!activePlan) return;
 
+  // Persist plan state to chrome.storage.local to survive service worker / sidepanel cycles
+  const persistPlanState = async () => {
+    try {
+      await chrome.storage.local.set({ ai_buddy_active_plan: activePlan });
+    } catch {
+      // Non-fatal
+    }
+  };
+
   while (activePlan.currentStepIndex < activePlan.steps.length) {
     if (isPlanPaused) {
       activePlan.status = "paused";
+      await persistPlanState();
       renderTaskPlanUI();
       return;
     }
@@ -1416,6 +1426,7 @@ async function runPlanLoop() {
       currentStep.status = "awaiting_approval";
       activePlan.status = "awaiting_approval";
       pendingApprovalStep = currentStep;
+      await persistPlanState();
       renderTaskPlanUI();
 
       if ($("consequentialApprovalCard")) {
@@ -1424,7 +1435,7 @@ async function runPlanLoop() {
           currentStep.approvalPrompt ||
           `Buddy needs your confirmation to execute "${currentStep.title}". This step performs changes.`;
       }
-      setRigEmotion("thinking", "Approval");
+      setRigEmotion("concerned", "Approval");
       return; // Wait for user approval click
     }
 
@@ -1433,10 +1444,66 @@ async function runPlanLoop() {
     renderTaskPlanUI();
     setRigEmotion("working", `Step ${currentStep.stepNumber}`);
 
+    // --- OAV STAGE 1 & 4: OBSERVE FRESH LIVE DOM & RE-GROUND TARGET ---
+    try {
+      const snapRes = await chrome.runtime.sendMessage({ type: "GET_PAGE_SNAPSHOT" });
+      if (snapRes?.ok && snapRes.snapshot) {
+        const freshSnap = snapRes.snapshot;
+        const allElements = [
+          ...(freshSnap.controls || []),
+          ...(freshSnap.forms || []),
+          ...(freshSnap.headings || []),
+          ...(freshSnap.alerts || []),
+        ];
+
+        // If step lacks direct selector or if previous step navigated/mutated DOM
+        const targetQ = (
+          currentStep.dynamicTargetQuery ||
+          currentStep.textTarget ||
+          currentStep.title ||
+          ""
+        ).toLowerCase().trim();
+
+        if (targetQ && (!currentStep.selector || currentStep.selector === "body")) {
+          const cleanQ = targetQ
+            .replace(/^(click|open|press|select|go to|fill|type|search|find|copy)\s+/i, "")
+            .replace(/\s+(button|link|tab|input|field|box)$/i, "")
+            .trim();
+
+          const matched = allElements.find((el) => {
+            const name = (el.name || "").toLowerCase();
+            const ph = ((el.placeholder || "")).toLowerCase();
+            return name === cleanQ || name.includes(cleanQ) || ph.includes(cleanQ);
+          });
+
+          if (matched) {
+            currentStep.selector = matched.selector;
+            currentStep.resolvedSelector = matched.selector;
+          }
+        }
+      }
+    } catch {
+      // Non-fatal: continue with pre-configured step target
+    }
+
+    // --- OAV STAGE 5: DISPATCH STEP ACTION ---
     const res = await chrome.runtime.sendMessage({
       type: "EXECUTE_STEP",
       step: currentStep,
+      options: {
+        extractedDataStore: activePlan.extractedData,
+      },
     });
+
+    // --- OAV STAGE 6: TRIPLE-SIGNAL PAGE SETTLE DETECTOR ---
+    try {
+      await chrome.runtime.sendMessage({
+        type: "WAIT_FOR_PAGE_SETTLE",
+        timeoutMs: 4000,
+      });
+    } catch {
+      // Non-fatal
+    }
 
     if (res?.ok) {
       currentStep.status = "completed";
@@ -1454,12 +1521,14 @@ async function runPlanLoop() {
       }
 
       activePlan.currentStepIndex++;
+      await persistPlanState();
       renderTaskPlanUI();
-      await new Promise((r) => setTimeout(r, 600));
+      await new Promise((r) => setTimeout(r, 400));
     } else {
       currentStep.status = "failed";
       currentStep.error = res?.error || "Action execution failed";
       activePlan.status = "failed";
+      await persistPlanState();
       renderTaskPlanUI();
       setRigEmotion("error", "Failed");
       appendHistory("buddy", `⚠️ Step ${currentStep.stepNumber} failed: ${currentStep.error}`);
@@ -1470,8 +1539,9 @@ async function runPlanLoop() {
 
   // All steps completed
   activePlan.status = "completed";
+  await persistPlanState();
   renderTaskPlanUI();
-  setRigEmotion("happy", "Done");
+  setRigEmotion("celebrate", "Done");
   const extractedCount = activePlan.extractedData.length;
   appendHistory(
     "buddy",
@@ -1504,10 +1574,43 @@ function renderExtractedDataUI() {
 
 // --- IN-FLIGHT NATURAL LANGUAGE TASK CONTROL HANDLER ---
 function handleInFlightControlCommand(text) {
-  const norm = text.toLowerCase().trim().replace(/[.!?,]+$/, "");
-  if (!activePlan) return false;
+  const norm = text
+    .toLowerCase()
+    .trim()
+    .replace(/[.!?,]+$/, "");
 
-  if (/^(continue|resume|go ahead|proceed|carry on)$/i.test(norm)) {
+  const isResumeCmd =
+    /^(continue|resume|go ahead|proceed|carry on|aage ke kaam karo|aage ka kaam karo|aage badho|aage chalo|isse aage badhao|chalu karo|chalu rakho|jaari rakho|shuru karo|start karo|continue karo)$/i.test(
+      norm,
+    );
+
+  if (!activePlan) {
+    if (isResumeCmd) {
+      appendHistory("user", text);
+      // Check if there is a saved checkpoint available to resume
+      chrome.storage.local.get(["savedCheckpoint", "ai_buddy_active_plan"], (data) => {
+        if (data.savedCheckpoint) {
+          $("resumeSavedTaskBtn")?.click();
+        } else if (data.ai_buddy_active_plan) {
+          activePlan = data.ai_buddy_active_plan;
+          isPlanPaused = false;
+          activePlan.status = "running";
+          renderTaskPlanUI();
+          runPlanLoop();
+          appendHistory("buddy", "Resuming saved workflow plan…");
+        } else {
+          appendHistory(
+            "buddy",
+            "Koi active task pause nahi tha. Mujhe bataiye aap is page par kaunsa task perform karwana chahte hain!",
+          );
+        }
+      });
+      return true;
+    }
+    return false;
+  }
+
+  if (isResumeCmd) {
     appendHistory("user", text);
     if (activePlan.status === "awaiting_approval") {
       $("approveConsequentialBtn")?.click();
@@ -1519,7 +1622,11 @@ function handleInFlightControlCommand(text) {
     return true;
   }
 
-  if (/^(pause|hold on|wait a moment|wait|pause for a moment)$/i.test(norm)) {
+  if (
+    /^(pause|hold on|wait a moment|wait|pause for a moment|ruko|ruk jao|thahar jao|ek minute ruko|ek minute|wait karo|pause karo)$/i.test(
+      norm,
+    )
+  ) {
     appendHistory("user", text);
     if (activePlan.status === "running") {
       $("planPauseResumeBtn")?.click();
@@ -1529,19 +1636,41 @@ function handleInFlightControlCommand(text) {
     return true;
   }
 
-  if (/^(skip|skip this step|skip step|next step)$/i.test(norm)) {
+  if (
+    /^(skip|skip this step|skip step|next step|chhod do|is step ko chhod do|ye step chhod do|agla step|agle step par jao|skip karo)$/i.test(
+      norm,
+    )
+  ) {
     appendHistory("user", text);
     $("planSkipBtn")?.click();
     return true;
   }
 
-  if (/^(stop|stop this task|cancel task|cancel|abort)$/i.test(norm)) {
+  if (
+    /^(use another method|retry|try another way|try again|dusra tareeka use karo|dusra tareeka|phir se try karo|dobara try karo|dobara koshish karo|try again karo)$/i.test(
+      norm,
+    )
+  ) {
+    appendHistory("user", text);
+    $("planRetryBtn")?.click();
+    return true;
+  }
+
+  if (
+    /^(stop|stop this task|cancel task|cancel|abort|rok do|band karo|khatam karo|task band karo|cancel karo)$/i.test(
+      norm,
+    )
+  ) {
     appendHistory("user", text);
     $("planStopBtn")?.click();
     return true;
   }
 
-  if (/^(summary|progress summary|show summary|prepare a summary)$/i.test(norm)) {
+  if (
+    /^(summary|progress summary|show summary|prepare a summary|summary dikhao|kya hua batao|progress batao|kitna kaam hua batao)$/i.test(
+      norm,
+    )
+  ) {
     appendHistory("user", text);
     const completed = activePlan.steps.filter((s) => s.status === "completed").length;
     appendHistory(
@@ -1688,7 +1817,8 @@ function updateGreetingContext() {
           try {
             const u = new URL(tab.url);
             if ($("greetingContext")) {
-              $("greetingContext").textContent = `Active on ${u.hostname} · ${tab.title ? tab.title.slice(0, 32) + (tab.title.length > 32 ? "…" : "") : "Current Tab"}`;
+              $("greetingContext").textContent =
+                `Active on ${u.hostname} · ${tab.title ? tab.title.slice(0, 32) + (tab.title.length > 32 ? "…" : "") : "Current Tab"}`;
             }
           } catch {
             if ($("greetingContext")) $("greetingContext").textContent = "Active in browser";
@@ -1981,13 +2111,17 @@ $("signoutBtn").onclick = async () => {
 
 // --- MASTER COMMAND CENTRE NAVIGATION & WORKSPACE HANDLERS ---
 function escapeHtml(str) {
-  return String(str || "").replace(/[&<>"']/g, (m) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  })[m]);
+  return String(str || "").replace(
+    /[&<>"']/g,
+    (m) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[m],
+  );
 }
 
 function switchTab(tabName) {
@@ -2075,7 +2209,9 @@ if ($("pageCheckErrorsActionBtn")) {
 if ($("pageExtractTableActionBtn")) {
   $("pageExtractTableActionBtn").onclick = () => {
     switchTab("chat");
-    startMultiStepWorkflow("Find tables on this page, extract all rows and columns, copy list to clipboard");
+    startMultiStepWorkflow(
+      "Find tables on this page, extract all rows and columns, copy list to clipboard",
+    );
   };
 }
 
@@ -2134,7 +2270,9 @@ if ($("runResearchWorkflowBtn")) {
 if ($("runExtractTableWorkflowBtn")) {
   $("runExtractTableWorkflowBtn").onclick = () => {
     switchTab("chat");
-    startMultiStepWorkflow("Find tables on this page, extract all rows and columns, copy list to clipboard");
+    startMultiStepWorkflow(
+      "Find tables on this page, extract all rows and columns, copy list to clipboard",
+    );
   };
 }
 
@@ -2145,7 +2283,10 @@ if ($("resumeSavedTaskBtn")) {
       const card = $("savedCheckpointCard") || $("savedTaskCheckpointCard");
       if (card) card.hidden = true;
       switchTab("chat");
-      appendHistory("buddy", `▶️ Resuming task: "${savedCheckpoint.title}". Continuing from step ${savedCheckpoint.currentStepIndex + 1} of ${savedCheckpoint.totalSteps}.`);
+      appendHistory(
+        "buddy",
+        `▶️ Resuming task: "${savedCheckpoint.title}". Continuing from step ${savedCheckpoint.currentStepIndex + 1} of ${savedCheckpoint.totalSteps}.`,
+      );
       setRigEmotion("working", "Resuming");
     }
   };
@@ -2197,7 +2338,8 @@ async function loadMemories() {
         '<div style="color: var(--muted); font-size: 10px;">No custom memories saved yet. Click Add to save preferences.</div>';
     }
   } catch {
-    list.innerHTML = '<div style="color: var(--muted); font-size: 10px;">Could not load memories.</div>';
+    list.innerHTML =
+      '<div style="color: var(--muted); font-size: 10px;">Could not load memories.</div>';
   }
 }
 
@@ -2289,10 +2431,12 @@ async function loadTasksHistory() {
         )
         .join("");
     } else {
-      list.innerHTML = '<div style="color: var(--muted); font-size: 10px;">No recent tasks executed yet.</div>';
+      list.innerHTML =
+        '<div style="color: var(--muted); font-size: 10px;">No recent tasks executed yet.</div>';
     }
   } catch {
-    list.innerHTML = '<div style="color: var(--muted); font-size: 10px;">Could not load task history.</div>';
+    list.innerHTML =
+      '<div style="color: var(--muted); font-size: 10px;">Could not load task history.</div>';
   }
   checkSavedCheckpoint();
 }
@@ -2305,7 +2449,8 @@ async function checkSavedCheckpoint() {
       if (card) {
         card.hidden = false;
         if ($("savedTaskCheckpointDesc")) {
-          $("savedTaskCheckpointDesc").textContent = `Task "${savedCheckpoint.title}" is paused at step ${savedCheckpoint.currentStepIndex + 1} of ${savedCheckpoint.totalSteps}.`;
+          $("savedTaskCheckpointDesc").textContent =
+            `Task "${savedCheckpoint.title}" is paused at step ${savedCheckpoint.currentStepIndex + 1} of ${savedCheckpoint.totalSteps}.`;
         }
       }
     } else {
@@ -2322,9 +2467,13 @@ if ($("refreshTasksHistoryBtn")) $("refreshTasksHistoryBtn").onclick = loadTasks
 async function loadModelHubStatus() {
   const list = $("providerStatusList");
   if (!list) return;
-  list.innerHTML = '<div style="color: var(--muted); font-size: 10px;">Checking provider statuses…</div>';
+  list.innerHTML =
+    '<div style="color: var(--muted); font-size: 10px;">Checking provider statuses…</div>';
   try {
-    const { lastBase, preferredModel } = await chrome.storage.local.get(["lastBase", "preferredModel"]);
+    const { lastBase, preferredModel } = await chrome.storage.local.get([
+      "lastBase",
+      "preferredModel",
+    ]);
     const base = lastBase || DEFAULT_BASE;
     const res = await fetch(`${base}/api/public/extension/models`);
     const data = await res.json();
@@ -2376,7 +2525,8 @@ async function loadModelHubStatus() {
       }
     }
   } catch {
-    list.innerHTML = '<div style="color: var(--muted); font-size: 10px;">Could not check provider status.</div>';
+    list.innerHTML =
+      '<div style="color: var(--muted); font-size: 10px;">Could not check provider status.</div>';
   }
 }
 
@@ -2473,6 +2623,50 @@ if ($("testMouthTalkBtn")) {
       stopSpeechMouthAnimation();
       setRigEmotion("idle", "Idle");
     }, 2500);
+  };
+}
+
+// Manual CSS Emotion Testing Handlers
+if ($("btnEmoCurious")) {
+  $("btnEmoCurious").onclick = () => {
+    setRigEmotion("curious", "Curious");
+    const avatar = $("buddyAvatar");
+    if (avatar) avatar.setAttribute("data-emotion", "curious");
+  };
+}
+if ($("btnEmoConcerned")) {
+  $("btnEmoConcerned").onclick = () => {
+    setRigEmotion("concerned", "Concerned");
+    const avatar = $("buddyAvatar");
+    if (avatar) avatar.setAttribute("data-emotion", "concerned");
+  };
+}
+if ($("btnEmoHappy")) {
+  $("btnEmoHappy").onclick = () => {
+    setRigEmotion("happy", "Happy");
+    const avatar = $("buddyAvatar");
+    if (avatar) avatar.setAttribute("data-emotion", "happy");
+  };
+}
+if ($("btnEmoThinking")) {
+  $("btnEmoThinking").onclick = () => {
+    setRigEmotion("thinking", "Thinking");
+    const avatar = $("buddyAvatar");
+    if (avatar) avatar.setAttribute("data-emotion", "thinking");
+  };
+}
+if ($("btnEmoCelebrate")) {
+  $("btnEmoCelebrate").onclick = () => {
+    setRigEmotion("celebrate", "Celebrate");
+    const avatar = $("buddyAvatar");
+    if (avatar) avatar.setAttribute("data-emotion", "celebrate");
+  };
+}
+if ($("btnEmoIdle")) {
+  $("btnEmoIdle").onclick = () => {
+    setRigEmotion("idle", "Idle");
+    const avatar = $("buddyAvatar");
+    if (avatar) avatar.setAttribute("data-emotion", "idle");
   };
 }
 

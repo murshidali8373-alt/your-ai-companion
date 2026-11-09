@@ -38,6 +38,10 @@ export function Buddy3D({
         return "error";
       case "curious":
         return "confused";
+      case "sleepy":
+        return "sleepy";
+      case "surprised":
+        return "surprised";
       case "neutral":
       default:
         return "idle";

@@ -11,6 +11,7 @@ import { BuddyAvatar, type BuddyEmotion } from "@/components/buddy-avatar";
 import { VoiceBar } from "@/components/voice-bar";
 import { AiModelHub } from "@/components/ai-model-hub";
 import { WebpageInspector } from "@/components/webpage-inspector";
+import { BuddyEmotionControlPanel } from "@/components/buddy-emotion-control-panel";
 import { useBuddyStateManager, BUDDY_EMOTION_STATES } from "@/hooks/use-buddy-state-manager";
 import { SingleSpeaker } from "@/shared/voice-turn";
 import { Badge } from "@/components/ui/badge";
@@ -78,6 +79,7 @@ function Dashboard() {
   const buddy = useBuddyStateManager(BUDDY_EMOTION_STATES.IDLE);
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [manualEmotion, setManualEmotion] = useState<BuddyEmotion | null>(null);
   const speaker = useRef<SingleSpeaker | null>(null);
   const requestId = useRef(0);
 
@@ -95,7 +97,7 @@ function Dashboard() {
     buddy.setEmotion(BUDDY_EMOTION_STATES.IDLE, { reason: "Conversation reset" });
   }, [buddy]);
 
-  const [activeTab, setActiveTab] = useState<"stage" | "hub" | "inspector">("stage");
+  const [activeTab, setActiveTab] = useState<"stage" | "hub" | "inspector" | "emotions">("stage");
   const [selectedModelId, setSelectedModelId] = useState<string>("gemini-3.8-flash");
 
   useEffect(() => {
@@ -240,9 +242,11 @@ function Dashboard() {
     "friendly";
 
   const lang = profile?.language === "english" ? "en-IN" : "hi-IN";
-  const stageEmotion: BuddyEmotion = listening
-    ? "listening"
-    : (buddy.emotion as BuddyEmotion) || (answer?.emotion ?? "neutral");
+  const stageEmotion: BuddyEmotion = manualEmotion
+    ? manualEmotion
+    : listening
+      ? "listening"
+      : (buddy.emotion as BuddyEmotion) || (answer?.emotion ?? "neutral");
   const graphics = (profile?.graphics_mode ?? "balanced") as "low" | "balanced" | "high";
   const presets = buddies.data?.buddies ?? [];
 
@@ -261,6 +265,15 @@ function Dashboard() {
             className="h-8 text-xs font-medium"
           >
             Buddy Stage
+          </Button>
+          <Button
+            variant={activeTab === "emotions" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setActiveTab("emotions")}
+            className="h-8 text-xs font-medium gap-1.5"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            Emotion Lab (CSS)
           </Button>
           <Button
             variant={activeTab === "hub" ? "secondary" : "ghost"}
@@ -289,6 +302,15 @@ function Dashboard() {
           </Badge>
         </div>
       </div>
+
+      {activeTab === "emotions" && (
+        <div className="space-y-4">
+          <BuddyEmotionControlPanel
+            initialEmotion={manualEmotion || "curious"}
+            onEmotionChange={(emo) => setManualEmotion(emo)}
+          />
+        </div>
+      )}
 
       {activeTab === "hub" && (
         <AiModelHub
@@ -354,7 +376,9 @@ function Dashboard() {
               <div className="flex w-full items-center justify-between text-xs text-muted-foreground">
                 <span>
                   <span className="font-medium text-foreground">{activeBuddy}</span> ·{" "}
-                  {stageEmotion}
+                  <span className="font-mono text-primary font-semibold uppercase">
+                    {stageEmotion}
+                  </span>
                 </span>
                 <span>{requestsToday}/300 today</span>
               </div>
@@ -366,6 +390,30 @@ function Dashboard() {
                 size={260}
                 graphics={graphics}
               />
+
+              {/* Quick Emotion Animation Test Strip */}
+              <div className="w-full max-w-md pt-2 border-t border-border/40">
+                <div className="flex items-center justify-between mb-1.5 px-1">
+                  <span className="text-[11px] font-semibold text-muted-foreground">
+                    Quick Emotion Test:
+                  </span>
+                  {manualEmotion && (
+                    <button
+                      type="button"
+                      onClick={() => setManualEmotion(null)}
+                      className="text-[10px] text-primary hover:underline font-medium"
+                    >
+                      Reset auto
+                    </button>
+                  )}
+                </div>
+                <BuddyEmotionControlPanel
+                  compact
+                  initialEmotion={stageEmotion}
+                  onEmotionChange={(emo) => setManualEmotion(emo)}
+                />
+              </div>
+
               <VoiceBar
                 busy={ask.isPending || speaking}
                 lang={lang}

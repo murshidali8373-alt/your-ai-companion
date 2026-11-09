@@ -57,8 +57,9 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     return true;
   }
   if (msg.type === "ASK") {
-    ask(msg.question, msg.intent, msg.history, msg.buddySlug, msg.customBuddyId, msg.preferredModel).then(reply, (e) =>
-      reply({ error: String(e?.message || e) }),
+    ask(msg.question, msg.intent, msg.history, msg.buddySlug, msg.customBuddyId, msg.preferredModel).then(
+      reply,
+      (e) => reply({ error: String(e?.message || e) }),
     );
     return true;
   }
@@ -121,6 +122,12 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   }
   if (msg.type === "WAIT_FOR_CONDITION") {
     waitForCondition(msg.selector, msg.text, msg.timeoutMs).then(reply, (e) =>
+      reply({ ok: false, error: String(e?.message || e) }),
+    );
+    return true;
+  }
+  if (msg.type === "WAIT_FOR_PAGE_SETTLE") {
+    waitForPageSettle(msg.timeoutMs).then(reply, (e) =>
       reply({ ok: false, error: String(e?.message || e) }),
     );
     return true;
@@ -730,14 +737,31 @@ async function smartFillForm(fields, options = {}) {
 
       const successfullyFilled = [];
 
+      const FIELD_SYNONYMS = {
+        name: ["fullname", "legalname", "username", "contactname", "applicantname", "ownername", "firstname"],
+        fullname: ["name", "legalname", "username"],
+        legalname: ["company", "businessname", "firmname", "organization", "companyname", "name"],
+        tradename: ["businessname", "storename", "shopname", "brandname", "company"],
+        email: ["mail", "emailaddress", "contactemail"],
+        phone: ["mobile", "contact", "contactnumber", "tel", "phonenumber", "cellphone"],
+        gstin: ["gst", "taxid", "gstnumber", "gstinnumber", "tin"],
+        address: ["street", "line1", "addressline1", "shippingaddress", "billingaddress", "fulladdress"],
+        city: ["town", "district"],
+        state: ["province", "region"],
+        pincode: ["zip", "zipcode", "postalcode", "pin"],
+      };
+
       for (const [key, val] of Object.entries(fieldsToFill || {})) {
         if (val === undefined || val === null) continue;
         const normKey = normalize(key);
+        const keyCandidates = [normKey, ...(FIELD_SYNONYMS[normKey] || [])];
 
         // Find candidate field on the page
         const candidate = elements.find((el) => {
           const ids = getFieldIdentifiers(el);
-          return ids.some((id) => id.includes(normKey) || normKey.includes(id));
+          return ids.some((id) =>
+            keyCandidates.some((k) => id.includes(k) || k.includes(id)),
+          );
         });
 
         if (!candidate) {
@@ -1594,6 +1618,84 @@ async function switchTab(tabId) {
 
 async function keyboardAction(key = "Enter", selector, options = {}) {
   return executeAction("keyboard", selector, key, options);
+}
+
+/**
+ * Triple-Signal Settle Detector:
+ * Awaits document readyState, DOM mutation quiescence via MutationObserver,
+ * and requestAnimationFrame render flush. Replaces arbitrary sleep timeouts.
+ */
+async function waitForPageSettle(timeoutMs = 6000) {
+  const tab = await activeTab();
+  if (!tab?.id || !tab.url || RESTRICTED.test(tab.url)) {
+    return { ok: true, settled: true, reason: "Restricted page or no tab" };
+  }
+
+  const [res] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: async (maxWait) => {
+      const startTime = performance.now();
+
+      // 1. ReadyState check
+      if (document.readyState === "loading") {
+        await new Promise((resolve) => {
+          const onReady = () => {
+            if (document.readyState !== "loading") {
+              document.removeEventListener("readystatechange", onReady);
+              resolve();
+            }
+          };
+          document.addEventListener("readystatechange", onReady);
+          setTimeout(resolve, 2000);
+        });
+      }
+
+      // 2. MutationObserver Quiescence Window (wait for 300ms without DOM mutations)
+      await new Promise((resolve) => {
+        let timer = null;
+        const observer = new MutationObserver(() => {
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(done, 300);
+        });
+
+        const done = () => {
+          observer.disconnect();
+          if (timer) clearTimeout(timer);
+          resolve();
+        };
+
+        try {
+          observer.observe(document.body || document.documentElement, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+          });
+          timer = setTimeout(done, 300);
+        } catch {
+          resolve();
+        }
+
+        // Hard boundary
+        setTimeout(done, Math.min(maxWait, 5000));
+      });
+
+      // 3. Render flush
+      await new Promise((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(resolve);
+        });
+      });
+
+      return {
+        ok: true,
+        settled: true,
+        elapsedMs: Math.round(performance.now() - startTime),
+      };
+    },
+    args: [timeoutMs],
+  });
+
+  return res?.result || { ok: true, settled: true };
 }
 
 async function waitForCondition(selector, text, timeoutMs = 4000) {

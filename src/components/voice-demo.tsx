@@ -644,6 +644,40 @@ export function VoiceDemo() {
               </Badge>
             ))}
           </div>
+
+          {/* Manual CSS Emotion Testing Row */}
+          <div className="pt-3 border-t border-border/50 flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-semibold text-muted-foreground mr-1">
+              Test CSS Emotion:
+            </span>
+            {(
+              [
+                { id: "curious", label: "Curious", emoji: "🧐" },
+                { id: "concerned", label: "Concerned", emoji: "😟" },
+                { id: "happy", label: "Happy", emoji: "😄" },
+                { id: "thinking", label: "Thinking", emoji: "🤔" },
+                { id: "speaking", label: "Speaking", emoji: "🗣️" },
+                { id: "listening", label: "Listening", emoji: "👂" },
+                { id: "celebrate", label: "Celebrate", emoji: "🎉" },
+                { id: "surprised", label: "Surprised", emoji: "😲" },
+              ] as const
+            ).map((emo) => (
+              <button
+                key={emo.id}
+                type="button"
+                onClick={() => {
+                  buddy.setEmotion(emo.id as unknown as TalkingBuddyState, {
+                    reason: `Manual test: ${emo.label}`,
+                    durationMs: 3000,
+                  });
+                }}
+                className="px-2 py-1 text-xs rounded-lg border border-border bg-background/80 hover:bg-muted text-foreground transition-all flex items-center gap-1 font-medium hover:border-primary/50"
+              >
+                <span>{emo.emoji}</span>
+                <span>{emo.label}</span>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     </div>

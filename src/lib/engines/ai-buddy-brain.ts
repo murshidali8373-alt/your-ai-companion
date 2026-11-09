@@ -159,70 +159,110 @@ export function parseTaskControlCommand(instruction: string): TaskControlCommand
     .trim()
     .replace(/[.!?,]+$/, "");
 
-  if (/^(continue|resume|go ahead|proceed|carry on)$/i.test(norm)) {
+  if (
+    /^(continue|resume|go ahead|proceed|carry on|aage ke kaam karo|aage ka kaam karo|aage badho|aage chalo|isse aage badhao|chalu karo|chalu rakho|jaari rakho|shuru karo|start karo|continue karo)$/i.test(
+      norm,
+    )
+  ) {
     return {
       action: "resume",
       rawCommand: instruction,
       reason: "User requested resuming from last verified checkpoint",
     };
   }
-  if (/^(pause|hold on|wait a moment|wait|pause for a moment)$/i.test(norm)) {
+  if (
+    /^(pause|hold on|wait a moment|wait|pause for a moment|ruko|ruk jao|thahar jao|ek minute ruko|ek minute|wait karo|pause karo)$/i.test(
+      norm,
+    )
+  ) {
     return {
       action: "pause",
       rawCommand: instruction,
       reason: "User paused ongoing execution",
     };
   }
-  if (/^(skip|skip this step|skip step|next step)$/i.test(norm)) {
+  if (
+    /^(skip|skip this step|skip step|next step|chhod do|is step ko chhod do|ye step chhod do|agla step|agle step par jao|skip karo)$/i.test(
+      norm,
+    )
+  ) {
     return {
       action: "skip",
       rawCommand: instruction,
       reason: "User skipped current step",
     };
   }
-  if (/^(use another method|retry|try another way|try again)$/i.test(norm)) {
+  if (
+    /^(use another method|retry|try another way|try again|dusra tareeka use karo|dusra tareeka|phir se try karo|dobara try karo|dobara koshish karo|try again karo)$/i.test(
+      norm,
+    )
+  ) {
     return {
       action: "retry_alternative",
       rawCommand: instruction,
       reason: "User requested alternative navigation or selector strategy",
     };
   }
-  if (/^(go back|go back to the previous page|back|previous page)$/i.test(norm)) {
+  if (
+    /^(go back|go back to the previous page|back|previous page|pichle page pe jao|wapas jao|peeche jao|back jao|pichla page)$/i.test(
+      norm,
+    )
+  ) {
     return {
       action: "go_back",
       rawCommand: instruction,
       reason: "User navigated back to prior page state",
     };
   }
-  if (/^(check that again|verify again|recheck|check once more)$/i.test(norm)) {
+  if (
+    /^(check that again|verify again|recheck|check once more|dobara check karo|phir se check karo|check karo dubara|phir se verify karo)$/i.test(
+      norm,
+    )
+  ) {
     return {
       action: "verify_again",
       rawCommand: instruction,
       reason: "User requested re-verifying current step",
     };
   }
-  if (/^(don't change anything else|preserve rest|only change this)$/i.test(norm)) {
+  if (
+    /^(don't change anything else|preserve rest|only change this|baaki mat badlo|sirf ise badlo|baaki safe rakho|kuch aur mat chhedo)$/i.test(
+      norm,
+    )
+  ) {
     return {
       action: "preserve_only",
       rawCommand: instruction,
       reason: "User restricted modifications to specified scope only",
     };
   }
-  if (/^(save the result|save results|save report|export data)$/i.test(norm)) {
+  if (
+    /^(save the result|save results|save report|export data|result save karo|report save karo|data save karo|data export karo|download karo)$/i.test(
+      norm,
+    )
+  ) {
     return {
       action: "save_result",
       rawCommand: instruction,
       reason: "User initiated saving/exporting task output",
     };
   }
-  if (/^(prepare a summary|show summary|give me a summary|progress summary)$/i.test(norm)) {
+  if (
+    /^(prepare a summary|show summary|give me a summary|progress summary|summary|summary dikhao|kya hua batao|progress batao|kitna kaam hua batao)$/i.test(
+      norm,
+    )
+  ) {
     return {
       action: "summarize_progress",
       rawCommand: instruction,
       reason: "User requested execution progress summary",
     };
   }
-  if (/^(stop|stop this task|cancel task|cancel|abort)$/i.test(norm)) {
+  if (
+    /^(stop|stop this task|cancel task|cancel|abort|rok do|band karo|khatam karo|task band karo|cancel karo)$/i.test(
+      norm,
+    )
+  ) {
     return {
       action: "stop",
       rawCommand: instruction,
@@ -295,7 +335,15 @@ export function classifyBrainIntent(instruction: string, specified?: BrainIntent
   ) {
     return "spreadsheet_audit";
   }
-  if (lower.includes("fill") || lower.includes("form") || lower.includes("registration")) {
+  if (
+    lower.includes("fill") ||
+    lower.includes("form") ||
+    lower.includes("registration") ||
+    lower.includes("bhar do") ||
+    lower.includes("bharo") ||
+    lower.includes("details daal") ||
+    lower.includes("entry kar")
+  ) {
     return "smart_form_fill";
   }
   if (
@@ -304,7 +352,9 @@ export function classifyBrainIntent(instruction: string, specified?: BrainIntent
     lower.includes("total") ||
     lower.includes("sum") ||
     lower.includes("table") ||
-    lower.includes("sku")
+    lower.includes("sku") ||
+    lower.includes("kitne") ||
+    lower.includes("kul")
   ) {
     return "aggregate_data";
   }
@@ -312,7 +362,10 @@ export function classifyBrainIntent(instruction: string, specified?: BrainIntent
     lower.includes("where") ||
     lower.includes("find") ||
     lower.includes("locate") ||
-    lower.includes("point")
+    lower.includes("point") ||
+    lower.includes("kahan hai") ||
+    lower.includes("dikhao") ||
+    lower.includes("dhoondho")
   ) {
     return "locate_element";
   }
@@ -320,7 +373,10 @@ export function classifyBrainIntent(instruction: string, specified?: BrainIntent
     lower.includes("explain") ||
     lower.includes("what is") ||
     lower.includes("summarize") ||
-    lower.includes("about")
+    lower.includes("about") ||
+    lower.includes("samjhao") ||
+    lower.includes("kya hai") ||
+    lower.includes("kya chal raha")
   ) {
     return "explain_page";
   }
@@ -329,7 +385,9 @@ export function classifyBrainIntent(instruction: string, specified?: BrainIntent
     lower.includes("step") ||
     lower.includes("meesho") ||
     lower.includes("flipkart") ||
-    lower.includes("workflow")
+    lower.includes("workflow") ||
+    lower.includes("list banao") ||
+    lower.includes("pending orders")
   ) {
     return "multi_step_task";
   }

@@ -62,6 +62,8 @@ export interface MultiActionStep {
   action: BrowserActionType;
   target?: ActionTarget;
   selector?: string;
+  dynamicTargetQuery?: string;
+  resolvedSelector?: string;
   textTarget?: string;
   value?: string;
   status: "pending" | "running" | "completed" | "failed" | "skipped" | "awaiting_approval";
@@ -74,6 +76,16 @@ export interface MultiActionStep {
   error?: string;
   tabUrl?: string;
   tabId?: number;
+  executionTrace?: {
+    attemptCount: number;
+    initialSelector?: string;
+    resolvedSelector?: string;
+    targetMatchReason?: string;
+    preActionUrl?: string;
+    postActionUrl?: string;
+    settledInMs?: number;
+    verifiedBy?: "url_change" | "value_match" | "dom_mutation" | "data_extracted";
+  };
 }
 
 export interface MultiActionTaskPlan {
@@ -166,6 +178,123 @@ export function verifyTargetElement(
     };
   }
   return { exists: true };
+}
+
+/**
+ * Dynamically re-resolves the target selector for a step against a live PageSnapshot.
+ * Prevents stale selector failures when page DOM mutates between steps.
+ */
+export function resolveLiveStepTarget(
+  step: MultiActionStep,
+  snapshot: PageSnapshot | null,
+): {
+  selector: string;
+  matched: boolean;
+  strategy: "direct" | "semantic" | "text" | "role" | "fallback";
+  confidence: number;
+} {
+  if (!snapshot) {
+    return {
+      selector: step.selector || "body",
+      matched: false,
+      strategy: "fallback",
+      confidence: 0.1,
+    };
+  }
+
+  const allElements = [
+    ...(snapshot.controls || []),
+    ...(snapshot.forms || []),
+    ...(snapshot.headings || []),
+    ...(snapshot.alerts || []),
+  ];
+
+  // 1. Check if the existing direct selector exists in the fresh snapshot
+  if (step.selector && step.selector !== "body") {
+    const directMatch = allElements.find((el) => el.selector === step.selector);
+    if (directMatch) {
+      return {
+        selector: directMatch.selector,
+        matched: true,
+        strategy: "direct",
+        confidence: 0.95,
+      };
+    }
+  }
+
+  // 2. Query matching: use dynamicTargetQuery, textTarget, title, or value
+  const query = (step.dynamicTargetQuery || step.textTarget || step.title || step.value || "")
+    .toLowerCase()
+    .trim();
+
+  if (!query) {
+    return {
+      selector: step.selector || "body",
+      matched: false,
+      strategy: "fallback",
+      confidence: 0.2,
+    };
+  }
+
+  // Clean prompt noise words from query
+  const cleanQuery = query
+    .replace(/^(click|open|press|select|go to|fill|type|search|find|copy)\s+/i, "")
+    .replace(/\s+(button|link|tab|input|field|box)$/i, "")
+    .trim();
+
+  // 3. Exact accessible name or label match
+  const exactNameMatch = allElements.find(
+    (el) => el.name && el.name.toLowerCase().trim() === cleanQuery,
+  );
+  if (exactNameMatch) {
+    return {
+      selector: exactNameMatch.selector,
+      matched: true,
+      strategy: "semantic",
+      confidence: 0.9,
+    };
+  }
+
+  // 4. Substring text or placeholder match on interactive elements
+  const substringMatch = allElements.find((el) => {
+    const name = (el.name || "").toLowerCase();
+    const ph = ((el as { placeholder?: string }).placeholder || "").toLowerCase();
+    const sel = (el.selector || "").toLowerCase();
+    return name.includes(cleanQuery) || ph.includes(cleanQuery) || sel.includes(cleanQuery);
+  });
+  if (substringMatch) {
+    return {
+      selector: substringMatch.selector,
+      matched: true,
+      strategy: "text",
+      confidence: 0.75,
+    };
+  }
+
+  // 5. Role-appropriate match (e.g. if action is click_submit, find submit button)
+  if (step.action === "click_submit") {
+    const submitBtn = allElements.find(
+      (el) =>
+        el.role === "button" &&
+        /submit|save|proceed|confirm|continue|checkout|purchase|pay|done/i.test(el.name || ""),
+    );
+    if (submitBtn) {
+      return {
+        selector: submitBtn.selector,
+        matched: true,
+        strategy: "role",
+        confidence: 0.8,
+      };
+    }
+  }
+
+  // Fallback to step's initial selector or body
+  return {
+    selector: step.selector || "body",
+    matched: false,
+    strategy: "fallback",
+    confidence: 0.3,
+  };
 }
 
 export function verifyActionResult(
