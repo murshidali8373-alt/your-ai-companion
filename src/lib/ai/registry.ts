@@ -23,7 +23,16 @@ export function catalogToModelEntry(catalog: CatalogModelEntry): ModelEntry {
 }
 
 export type TaskIntent =
-  "explain_page" | "locate_element" | "answer" | "plan" | "summarize" | "classify";
+  | "explain_page"
+  | "locate_element"
+  | "answer"
+  | "plan"
+  | "summarize"
+  | "classify"
+  | "deep_research"
+  | "browser_action"
+  | "file_analysis"
+  | "general";
 
 export interface RouteRequest {
   intent: TaskIntent;
@@ -144,9 +153,13 @@ export function route(request: RouteRequest): ModelEntry[] {
   const wantsFast =
     request.latencySensitive ||
     request.intent === "locate_element" ||
-    request.intent === "classify";
+    request.intent === "classify" ||
+    request.intent === "browser_action";
   const wantsCheap = request.costSensitive || request.intent === "summarize";
-  const wantsReasoning = request.intent === "plan";
+  const wantsReasoning =
+    request.intent === "plan" ||
+    request.intent === "deep_research" ||
+    request.intent === "file_analysis";
 
   candidates.sort((a, b) => {
     // Primary configured provider (Gemini) is given first priority

@@ -824,6 +824,16 @@ async function render() {
   switchBuddy(selectedBuddySlug);
   applyRenderMode(currentRenderMode);
   checkPageForErrors();
+  updateGreetingContext();
+  startRotatingPlaceholders();
+  chrome.storage.local
+    .get("preferredModel")
+    .then(({ preferredModel }) => {
+      if ($("headerModelLabel") && preferredModel && preferredModel !== "auto") {
+        $("headerModelLabel").textContent = preferredModel;
+      }
+    })
+    .catch(() => {});
 }
 
 function applyRenderMode(mode) {
@@ -990,13 +1000,17 @@ async function sendQuery(question, intent) {
 
   try {
     const active = getActiveBuddy();
+    const { preferredModel } = await chrome.storage.local.get("preferredModel");
+    const detachPage = $("pageContextToggle") && !$("pageContextToggle").checked;
+    const finalIntent = detachPage ? "general" : intent;
     const res = await chrome.runtime.sendMessage({
       type: "ASK",
       question,
-      intent,
+      intent: finalIntent,
       history: historyPayload,
       buddySlug: active.slug,
       customBuddyId: active.isCustom ? active.id || active.slug.replace("custom:", "") : undefined,
+      preferredModel: preferredModel && preferredModel !== "auto" ? preferredModel : undefined,
     });
 
     if (res?.error) {
@@ -1488,12 +1502,222 @@ function renderExtractedDataUI() {
   $("extractedContent").textContent = contentText;
 }
 
+// --- IN-FLIGHT NATURAL LANGUAGE TASK CONTROL HANDLER ---
+function handleInFlightControlCommand(text) {
+  const norm = text.toLowerCase().trim().replace(/[.!?,]+$/, "");
+  if (!activePlan) return false;
+
+  if (/^(continue|resume|go ahead|proceed|carry on)$/i.test(norm)) {
+    appendHistory("user", text);
+    if (activePlan.status === "awaiting_approval") {
+      $("approveConsequentialBtn")?.click();
+    } else if (activePlan.status === "paused") {
+      $("planPauseResumeBtn")?.click();
+    } else {
+      appendHistory("buddy", "Task execution is active and proceeding.");
+    }
+    return true;
+  }
+
+  if (/^(pause|hold on|wait a moment|wait|pause for a moment)$/i.test(norm)) {
+    appendHistory("user", text);
+    if (activePlan.status === "running") {
+      $("planPauseResumeBtn")?.click();
+    } else {
+      appendHistory("buddy", "Task is currently paused.");
+    }
+    return true;
+  }
+
+  if (/^(skip|skip this step|skip step|next step)$/i.test(norm)) {
+    appendHistory("user", text);
+    $("planSkipBtn")?.click();
+    return true;
+  }
+
+  if (/^(stop|stop this task|cancel task|cancel|abort)$/i.test(norm)) {
+    appendHistory("user", text);
+    $("planStopBtn")?.click();
+    return true;
+  }
+
+  if (/^(summary|progress summary|show summary|prepare a summary)$/i.test(norm)) {
+    appendHistory("user", text);
+    const completed = activePlan.steps.filter((s) => s.status === "completed").length;
+    appendHistory(
+      "buddy",
+      `📊 Plan Progress: ${completed} of ${activePlan.steps.length} steps completed. Current status: ${activePlan.status}.`,
+    );
+    return true;
+  }
+
+  return false;
+}
+
+// Smart Mode & Placeholders Registry
+let currentActiveMode = "auto";
+const NATURAL_PLACEHOLDERS = [
+  "Ask anything about this page or type a task…",
+  "Compare options from this page in a spreadsheet…",
+  "Find all prices and product names…",
+  "Fill in this checkout/signup form safely…",
+  "Summarize key takeaways with verified citations…",
+  "Find duplicate entries in open files…",
+];
+let naturalPlaceholderTimer = null;
+let placeholderIdx = 0;
+
+function startRotatingPlaceholders() {
+  if (naturalPlaceholderTimer) clearInterval(naturalPlaceholderTimer);
+  naturalPlaceholderTimer = setInterval(() => {
+    const input = $("promptInput");
+    if (input && !input.value.trim() && document.activeElement !== input) {
+      placeholderIdx = (placeholderIdx + 1) % NATURAL_PLACEHOLDERS.length;
+      input.placeholder = NATURAL_PLACEHOLDERS[placeholderIdx];
+    }
+  }, 4500);
+}
+
+// Auto-expanding composer textarea
+const promptInputEl = $("promptInput");
+if (promptInputEl) {
+  promptInputEl.addEventListener("input", () => {
+    promptInputEl.style.height = "auto";
+    promptInputEl.style.height = Math.min(promptInputEl.scrollHeight, 140) + "px";
+  });
+}
+
+// Mode Selector Pills
+document.querySelectorAll(".mode-pill").forEach((pill) => {
+  pill.onclick = () => {
+    document.querySelectorAll(".mode-pill").forEach((p) => p.classList.remove("active"));
+    pill.classList.add("active");
+    currentActiveMode = pill.getAttribute("data-mode") || "auto";
+    const input = $("promptInput");
+    if (!input) return;
+    const modePlaceholders = {
+      auto: NATURAL_PLACEHOLDERS[0],
+      chat: "Chat with Buddy directly…",
+      browser: "Direct action: Click, fill, inspect or navigate…",
+      research: "Deep Research: Synthesize sources and verify claims…",
+      file: "Files & Sheets: Compare files, find duplicates, edit cells…",
+      workflow: "Workflow: Describe a repeatable multi-step recipe…",
+    };
+    input.placeholder = modePlaceholders[currentActiveMode] || NATURAL_PLACEHOLDERS[0];
+    input.focus();
+  };
+});
+
+// Quick Action Cards
+if ($("qaExplainPage")) {
+  $("qaExplainPage").onclick = () => {
+    sendQuery("Explain what this page is about simply and summarize key points.", "explain_page");
+  };
+}
+if ($("qaResearch")) {
+  $("qaResearch").onclick = () => {
+    const pill = document.querySelector('.mode-pill[data-mode="research"]');
+    if (pill) pill.click();
+    const input = $("promptInput");
+    if (input) {
+      input.value = "Research: ";
+      input.focus();
+    }
+  };
+}
+if ($("qaWorkWithFiles")) {
+  $("qaWorkWithFiles").onclick = () => {
+    const pill = document.querySelector('.mode-pill[data-mode="file"]');
+    if (pill) pill.click();
+    const input = $("promptInput");
+    if (input) {
+      input.value = "Analyze spreadsheet and find duplicates: ";
+      input.focus();
+    }
+  };
+}
+if ($("qaAutomateTask")) {
+  $("qaAutomateTask").onclick = () => {
+    const pill = document.querySelector('.mode-pill[data-mode="workflow"]');
+    if (pill) pill.click();
+    const input = $("promptInput");
+    if (input) {
+      input.value = "Automate task: ";
+      input.focus();
+    }
+  };
+}
+
+// File Attachment Button
+if ($("attachFileBtn") && $("composerFileInput")) {
+  $("attachFileBtn").onclick = () => {
+    $("composerFileInput").click();
+  };
+  $("composerFileInput").onchange = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const tag = `[Attached: ${file.name} (${Math.round(file.size / 1024)} KB)] `;
+      if (!$("promptInput").value.includes(file.name)) {
+        $("promptInput").value = tag + $("promptInput").value;
+      }
+      $("promptInput").focus();
+    }
+  };
+}
+
+// Page Context Toggle
+if ($("pageContextToggle")) {
+  $("pageContextToggle").onchange = (e) => {
+    if ($("pageContextStatus")) {
+      $("pageContextStatus").textContent = e.target.checked ? "Page Vision On" : "Detached";
+      $("pageContextStatus").style.color = e.target.checked ? "var(--teal)" : "var(--muted)";
+    }
+  };
+}
+
+// Contextual Greeting & Domain Tracker
+function updateGreetingContext() {
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  if ($("greetingTime")) $("greetingTime").textContent = greeting;
+  try {
+    if (typeof chrome !== "undefined" && chrome.tabs && chrome.tabs.query) {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const tab = tabs?.[0];
+        if (tab?.url && !RESTRICTED.test(tab.url)) {
+          try {
+            const u = new URL(tab.url);
+            if ($("greetingContext")) {
+              $("greetingContext").textContent = `Active on ${u.hostname} · ${tab.title ? tab.title.slice(0, 32) + (tab.title.length > 32 ? "…" : "") : "Current Tab"}`;
+            }
+          } catch {
+            if ($("greetingContext")) $("greetingContext").textContent = "Active in browser";
+          }
+        } else if ($("greetingContext")) {
+          $("greetingContext").textContent = "Workspace ready · Select an action to start";
+        }
+      });
+    }
+  } catch {
+    // Non-fatal
+  }
+}
+
 // Handlers
 $("sendBtn").onclick = () => {
   const val = $("promptInput").value;
   if (!val.trim()) return;
+
+  // Intercept in-flight task commands
+  if (handleInFlightControlCommand(val)) {
+    $("promptInput").value = "";
+    if (promptInputEl) promptInputEl.style.height = "auto";
+    return;
+  }
+
   const lower = val.toLowerCase();
   if (
+    currentActiveMode === "workflow" ||
     lower.includes("meesho") ||
     lower.includes("and then") ||
     lower.includes("copy their order") ||
@@ -1502,8 +1726,23 @@ $("sendBtn").onclick = () => {
     (lower.includes("go to") && lower.includes("click"))
   ) {
     $("promptInput").value = "";
+    if (promptInputEl) promptInputEl.style.height = "auto";
     startMultiActionPlan(val);
+  } else if (currentActiveMode === "research") {
+    $("promptInput").value = "";
+    if (promptInputEl) promptInputEl.style.height = "auto";
+    sendQuery(val, "deep_research");
+  } else if (currentActiveMode === "browser") {
+    $("promptInput").value = "";
+    if (promptInputEl) promptInputEl.style.height = "auto";
+    sendQuery(val, "browser_action");
+  } else if (currentActiveMode === "file") {
+    $("promptInput").value = "";
+    if (promptInputEl) promptInputEl.style.height = "auto";
+    sendQuery(val, "file_analysis");
   } else {
+    $("promptInput").value = "";
+    if (promptInputEl) promptInputEl.style.height = "auto";
     sendQuery(val, "answer");
   }
 };
@@ -1513,8 +1752,16 @@ $("promptInput").addEventListener("keydown", (e) => {
     e.preventDefault();
     const val = $("promptInput").value;
     if (!val.trim()) return;
+
+    if (handleInFlightControlCommand(val)) {
+      $("promptInput").value = "";
+      if (promptInputEl) promptInputEl.style.height = "auto";
+      return;
+    }
+
     const lower = val.toLowerCase();
     if (
+      currentActiveMode === "workflow" ||
       lower.includes("meesho") ||
       lower.includes("and then") ||
       lower.includes("copy their order") ||
@@ -1522,8 +1769,23 @@ $("promptInput").addEventListener("keydown", (e) => {
       (lower.includes("open") && lower.includes("find"))
     ) {
       $("promptInput").value = "";
+      if (promptInputEl) promptInputEl.style.height = "auto";
       startMultiActionPlan(val);
+    } else if (currentActiveMode === "research") {
+      $("promptInput").value = "";
+      if (promptInputEl) promptInputEl.style.height = "auto";
+      sendQuery(val, "deep_research");
+    } else if (currentActiveMode === "browser") {
+      $("promptInput").value = "";
+      if (promptInputEl) promptInputEl.style.height = "auto";
+      sendQuery(val, "browser_action");
+    } else if (currentActiveMode === "file") {
+      $("promptInput").value = "";
+      if (promptInputEl) promptInputEl.style.height = "auto";
+      sendQuery(val, "file_analysis");
     } else {
+      $("promptInput").value = "";
+      if (promptInputEl) promptInputEl.style.height = "auto";
       sendQuery(val, "answer");
     }
   }
@@ -1717,43 +1979,542 @@ $("signoutBtn").onclick = async () => {
   render();
 };
 
-$("settingsToggle").onclick = () => {
-  $("settingsBox").hidden = !$("settingsBox").hidden;
-};
+// --- MASTER COMMAND CENTRE NAVIGATION & WORKSPACE HANDLERS ---
+function escapeHtml(str) {
+  return String(str || "").replace(/[&<>"']/g, (m) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[m]);
+}
 
-$("muteToggle").onchange = (e) => {
-  isMuted = e.target.checked;
-  if (isMuted && window.speechSynthesis) window.speechSynthesis.cancel();
-};
+function switchTab(tabName) {
+  const btn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+  if (btn) btn.click();
+}
 
-$("avatarRenderMode").onchange = (e) => {
-  applyRenderMode(e.target.value);
-  chrome.storage.local.set({ avatarRenderMode: e.target.value });
-};
+// Tab Switching
+document.querySelectorAll(".tab-btn").forEach((btn) => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    const targetTab = btn.getAttribute("data-tab");
+    if ($("tabChat")) $("tabChat").hidden = targetTab !== "chat";
+    if ($("tabPage")) $("tabPage").hidden = targetTab !== "page";
+    if ($("tabTasks")) $("tabTasks").hidden = targetTab !== "tasks";
+    if ($("tabModels")) $("tabModels").hidden = targetTab !== "models";
+    if ($("tabRig")) $("tabRig").hidden = targetTab !== "rig";
 
-$("sizeSelect").onchange = (e) => {
-  const stage = $("characterStage");
-  if (!stage) return;
-  if (e.target.value === "hidden") {
-    stage.style.display = "none";
-  } else if (e.target.value === "compact") {
-    stage.style.display = "flex";
-    $("characterSvg").style.width = "90px";
-    $("characterSvg").style.height = "100px";
-    if ($("buddy3dImg")) {
-      $("buddy3dImg").style.width = "90px";
-      $("buddy3dImg").style.height = "90px";
+    if (targetTab === "page") loadPageContextSummary();
+    if (targetTab === "tasks") {
+      loadMemories();
+      loadTasksHistory();
     }
-  } else {
-    stage.style.display = "flex";
-    $("characterSvg").style.width = "130px";
-    $("characterSvg").style.height = "140px";
-    if ($("buddy3dImg")) {
-      $("buddy3dImg").style.width = "120px";
-      $("buddy3dImg").style.height = "120px";
+    if (targetTab === "models") loadModelHubStatus();
+  };
+});
+
+// Clear Chat History Button
+if ($("clearChatBtn")) {
+  $("clearChatBtn").onclick = () => {
+    conversationBuffer.length = 0;
+    if ($("historyBox")) {
+      $("historyBox").innerHTML =
+        '<div class="msg-bubble msg-buddy">Conversation cleared. What can I help you with?</div>';
     }
+    $("statusText").textContent = "Conversation cleared.";
+  };
+}
+
+// Page Context Summary
+async function loadPageContextSummary() {
+  const summaryBox = $("pageSummaryBox");
+  if (!summaryBox) return;
+  summaryBox.textContent = "Scanning active tab…";
+  try {
+    const snap = await chrome.runtime.sendMessage({ type: "GET_SNAPSHOT" });
+    if (snap?.ok && snap.snapshot) {
+      const s = snap.snapshot;
+      summaryBox.innerHTML = `
+        <div style="font-weight: 700; color: var(--text); margin-bottom: 2px;">${escapeHtml(s.title || "Current Webpage")}</div>
+        <div style="font-size: 10px; color: var(--muted); margin-bottom: 5px; word-break: break-all;">${escapeHtml(s.url || "")}</div>
+        <div style="display: flex; gap: 8px; font-size: 10px; color: var(--accent);">
+          <span>📝 Forms: ${s.forms?.length || 0}</span>
+          <span>🔘 Controls: ${s.controls?.length || 0}</span>
+          <span>📑 Headings: ${s.headings?.length || 0}</span>
+        </div>
+      `;
+    } else {
+      summaryBox.textContent = "No page context found. Make sure an active website tab is focused.";
+    }
+  } catch {
+    summaryBox.textContent = "Page context could not be read.";
   }
-};
+}
+
+if ($("refreshPageContextBtn")) $("refreshPageContextBtn").onclick = loadPageContextSummary;
+
+if ($("pageExplainActionBtn")) {
+  $("pageExplainActionBtn").onclick = () => {
+    switchTab("chat");
+    $("promptInput").value = "Explain what this page is about simply and summarize key points.";
+    askQuestion("explain_page");
+  };
+}
+
+if ($("pageCheckErrorsActionBtn")) {
+  $("pageCheckErrorsActionBtn").onclick = () => {
+    switchTab("chat");
+    $("promptInput").value = "Are there any validation errors or missing required fields?";
+    askQuestion("classify");
+  };
+}
+
+if ($("pageExtractTableActionBtn")) {
+  $("pageExtractTableActionBtn").onclick = () => {
+    switchTab("chat");
+    startMultiStepWorkflow("Find tables on this page, extract all rows and columns, copy list to clipboard");
+  };
+}
+
+if ($("pageScrollDownBtn")) {
+  $("pageScrollDownBtn").onclick = async () => {
+    await chrome.runtime.sendMessage({
+      type: "EXECUTE_ACTION",
+      action: "scroll_down",
+      selector: "window",
+    });
+    setRigEmotion("working", "Scrolling");
+    setTimeout(() => setRigEmotion("idle", "Idle"), 800);
+  };
+}
+
+if ($("pageScrollUpBtn")) {
+  $("pageScrollUpBtn").onclick = async () => {
+    await chrome.runtime.sendMessage({
+      type: "EXECUTE_ACTION",
+      action: "scroll_up",
+      selector: "window",
+    });
+    setRigEmotion("working", "Scrolling");
+    setTimeout(() => setRigEmotion("idle", "Idle"), 800);
+  };
+}
+
+// Preset Workflows
+if ($("runMeeshoWorkflowBtn")) {
+  $("runMeeshoWorkflowBtn").onclick = () => {
+    switchTab("chat");
+    startMultiStepWorkflow(
+      "Open Meesho Supplier Panel, go to Orders, open today's orders, find pending orders, copy their order IDs, and prepare a list of them",
+    );
+  };
+}
+
+if ($("runReconcileWorkflowBtn")) {
+  $("runReconcileWorkflowBtn").onclick = () => {
+    switchTab("chat");
+    startMultiStepWorkflow(
+      "Open seller orders portal, collect today's order numbers and pricing, compare against spreadsheet, identify missing orders, calculate differences, and prepare a non-destructive audit report",
+    );
+  };
+}
+
+if ($("runResearchWorkflowBtn")) {
+  $("runResearchWorkflowBtn").onclick = () => {
+    switchTab("chat");
+    startMultiStepWorkflow(
+      "Conduct multi-source research across web sources, categorize verified consensus versus conflicting evidence, and generate structured cited report",
+    );
+  };
+}
+
+if ($("runExtractTableWorkflowBtn")) {
+  $("runExtractTableWorkflowBtn").onclick = () => {
+    switchTab("chat");
+    startMultiStepWorkflow("Find tables on this page, extract all rows and columns, copy list to clipboard");
+  };
+}
+
+if ($("resumeSavedTaskBtn")) {
+  $("resumeSavedTaskBtn").onclick = async () => {
+    const { savedCheckpoint } = await chrome.storage.local.get("savedCheckpoint");
+    if (savedCheckpoint) {
+      const card = $("savedCheckpointCard") || $("savedTaskCheckpointCard");
+      if (card) card.hidden = true;
+      switchTab("chat");
+      appendHistory("buddy", `▶️ Resuming task: "${savedCheckpoint.title}". Continuing from step ${savedCheckpoint.currentStepIndex + 1} of ${savedCheckpoint.totalSteps}.`);
+      setRigEmotion("working", "Resuming");
+    }
+  };
+}
+
+if ($("discardSavedTaskBtn")) {
+  $("discardSavedTaskBtn").onclick = async () => {
+    await chrome.storage.local.remove("savedCheckpoint");
+    const card = $("savedCheckpointCard") || $("savedTaskCheckpointCard");
+    if (card) card.hidden = true;
+  };
+}
+
+// Memory Handlers
+async function loadMemories() {
+  const list = $("memoriesList");
+  if (!list) return;
+  list.innerHTML = '<div style="color: var(--muted); font-size: 10px;">Loading memories…</div>';
+  try {
+    const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
+    const base = lastBase || DEFAULT_BASE;
+    const headers = {};
+    if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
+    const res = await fetch(`${base}/api/public/extension/memories`, { headers });
+    const data = await res.json();
+    if (data?.ok && data.memories && data.memories.length > 0) {
+      list.innerHTML = data.memories
+        .map(
+          (m) => `
+        <div class="item-row">
+          <div>
+            <div style="font-weight: 600; color: var(--text);">${escapeHtml(m.key)}</div>
+            <div style="font-size: 10px; color: var(--muted);">${escapeHtml(m.value)}</div>
+          </div>
+          <button class="ghost delete-mem-btn" data-key="${escapeHtml(m.key)}" style="padding: 2px 5px; font-size: 10px; color: var(--destructive);">🗑️</button>
+        </div>
+      `,
+        )
+        .join("");
+
+      list.querySelectorAll(".delete-mem-btn").forEach((btn) => {
+        btn.onclick = async () => {
+          const key = btn.getAttribute("data-key");
+          await deleteMemory(key);
+        };
+      });
+    } else {
+      list.innerHTML =
+        '<div style="color: var(--muted); font-size: 10px;">No custom memories saved yet. Click Add to save preferences.</div>';
+    }
+  } catch {
+    list.innerHTML = '<div style="color: var(--muted); font-size: 10px;">Could not load memories.</div>';
+  }
+}
+
+async function deleteMemory(key) {
+  try {
+    const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
+    const base = lastBase || DEFAULT_BASE;
+    const headers = {};
+    if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
+    await fetch(`${base}/api/public/extension/memories?key=${encodeURIComponent(key)}`, {
+      method: "DELETE",
+      headers,
+    });
+    loadMemories();
+  } catch (err) {
+    console.error("deleteMemory error", err);
+  }
+}
+
+if ($("addMemoryToggleBtn")) {
+  $("addMemoryToggleBtn").onclick = () => {
+    $("addMemoryForm").hidden = !$("addMemoryForm").hidden;
+  };
+}
+
+if ($("cancelMemoryBtn")) {
+  $("cancelMemoryBtn").onclick = () => {
+    $("addMemoryForm").hidden = true;
+    $("memKeyInput").value = "";
+    $("memValInput").value = "";
+  };
+}
+
+if ($("saveMemoryBtn")) {
+  $("saveMemoryBtn").onclick = async () => {
+    const key = $("memKeyInput").value.trim();
+    const value = $("memValInput").value.trim();
+    if (!key || !value) return;
+
+    try {
+      const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
+      const base = lastBase || DEFAULT_BASE;
+      const headers = { "Content-Type": "application/json" };
+      if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
+      const res = await fetch(`${base}/api/public/extension/memories`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ key, value, kind: "preference" }),
+      });
+      const data = await res.json();
+      if (data?.ok) {
+        $("addMemoryForm").hidden = true;
+        $("memKeyInput").value = "";
+        $("memValInput").value = "";
+        loadMemories();
+      } else {
+        alert(data?.message || data?.error || "Failed to save memory");
+      }
+    } catch {
+      alert("Error saving memory");
+    }
+  };
+}
+
+// Tasks History Handlers
+async function loadTasksHistory() {
+  const list = $("tasksHistoryList");
+  if (!list) return;
+  list.innerHTML = '<div style="color: var(--muted); font-size: 10px;">Loading task history…</div>';
+  try {
+    const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
+    const base = lastBase || DEFAULT_BASE;
+    const headers = {};
+    if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
+    const res = await fetch(`${base}/api/public/extension/tasks`, { headers });
+    const data = await res.json();
+    if (data?.ok && data.tasks && data.tasks.length > 0) {
+      list.innerHTML = data.tasks
+        .map(
+          (t) => `
+        <div class="item-row">
+          <div style="overflow: hidden; max-width: 80%;">
+            <div style="font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(t.title)}</div>
+            <div style="font-size: 10px; color: var(--muted);">${t.created_at ? new Date(t.created_at).toLocaleTimeString() : ""} · ${escapeHtml(t.buddy_slug || t.buddySlug || "friendly")}</div>
+          </div>
+          <span class="step-status-tag ${t.status}">${escapeHtml(t.status)}</span>
+        </div>
+      `,
+        )
+        .join("");
+    } else {
+      list.innerHTML = '<div style="color: var(--muted); font-size: 10px;">No recent tasks executed yet.</div>';
+    }
+  } catch {
+    list.innerHTML = '<div style="color: var(--muted); font-size: 10px;">Could not load task history.</div>';
+  }
+  checkSavedCheckpoint();
+}
+
+async function checkSavedCheckpoint() {
+  try {
+    const { savedCheckpoint } = await chrome.storage.local.get("savedCheckpoint");
+    const card = $("savedCheckpointCard") || $("savedTaskCheckpointCard");
+    if (savedCheckpoint && savedCheckpoint.status !== "completed") {
+      if (card) {
+        card.hidden = false;
+        if ($("savedTaskCheckpointDesc")) {
+          $("savedTaskCheckpointDesc").textContent = `Task "${savedCheckpoint.title}" is paused at step ${savedCheckpoint.currentStepIndex + 1} of ${savedCheckpoint.totalSteps}.`;
+        }
+      }
+    } else {
+      if (card) card.hidden = true;
+    }
+  } catch {
+    // Non-fatal
+  }
+}
+
+if ($("refreshTasksHistoryBtn")) $("refreshTasksHistoryBtn").onclick = loadTasksHistory;
+
+// Models & Providers Handlers
+async function loadModelHubStatus() {
+  const list = $("providerStatusList");
+  if (!list) return;
+  list.innerHTML = '<div style="color: var(--muted); font-size: 10px;">Checking provider statuses…</div>';
+  try {
+    const { lastBase, preferredModel } = await chrome.storage.local.get(["lastBase", "preferredModel"]);
+    const base = lastBase || DEFAULT_BASE;
+    const res = await fetch(`${base}/api/public/extension/models`);
+    const data = await res.json();
+    if (data?.ok) {
+      if (data.providers && data.providers.length > 0) {
+        list.innerHTML = data.providers
+          .map(
+            (p) => `
+          <div class="item-row">
+            <div>
+              <span style="font-weight: 600; color: var(--text);">${escapeHtml(p.name)}</span>
+              <div style="font-size: 9px; color: var(--muted);">${escapeHtml(p.rateLimitNote || "")}</div>
+            </div>
+            <span class="step-status-tag ${p.configured ? "completed" : "pending"}">${p.configured ? "Available" : p.freeTier ? "Free Tier" : "Config Required"}</span>
+          </div>
+        `,
+          )
+          .join("");
+      }
+
+      if (data.models && $("modelSelector")) {
+        const currentVal = preferredModel || $("modelSelector").value || "auto";
+        const optionsHtml = [
+          `<option value="auto" ${currentVal === "auto" ? "selected" : ""}>Auto (Intelligent Routing)</option>`,
+          ...data.models.map(
+            (m) =>
+              `<option value="${m.id}" ${m.id === currentVal ? "selected" : ""}>${escapeHtml(m.name)} (${m.tier})</option>`,
+          ),
+        ].join("");
+        $("modelSelector").innerHTML = optionsHtml;
+
+        if ($("headerModelLabel")) {
+          const selectedOption = $("modelSelector").options[$("modelSelector").selectedIndex];
+          $("headerModelLabel").textContent =
+            selectedOption && currentVal !== "auto"
+              ? selectedOption.text.split(" (")[0]
+              : "Auto Model";
+        }
+      }
+
+      if ($("activeModelRecommendation")) {
+        const recText =
+          currentActiveMode === "research"
+            ? "Gemini 2.5 Flash / Pro recommended for high-accuracy claim verification and web synthesis."
+            : currentActiveMode === "file"
+              ? "Gemini 2.5 Pro recommended for multi-tab spreadsheets and large dataset reasoning."
+              : "Gemini 2.5 Flash recommended for fast DOM grounding, pointing animations, and browser tasks.";
+        $("activeModelRecommendation").textContent = recText;
+      }
+    }
+  } catch {
+    list.innerHTML = '<div style="color: var(--muted); font-size: 10px;">Could not check provider status.</div>';
+  }
+}
+
+if ($("modelSelector")) {
+  $("modelSelector").onchange = (e) => {
+    const val = e.target.value;
+    chrome.storage.local.set({ preferredModel: val });
+    if ($("headerModelLabel")) {
+      const selectedOption = $("modelSelector").options[$("modelSelector").selectedIndex];
+      $("headerModelLabel").textContent =
+        selectedOption && val !== "auto" ? selectedOption.text.split(" (")[0] : "Auto Model";
+    }
+  };
+}
+
+if ($("headerModelPill")) {
+  $("headerModelPill").onclick = () => {
+    switchTab("models");
+  };
+}
+
+if ($("toggleModelComparisonBtn")) {
+  $("toggleModelComparisonBtn").onclick = () => {
+    const comp = $("modelComparisonView");
+    if (comp) {
+      comp.hidden = !comp.hidden;
+      $("toggleModelComparisonBtn").textContent = comp.hidden
+        ? "Show Model Comparison"
+        : "Hide Model Comparison";
+    }
+  };
+}
+
+if ($("testActiveProviderBtn")) {
+  $("testActiveProviderBtn").onclick = async () => {
+    const pingBox = $("pingTestResult");
+    if (pingBox) {
+      pingBox.hidden = false;
+      pingBox.textContent = "Pinging Google Gemini API…";
+    }
+    try {
+      const { lastBase } = await chrome.storage.local.get("lastBase");
+      const base = lastBase || DEFAULT_BASE;
+      const res = await fetch(`${base}/api/public/extension/test-model`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "gemini" }),
+      });
+      const data = await res.json();
+      if (pingBox) {
+        if (data?.ok) {
+          pingBox.style.color = "var(--success)";
+          pingBox.textContent = `⚡ Gemini active: ${data.latencyMs}ms latency · ${data.message}`;
+        } else {
+          pingBox.style.color = "var(--warning)";
+          pingBox.textContent = `Notice: ${data.message || "Provider verification completed"}`;
+        }
+      }
+    } catch {
+      if (pingBox) {
+        pingBox.style.color = "var(--warning)";
+        pingBox.textContent = "Ping check unavailable in offline mode.";
+      }
+    }
+  };
+}
+
+// Rig Animations & Audio Handlers
+if ($("testArmWaveBtn")) {
+  $("testArmWaveBtn").onclick = () => {
+    setRigEmotion("waving", "Hello!");
+    const arm = $("rigArmRight");
+    if (arm) {
+      arm.style.transform = "rotate(-40deg) translateY(-8px)";
+      setTimeout(() => {
+        arm.style.transform = "rotate(-20deg) translateY(-4px)";
+      }, 300);
+      setTimeout(() => {
+        arm.style.transform = "rotate(-40deg) translateY(-8px)";
+      }, 600);
+      setTimeout(() => {
+        arm.style.transform = "none";
+        setRigEmotion("idle", "Idle");
+      }, 1000);
+    }
+  };
+}
+
+if ($("testMouthTalkBtn")) {
+  $("testMouthTalkBtn").onclick = () => {
+    setRigEmotion("speaking", "Talking");
+    startSpeechMouthAnimation();
+    setTimeout(() => {
+      stopSpeechMouthAnimation();
+      setRigEmotion("idle", "Idle");
+    }, 2500);
+  };
+}
+
+if ($("muteToggle")) {
+  $("muteToggle").onchange = (e) => {
+    isMuted = e.target.checked;
+    if (isMuted && window.speechSynthesis) window.speechSynthesis.cancel();
+  };
+}
+
+if ($("avatarRenderMode")) {
+  $("avatarRenderMode").onchange = (e) => {
+    applyRenderMode(e.target.value);
+    chrome.storage.local.set({ avatarRenderMode: e.target.value });
+  };
+}
+
+if ($("sizeSelect")) {
+  $("sizeSelect").onchange = (e) => {
+    const stage = $("characterStage");
+    if (!stage) return;
+    if (e.target.value === "hidden") {
+      stage.style.display = "none";
+    } else if (e.target.value === "compact") {
+      stage.style.display = "flex";
+      $("characterSvg").style.width = "90px";
+      $("characterSvg").style.height = "100px";
+      if ($("buddy3dImg")) {
+        $("buddy3dImg").style.width = "90px";
+        $("buddy3dImg").style.height = "90px";
+      }
+    } else {
+      stage.style.display = "flex";
+      $("characterSvg").style.width = "120px";
+      $("characterSvg").style.height = "120px";
+      if ($("buddy3dImg")) {
+        $("buddy3dImg").style.width = "110px";
+        $("buddy3dImg").style.height = "110px";
+      }
+    }
+  };
+}
 
 // Listen for tab switch and session changes
 chrome.runtime.onMessage.addListener((msg) => {

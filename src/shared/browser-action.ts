@@ -298,7 +298,9 @@ export function generateMultiActionPlan(
       targetWebsite = urlMatch[0];
       try {
         targetOrigin = new URL(targetWebsite).origin;
-      } catch {}
+      } catch {
+        // Ignore invalid URL
+      }
     }
   }
 
@@ -414,12 +416,12 @@ export function generateMultiActionPlan(
     // Split on numbered steps (1. 2. 3.), bullet points, conjunctions ("then", "and then", "after that"), or semicolons/commas/and
     const segments = trimmed
       .split(
-        /(?:\r?\n|\s*(?:then|and then|after that|next|finally)\s*|[;]\s*|,\s*(?:and\s+)?|\s+and\s+(?=(?:go|open|click|press|select|find|copy|type|fill|submit|search|verify|extract|purchase|delete|confirm)\b)|\s*\d+[\.\)]\s+)/i,
+        /(?:\r?\n|\s*(?:then|and then|after that|next|finally)\s*|[;]\s*|,\s*(?:and\s+)?|\s+and\s+(?=(?:go|open|click|press|select|find|copy|type|fill|submit|search|verify|extract|purchase|delete|confirm)\b)|\s*\d+[.)]\s+)/i,
       )
       .map((s) =>
         s
           .trim()
-          .replace(/^[\d+.*)\-]\s*/, "")
+          .replace(/^[\d+.*)-]\s*/, "")
           .replace(/^and\s+/i, ""),
       )
       .filter((s) => s.length > 2);

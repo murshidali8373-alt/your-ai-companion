@@ -29,7 +29,18 @@ const elementSchema = z.object({
 const bodySchema = z.object({
   question: z.string().min(1).max(2000),
   intent: z
-    .enum(["explain_page", "locate_element", "answer", "plan", "summarize", "classify"])
+    .enum([
+      "explain_page",
+      "locate_element",
+      "answer",
+      "plan",
+      "summarize",
+      "classify",
+      "deep_research",
+      "browser_action",
+      "file_analysis",
+      "general",
+    ])
     .default("answer"),
   snapshot: z
     .object({

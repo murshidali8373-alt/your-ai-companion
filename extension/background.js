@@ -57,7 +57,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     return true;
   }
   if (msg.type === "ASK") {
-    ask(msg.question, msg.intent, msg.history, msg.buddySlug, msg.customBuddyId).then(reply, (e) =>
+    ask(msg.question, msg.intent, msg.history, msg.buddySlug, msg.customBuddyId, msg.preferredModel).then(reply, (e) =>
       reply({ error: String(e?.message || e) }),
     );
     return true;
@@ -143,8 +143,24 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     );
     return true;
   }
-  if (msg.type === "GET_PAGE_SNAPSHOT") {
-    getPageSnapshot().then(reply, (e) => reply({ ok: false, error: String(e?.message || e) }));
+  if (msg.type === "SAVE_TASK_CHECKPOINT") {
+    chrome.storage.local
+      .set({ savedCheckpoint: msg.checkpoint })
+      .then(() => reply({ ok: true }))
+      .catch((err) => reply({ ok: false, error: String(err) }));
+    return true;
+  }
+  if (msg.type === "GET_TASK_CHECKPOINT") {
+    chrome.storage.local
+      .get("savedCheckpoint")
+      .then((data) => reply({ ok: true, checkpoint: data.savedCheckpoint || null }))
+      .catch((err) => reply({ ok: false, error: String(err) }));
+    return true;
+  }
+  if (msg.type === "GET_SNAPSHOT" || msg.type === "GET_PAGE_SNAPSHOT") {
+    getSnapshotForActiveTab().then(reply, (e) =>
+      reply({ ok: false, error: String(e?.message || e) }),
+    );
     return true;
   }
   return false;
@@ -212,6 +228,22 @@ async function activeTab() {
   return null;
 }
 
+async function getSnapshotForActiveTab() {
+  const tab = await activeTab();
+  if (!tab?.id || !tab.url || RESTRICTED.test(tab.url)) {
+    return { ok: false, snapshot: null, error: "Restricted or inactive page" };
+  }
+  try {
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["snapshot.js"],
+    });
+    return { ok: true, snapshot: res?.result ?? null };
+  } catch (err) {
+    return { ok: false, snapshot: null, error: String(err?.message || err) };
+  }
+}
+
 function getFormattedHistory(incomingHistory) {
   if (Array.isArray(incomingHistory) && incomingHistory.length > 0) {
     return incomingHistory.slice(-6);
@@ -265,7 +297,7 @@ async function getPageSnapshot() {
   }
 }
 
-async function ask(question, intent, history, buddySlug, customBuddyId) {
+async function ask(question, intent, history, buddySlug, customBuddyId, preferredModel) {
   const { session } = await chrome.storage.local.get("session");
   const { lastBase } = await chrome.storage.local.get("lastBase");
   const apiBase = session?.apiBase || lastBase || "http://localhost:3000";
@@ -301,6 +333,7 @@ async function ask(question, intent, history, buddySlug, customBuddyId) {
     history: formattedHistory.length > 0 ? formattedHistory : undefined,
     buddySlug: buddySlug || undefined,
     customBuddyId: customBuddyId || undefined,
+    preferredModel: preferredModel || undefined,
   });
 
   try {

@@ -3,166 +3,259 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Buddy — Voice & Visual Companion</title>
+    <title>AI Buddy — Master Command Centre</title>
     <style>
       :root {
-        --bg: #0b0f15;
-        --card-bg: #141b24;
-        --card-hover: #1c2633;
-        --border: #283545;
-        --accent: #14b8a6;
-        --accent-hover: #0d9488;
-        --accent-glow: rgba(20, 184, 166, 0.25);
-        --text: #f1f5f9;
-        --muted: #94a3b8;
+        --bg: #090d16;
+        --surface: #101625;
+        --surface-card: #151d30;
+        --surface-hover: #1b2640;
+        --surface-active: #222f4e;
+        --border: rgba(255, 255, 255, 0.08);
+        --border-hover: rgba(255, 255, 255, 0.16);
+        --border-accent: rgba(99, 102, 241, 0.35);
+        --primary: #6366f1;
+        --accent: #6366f1;
+        --accent-hover: #4f46e5;
+        --accent-glow: rgba(99, 102, 241, 0.28);
+        --accent-cyan: #06b6d4;
+        --accent-violet: #8b5cf6;
+        --accent-teal: #14b8a6;
+        --text: #f8fafc;
+        --text-muted: #94a3b8;
+        --text-dim: #64748b;
         --destructive: #ef4444;
         --warning: #f59e0b;
         --success: #10b981;
-
-        /* Specialist outfit tokens */
-        --outfit-color: #0d9488;
-        --outfit-name: "teal";
+        --radius-sm: 6px;
+        --radius-md: 10px;
+        --radius-lg: 14px;
+        --outfit-color: #6366f1;
+        --outfit-name: "indigo";
       }
+
       * {
         box-sizing: border-box;
         margin: 0;
         padding: 0;
       }
+
       body {
         width: 100%;
         min-height: 100vh;
-        font:
-          13px/1.5 system-ui,
-          -apple-system,
-          BlinkMacSystemFont,
-          "Segoe UI",
-          Roboto,
-          sans-serif;
+        font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         background: var(--bg);
         color: var(--text);
         display: flex;
         flex-direction: column;
         overflow-x: hidden;
       }
+
+      /* Scrollbar */
+      ::-webkit-scrollbar {
+        width: 5px;
+        height: 5px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.12);
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 255, 255, 0.22);
+      }
+
       .panel-wrap {
         display: flex;
         flex-direction: column;
         flex: 1;
-        padding: 12px;
+        padding: 10px 12px;
         gap: 10px;
+        max-width: 100%;
       }
 
+      /* ================= TOP HEADER ================= */
       header {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding-bottom: 8px;
+        padding: 4px 2px 8px;
         border-bottom: 1px solid var(--border);
       }
-      .brand {
+      .brand-lockup {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        text-decoration: none;
+      }
+      .brand-icon-box {
+        width: 24px;
+        height: 24px;
+        border-radius: var(--radius-sm);
+        background: linear-gradient(135deg, #6366f1, #06b6d4);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 0 10px var(--accent-glow);
+      }
+      .brand-title-wrap {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.1;
+      }
+      .brand-name {
+        font-weight: 700;
+        font-size: 13px;
+        color: var(--text);
+        letter-spacing: -0.01em;
+      }
+      .brand-sub {
+        font-size: 9px;
+        color: var(--text-dim);
+        font-weight: 500;
+        letter-spacing: 0.02em;
+      }
+      .header-actions {
         display: flex;
         align-items: center;
         gap: 6px;
-        font-weight: 700;
-        font-size: 13px;
-        letter-spacing: -0.01em;
+      }
+      .header-model-pill {
+        font-size: 10px;
+        padding: 2px 7px;
+        border-radius: var(--radius-sm);
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid var(--border);
+        color: var(--accent-cyan);
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-weight: 600;
+        transition: all 0.15s ease;
+      }
+      .header-model-pill:hover {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: var(--border-accent);
       }
       .status-badge {
         font-size: 10px;
         text-transform: uppercase;
-        letter-spacing: 0.05em;
+        letter-spacing: 0.04em;
         padding: 2px 7px;
-        border-radius: 12px;
-        background: rgba(20, 184, 166, 0.15);
+        border-radius: var(--radius-sm);
+        background: rgba(99, 102, 241, 0.12);
         color: var(--accent);
-        border: 1px solid rgba(20, 184, 166, 0.3);
+        border: 1px solid var(--border-accent);
         font-weight: 600;
         display: inline-flex;
         align-items: center;
         gap: 4px;
+        transition: all 0.2s ease;
       }
       .status-badge.listening {
         background: rgba(239, 68, 68, 0.2);
         color: var(--destructive);
         border-color: var(--destructive);
-        animation: pulse 1s infinite;
       }
       .status-badge.thinking {
-        background: rgba(245, 158, 11, 0.2);
+        background: rgba(245, 158, 11, 0.15);
         color: var(--warning);
         border-color: var(--warning);
       }
-      .status-badge.speaking {
-        background: rgba(56, 189, 248, 0.2);
-        color: #38bdf8;
-        border-color: #38bdf8;
-      }
-      .status-badge.pointing {
-        background: rgba(168, 85, 247, 0.2);
-        color: #c084fc;
-        border-color: #a855f7;
+      .status-badge.working {
+        background: rgba(6, 182, 212, 0.15);
+        color: var(--accent-cyan);
+        border-color: var(--accent-cyan);
       }
 
-      /* --- ALL 16 BUDDIES SELECTOR CAROUSEL --- */
+      /* ================= SEGMENTED NAVIGATION TABS ================= */
+      .command-tabs {
+        display: flex;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 3px;
+        gap: 2px;
+      }
+      .tab-btn {
+        flex: 1;
+        padding: 5px 2px;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-muted);
+        background: transparent;
+        border: none;
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+        transition: all 0.15s ease;
+        text-align: center;
+        white-space: nowrap;
+      }
+      .tab-btn:hover {
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.04);
+      }
+      .tab-btn.active {
+        background: var(--surface-card);
+        color: var(--text);
+        border: 1px solid var(--border-hover);
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+      }
+
+      /* ================= SPECIALIST BUDDY CAROUSEL ================= */
       .buddy-carousel-container {
         display: flex;
         flex-direction: column;
-        gap: 4px;
+        gap: 6px;
       }
       .buddy-carousel-header {
         display: flex;
-        justify-content: space-between;
         align-items: center;
+        justify-content: space-between;
         font-size: 11px;
-        color: var(--muted);
         font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
+        color: var(--text-muted);
       }
       .buddy-carousel {
         display: flex;
         gap: 6px;
         overflow-x: auto;
-        padding: 4px 1px 6px 1px;
+        padding: 2px 1px 6px;
         scrollbar-width: thin;
-        scrollbar-color: var(--border) transparent;
-      }
-      .buddy-carousel::-webkit-scrollbar {
-        height: 4px;
-      }
-      .buddy-carousel::-webkit-scrollbar-thumb {
-        background: var(--border);
-        border-radius: 4px;
       }
       .buddy-card {
-        flex: 0 0 54px;
+        flex: 0 0 auto;
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 2px;
-        padding: 4px 2px;
-        border-radius: 8px;
+        gap: 4px;
+        background: var(--surface);
         border: 1px solid var(--border);
-        background: var(--card-bg);
+        border-radius: var(--radius-md);
+        padding: 6px 6px;
         cursor: pointer;
-        transition: all 0.15s ease;
-        user-select: none;
+        transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+        min-width: 58px;
+        position: relative;
       }
       .buddy-card:hover {
-        background: var(--card-hover);
-        border-color: var(--accent);
+        background: var(--surface-hover);
+        border-color: var(--border-accent);
         transform: translateY(-1px);
       }
       .buddy-card.active {
+        background: rgba(99, 102, 241, 0.14);
         border-color: var(--accent);
-        background: rgba(20, 184, 166, 0.12);
         box-shadow: 0 0 0 1px var(--accent);
       }
       .buddy-thumb {
-        width: 32px;
-        height: 32px;
+        width: 30px;
+        height: 30px;
         border-radius: 50%;
-        background: #0f172a;
+        background: #0b0f19;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -183,17 +276,14 @@
         max-width: 50px;
         color: var(--text);
       }
-      .buddy-card.custom-badge {
-        position: relative;
-      }
       .custom-dot {
         position: absolute;
-        top: 2px;
-        right: 2px;
+        top: 3px;
+        right: 3px;
         width: 6px;
         height: 6px;
         border-radius: 50%;
-        background: #f59e0b;
+        background: var(--warning);
       }
 
       /* Active Persona Banner */
@@ -201,9 +291,9 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        background: var(--card-bg);
+        background: var(--surface);
         border: 1px solid var(--border);
-        border-radius: 8px;
+        border-radius: var(--radius-md);
         padding: 6px 10px;
         gap: 8px;
       }
@@ -214,236 +304,343 @@
       }
       .persona-title {
         font-weight: 700;
-        font-size: 12px;
+        font-size: 11px;
         color: var(--text);
         display: flex;
         align-items: center;
-        gap: 5px;
+        gap: 6px;
+      }
+      .persona-tag {
+        font-size: 9px;
+        color: var(--accent-cyan);
+        font-weight: 600;
       }
       .persona-tagline {
-        font-size: 11px;
-        color: var(--muted);
+        font-size: 10px;
+        color: var(--text-muted);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
-      .persona-tag {
-        font-size: 9px;
-        padding: 1px 5px;
-        border-radius: 4px;
-        background: rgba(255, 255, 255, 0.06);
-        color: var(--muted);
-      }
 
-      /* --- CHARACTER STAGE --- */
-      .character-stage {
+      /* ================= TAB PANELS ================= */
+      .tab-panel {
         display: flex;
         flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        padding: 4px 0;
-        position: relative;
-        cursor: pointer;
-        user-select: none;
-        min-height: 140px;
-      }
-      .character-3d-artwork {
-        width: 120px;
-        height: 120px;
-        object-fit: contain;
-        filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.45));
-        transition: transform 0.2s ease;
-      }
-      .character-rig-svg {
-        width: 130px;
-        height: 140px;
-        overflow: visible;
-        filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.4));
-        transition: transform 0.2s ease;
-      }
-      .character-stage:hover .character-rig-svg,
-      .character-stage:hover .character-3d-artwork {
-        transform: scale(1.03);
-      }
-      .character-stage:active .character-rig-svg,
-      .character-stage:active .character-3d-artwork {
-        transform: scale(0.97);
-      }
-
-      #rigArmLeft,
-      #rigArmRight {
-        transition: transform 0.4s cubic-bezier(0.2, 1.3, 0.4, 1);
-        transform-box: view-box;
-      }
-
-      /* Chips */
-      .quick-chips {
-        display: flex;
-        gap: 5px;
-        flex-wrap: wrap;
-      }
-      .chip {
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid var(--border);
-        color: var(--muted);
-        font-size: 11px;
-        padding: 3px 8px;
-        border-radius: 12px;
-        cursor: pointer;
-        transition: all 0.15s ease;
-        white-space: nowrap;
-      }
-      .chip:hover {
-        background: rgba(255, 255, 255, 0.09);
-        color: var(--text);
-        border-color: var(--accent);
-      }
-
-      /* Buttons */
-      button {
-        border: 0;
-        border-radius: 8px;
-        padding: 7px 12px;
-        font: inherit;
-        cursor: pointer;
-        background: var(--accent);
-        color: #04201d;
-        font-weight: 600;
-        transition:
-          background 0.15s ease,
-          opacity 0.15s ease;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 5px;
-      }
-      button:hover:not(:disabled) {
-        background: var(--accent-hover);
-      }
-      button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-      button.ghost {
-        background: transparent;
-        color: var(--muted);
-        border: 1px solid var(--border);
-        font-weight: 500;
-        font-size: 11px;
-      }
-      button.ghost:hover:not(:disabled) {
-        background: rgba(255, 255, 255, 0.05);
-        color: var(--text);
-        border-color: #4b5563;
-      }
-      button.voice-btn {
-        background: var(--card-bg);
-        color: var(--text);
-        border: 1px solid var(--border);
-        padding: 7px 12px;
-      }
-      button.voice-btn.active {
-        background: var(--destructive);
-        color: #fff;
-        border-color: var(--destructive);
-        animation: pulse 1s infinite;
-      }
-
-      @keyframes pulse {
-        0%,
-        100% {
-          opacity: 1;
-          transform: scale(1);
-        }
-        50% {
-          opacity: 0.8;
-          transform: scale(1.02);
-        }
-      }
-
-      /* Content Area */
-      .content-area {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
+        gap: 10px;
         flex: 1;
-        overflow-y: auto;
       }
-      .history-box {
-        max-height: 140px;
-        overflow-y: auto;
+      .tab-panel[hidden] {
+        display: none !important;
+      }
+
+      /* ================= INTELLIGENT GREETING & QUICK ACTIONS ================= */
+      .greeting-card {
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(6, 182, 212, 0.04) 100%);
+        border: 1px solid var(--border-accent);
+        border-radius: var(--radius-lg);
+        padding: 10px 12px;
         display: flex;
         flex-direction: column;
         gap: 6px;
-        background: rgba(0, 0, 0, 0.2);
+      }
+      .greeting-title {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--text);
+        letter-spacing: -0.01em;
+      }
+      .greeting-context {
+        font-size: 11px;
+        color: var(--text-muted);
+        line-height: 1.4;
+      }
+      .quick-actions-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+        margin-top: 4px;
+      }
+      .qa-btn {
+        background: var(--surface);
         border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 8px;
+        border-radius: var(--radius-md);
+        padding: 7px 8px;
+        text-align: left;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        transition: all 0.15s ease;
+      }
+      .qa-btn:hover {
+        background: var(--surface-hover);
+        border-color: var(--border-accent);
+        transform: translateY(-1px);
+      }
+      .qa-btn-title {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .qa-btn-desc {
+        font-size: 9px;
+        color: var(--text-dim);
+      }
+
+      /* Character Rig Container */
+      .character-stage {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 4px 0;
+        position: relative;
+        cursor: pointer;
+      }
+      .character-rig-svg {
+        max-width: 100px;
+        height: auto;
+        overflow: visible;
+        filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.4));
+      }
+      .character-3d-artwork {
+        max-width: 95px;
+        height: auto;
+        filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.4));
+      }
+
+      /* ================= CONVERSATION BOX ================= */
+      .history-box {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 250px;
+        overflow-y: auto;
+        padding: 4px 2px;
       }
       .msg-bubble {
-        padding: 6px 10px;
-        border-radius: 8px;
+        padding: 8px 10px;
+        border-radius: var(--radius-md);
         font-size: 12px;
+        line-height: 1.5;
         max-width: 90%;
         word-break: break-word;
       }
       .msg-user {
         align-self: flex-end;
-        background: var(--accent);
-        color: #032522;
-        font-weight: 500;
+        background: #202b42;
+        color: #ffffff;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-bottom-right-radius: 2px;
       }
       .msg-buddy {
         align-self: flex-start;
-        background: var(--card-bg);
+        background: var(--surface);
+        color: var(--text);
         border: 1px solid var(--border);
+        border-bottom-left-radius: 2px;
+      }
+
+      /* ================= SMART MODE SELECTOR ================= */
+      .mode-selector-bar {
+        display: flex;
+        gap: 4px;
+        overflow-x: auto;
+        padding-bottom: 2px;
+        scrollbar-width: none;
+      }
+      .mode-pill {
+        font-size: 10px;
+        font-weight: 600;
+        padding: 3px 8px;
+        border-radius: var(--radius-sm);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--text-muted);
+        cursor: pointer;
+        white-space: nowrap;
+        transition: all 0.15s ease;
+      }
+      .mode-pill:hover {
+        color: var(--text);
+        background: var(--surface-hover);
+      }
+      .mode-pill.active {
+        background: rgba(99, 102, 241, 0.18);
+        border-color: var(--accent);
         color: var(--text);
       }
 
-      /* Confirmation Modal / Card */
-      .confirm-card {
-        background: rgba(245, 158, 11, 0.1);
-        border: 1px solid var(--warning);
-        border-radius: 10px;
-        padding: 10px 12px;
+      /* ================= COMMAND COMPOSER ================= */
+      .composer-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 8px 10px;
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        gap: 6px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+        transition: border-color 0.2s ease;
       }
-      .confirm-card h4 {
+      .composer-card:focus-within {
+        border-color: var(--accent);
+      }
+      .composer-input {
+        width: 100%;
+        min-height: 44px;
+        max-height: 110px;
+        background: transparent;
+        border: none;
+        color: var(--text);
+        font-family: inherit;
         font-size: 12px;
-        color: #fde68a;
+        line-height: 1.4;
+        resize: none;
+        outline: none;
+      }
+      .composer-input::placeholder {
+        color: var(--text-dim);
+      }
+      .composer-footer {
         display: flex;
         align-items: center;
-        gap: 5px;
+        justify-content: space-between;
+        gap: 6px;
+        padding-top: 4px;
+        border-top: 1px solid rgba(255, 255, 255, 0.05);
+      }
+      .composer-tools {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .tool-btn {
+        background: transparent;
+        border: 1px solid transparent;
+        color: var(--text-muted);
+        border-radius: var(--radius-sm);
+        padding: 3px 6px;
+        font-size: 11px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        transition: all 0.15s ease;
+      }
+      .tool-btn:hover {
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text);
+        border-color: var(--border);
+      }
+      .tool-btn.active {
+        background: rgba(99, 102, 241, 0.15);
+        color: var(--accent);
+        border-color: var(--accent);
+      }
+      .voice-btn {
+        background: rgba(99, 102, 241, 0.12);
+        border: 1px solid var(--border-accent);
+        color: var(--accent);
+        border-radius: var(--radius-sm);
+        padding: 4px 8px;
+        font-size: 11px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .voice-btn:hover {
+        background: var(--accent);
+        color: #ffffff;
+      }
+      .voice-btn.listening {
+        background: var(--destructive);
+        color: #ffffff;
+        border-color: var(--destructive);
+      }
+      .send-btn {
+        background: var(--accent);
+        color: #ffffff;
+        border: none;
+        border-radius: var(--radius-sm);
+        padding: 5px 12px;
+        font-size: 11px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .send-btn:hover {
+        background: var(--accent-hover);
+      }
+      .send-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
       }
 
-      /* Multi-Action Task Execution Engine */
-      .task-plan-card {
-        background: rgba(20, 184, 166, 0.08);
-        border: 1px solid rgba(20, 184, 166, 0.35);
-        border-radius: 10px;
-        padding: 10px 12px;
+      /* Generic Section Cards */
+      .section-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 8px 10px;
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        gap: 6px;
+      }
+      .section-card-title {
+        font-weight: 700;
         font-size: 11px;
+        color: var(--text);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .ghost {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--text-muted);
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .ghost:hover {
+        color: var(--text);
+        border-color: var(--border-hover);
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      /* Task Plans & Cards */
+      .task-plan-card {
+        background: var(--surface);
+        border: 1px solid var(--border-accent);
+        border-radius: var(--radius-md);
+        padding: 8px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
       }
       .task-plan-header {
         display: flex;
         justify-content: space-between;
         align-items: flex-start;
-        gap: 6px;
       }
       .task-plan-title {
         font-weight: 700;
-        font-size: 12px;
+        font-size: 11px;
         color: var(--text);
-        line-height: 1.3;
       }
       .task-plan-meta {
         font-size: 10px;
-        color: var(--muted);
+        color: var(--text-muted);
       }
       .progress-container {
         display: flex;
@@ -453,241 +650,108 @@
       .progress-label-row {
         display: flex;
         justify-content: space-between;
-        font-size: 10px;
-        color: var(--muted);
+        font-size: 9px;
+        color: var(--text-muted);
       }
       .progress-bar-bg {
         width: 100%;
-        height: 6px;
-        background: rgba(255, 255, 255, 0.1);
-        border-radius: 4px;
+        height: 5px;
+        background: #0f1523;
+        border-radius: 3px;
         overflow: hidden;
       }
       .progress-bar-fill {
         height: 100%;
-        background: var(--accent);
+        background: linear-gradient(90deg, var(--accent), var(--accent-cyan));
         width: 0%;
         transition: width 0.3s ease;
       }
       .plan-steps-list {
         display: flex;
         flex-direction: column;
-        gap: 4px;
-        max-height: 160px;
+        gap: 3px;
+        max-height: 120px;
         overflow-y: auto;
-        padding-right: 2px;
       }
       .plan-step-row {
         display: flex;
-        align-items: center;
         justify-content: space-between;
-        background: var(--card-bg);
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        padding: 5px 8px;
-        font-size: 11px;
-        gap: 6px;
-      }
-      .plan-step-row.running {
-        border-color: var(--accent);
-        background: rgba(20, 184, 166, 0.12);
-      }
-      .plan-step-row.completed {
-        border-color: rgba(16, 185, 129, 0.4);
-      }
-      .plan-step-row.awaiting_approval {
-        border-color: var(--warning);
-        background: rgba(245, 158, 11, 0.12);
-      }
-      .plan-step-row.failed {
-        border-color: var(--destructive);
-        background: rgba(239, 68, 68, 0.12);
-      }
-      .step-info {
-        display: flex;
         align-items: center;
-        gap: 6px;
-        overflow: hidden;
-      }
-      .step-num {
-        font-weight: 700;
         font-size: 10px;
-        color: var(--muted);
-        min-width: 16px;
-      }
-      .step-text {
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        color: var(--text);
+        padding: 3px 5px;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.02);
       }
       .step-status-tag {
-        font-size: 9px;
+        font-size: 8px;
         padding: 1px 5px;
-        border-radius: 4px;
-        font-weight: 600;
+        border-radius: 3px;
         text-transform: uppercase;
-        letter-spacing: 0.04em;
-        white-space: nowrap;
-      }
-      .step-status-tag.pending {
-        background: rgba(255, 255, 255, 0.05);
-        color: var(--muted);
-      }
-      .step-status-tag.running {
-        background: rgba(20, 184, 166, 0.2);
-        color: var(--accent);
-        animation: pulse 1s infinite;
+        font-weight: 700;
       }
       .step-status-tag.completed {
         background: rgba(16, 185, 129, 0.2);
         color: var(--success);
       }
-      .step-status-tag.awaiting_approval {
-        background: rgba(245, 158, 11, 0.2);
-        color: var(--warning);
+      .step-status-tag.running {
+        background: rgba(6, 182, 212, 0.2);
+        color: var(--accent-cyan);
+      }
+      .step-status-tag.pending {
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--text-dim);
       }
       .step-status-tag.failed {
         background: rgba(239, 68, 68, 0.2);
         color: var(--destructive);
       }
-      .step-status-tag.skipped {
-        background: rgba(255, 255, 255, 0.08);
-        color: var(--muted);
-      }
-      .plan-controls-bar {
+
+      /* Items list */
+      .items-list {
         display: flex;
-        gap: 5px;
+        flex-direction: column;
+        gap: 4px;
+        max-height: 140px;
+        overflow-y: auto;
+      }
+      .item-row {
+        display: flex;
+        justify-content: space-between;
         align-items: center;
-        margin-top: 2px;
+        padding: 5px 6px;
+        background: #0b0f19;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        font-size: 11px;
       }
 
-      /* Extracted Data Card */
-      .extracted-card {
-        background: rgba(56, 189, 248, 0.08);
-        border: 1px solid rgba(56, 189, 248, 0.35);
-        border-radius: 10px;
+      /* Confirmation Modal / Card */
+      .confirm-card {
+        background: var(--surface-card);
+        border: 1px solid var(--border-accent);
+        border-radius: var(--radius-md);
         padding: 8px 10px;
         display: flex;
         flex-direction: column;
-        gap: 6px;
-        font-size: 11px;
-      }
-      .extracted-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        font-weight: 600;
-        color: #38bdf8;
-      }
-      .extracted-content {
-        background: var(--card-bg);
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        padding: 6px 8px;
-        max-height: 90px;
-        overflow-y: auto;
-        font-family: monospace;
-        font-size: 10px;
-        white-space: pre-wrap;
-        word-break: break-all;
-      }
-
-      /* Form Filling Panel */
-      .form-fill-panel {
-        background: rgba(20, 184, 166, 0.08);
-        border: 1px solid rgba(20, 184, 166, 0.3);
-        border-radius: 10px;
-        padding: 8px 10px;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        font-size: 11px;
-      }
-      .form-fill-title {
-        font-weight: 600;
-        color: var(--accent);
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-      }
-      .form-fill-report {
-        font-size: 11px;
-        color: var(--text);
-        background: var(--card-bg);
-        padding: 6px 8px;
-        border-radius: 6px;
-        border: 1px solid var(--border);
-        max-height: 80px;
-        overflow-y: auto;
-      }
-
-      /* Input Box */
-      .input-box {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-      textarea {
-        width: 100%;
-        min-height: 52px;
-        border-radius: 8px;
-        border: 1px solid var(--border);
-        background: var(--card-bg);
-        color: var(--text);
-        padding: 7px 10px;
-        font: inherit;
-        font-size: 12px;
-        resize: vertical;
-        outline: none;
-      }
-      textarea:focus {
-        border-color: var(--accent);
-        box-shadow: 0 0 0 1px var(--accent);
-      }
-      .controls {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-      }
-      .action-group {
-        display: flex;
         gap: 5px;
-        align-items: center;
       }
       .status-msg {
         font-size: 11px;
-        color: var(--muted);
-        min-height: 16px;
+        color: var(--text-muted);
+        min-height: 14px;
       }
 
-      /* Settings Drawer */
-      .settings-drawer {
-        background: var(--card-bg);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 10px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        font-size: 11px;
-      }
-      .settings-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-      }
-
+      /* Footer */
       footer {
-        margin-top: auto;
-        padding-top: 8px;
-        border-top: 1px solid var(--border);
         display: flex;
-        justify-content: space-between;
         align-items: center;
-        font-size: 11px;
-        color: var(--muted);
+        justify-content: space-between;
+        padding-top: 6px;
+        border-top: 1px solid var(--border);
+        font-size: 10px;
+        color: var(--text-dim);
       }
+
       [hidden] {
         display: none !important;
       }
@@ -695,67 +759,44 @@
   </head>
   <body>
     <div class="panel-wrap">
+      <!-- ================= HEADER ================= -->
       <header>
-        <div class="brand">
-          <span style="color: var(--accent)">●</span>
-          <span>AI Buddy</span>
+        <div class="brand-lockup">
+          <div class="brand-icon-box">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+            </svg>
+          </div>
+          <div class="brand-title-wrap">
+            <span class="brand-name">AI Buddy</span>
+            <span class="brand-sub">Master Command Centre</span>
+          </div>
         </div>
-        <div style="display: flex; align-items: center; gap: 6px">
-          <span class="status-badge" id="buddyEmotionBadge">Idle</span>
-          <button id="settingsToggle" class="ghost" style="padding: 3px 6px" title="Settings">
-            ⚙️
+        <div class="header-actions">
+          <span id="headerModelPill" class="header-model-pill" title="Click to inspect model routing">
+            ⚡ <span id="headerModelLabel">Gemini 2.5 Flash</span>
+          </span>
+          <span class="status-badge" id="buddyEmotionBadge">Ready</span>
+          <button id="clearChatBtn" class="ghost" style="padding: 3px 6px; font-size: 11px" title="New Conversation / Clear Chat">
+            ✨
           </button>
         </div>
       </header>
 
-      <!-- Settings Drawer (Collapsible) -->
-      <div id="settingsBox" class="settings-drawer" hidden>
-        <div class="settings-row">
-          <span>Character Artwork Mode:</span>
-          <select
-            id="avatarRenderMode"
-            style="
-              background: var(--bg);
-              color: var(--text);
-              border: 1px solid var(--border);
-              border-radius: 4px;
-              padding: 2px;
-            "
-          >
-            <option value="rigged">Live Animated Rig (Vector)</option>
-            <option value="3d">Pre-rendered 3D Artwork</option>
-          </select>
-        </div>
-        <div class="settings-row">
-          <span>Mute Voice Speech:</span>
-          <input type="checkbox" id="muteToggle" />
-        </div>
-        <div class="settings-row">
-          <span>Character Size:</span>
-          <select
-            id="sizeSelect"
-            style="
-              background: var(--bg);
-              color: var(--text);
-              border: 1px solid var(--border);
-              border-radius: 4px;
-              padding: 2px;
-            "
-          >
-            <option value="normal">Standard</option>
-            <option value="compact">Compact</option>
-            <option value="hidden">Hidden</option>
-          </select>
-        </div>
-      </div>
+      <!-- ================= NAVIGATION TABS ================= -->
+      <nav class="command-tabs">
+        <button class="tab-btn active" data-tab="chat">💬 Chat</button>
+        <button class="tab-btn" data-tab="page">🌐 Page</button>
+        <button class="tab-btn" data-tab="tasks">🧠 Tasks</button>
+        <button class="tab-btn" data-tab="models">⚡ Models</button>
+        <button class="tab-btn" data-tab="rig">🎨 Rig</button>
+      </nav>
 
-      <!-- ALL 16 BUDDIES SELECTOR CAROUSEL -->
+      <!-- ================= ALL 16 BUDDIES SELECTOR CAROUSEL ================= -->
       <div class="buddy-carousel-container">
         <div class="buddy-carousel-header">
-          <span>Switch Buddy (16 Specialists)</span>
-          <span id="buddyCountBadge" style="color: var(--accent); font-size: 10px"
-            >16 available</span
-          >
+          <span>Active Specialist Companion</span>
+          <span id="buddyCountBadge" style="color: var(--accent); font-size: 10px">16 available</span>
         </div>
         <div id="buddyCarousel" class="buddy-carousel">
           <!-- Dynamically populated with all 15 specialist buddies + 1 user Custom Buddy -->
@@ -771,160 +812,424 @@
           </div>
           <div class="persona-tagline" id="activeBuddyTagline">Your everyday browser companion</div>
         </div>
+        <span id="personaLang" style="font-size: 10px; color: var(--accent); font-weight: 600">English / Hinglish</span>
       </div>
 
-      <!-- AUTHENTIC BUDDY CHARACTER STAGE -->
-      <div id="characterStage" class="character-stage" title="Tap Buddy to interact">
-        <!-- 3D Artwork Mode Image (Hidden by default when vector rig is active) -->
-        <img
-          id="buddy3dImg"
-          class="character-3d-artwork"
-          src="./assets/buddy-general-3d.webp"
-          alt="AI Buddy"
-          hidden
-        />
+      <!-- ================= TAB 1: CHAT (PRIMARY COMPANION WORKSPACE) ================= -->
+      <div id="tabChat" class="tab-panel">
+        <!-- INTELLIGENT CONTEXTUAL GREETING & QUICK ACTIONS -->
+        <div class="greeting-card">
+          <div class="greeting-title" id="greetingTitle"><span id="greetingTime">Good afternoon</span>. What are we working on?</div>
+          <div class="greeting-context" id="greetingContext">Active on current webpage · Ready for navigation, research, and analysis.</div>
+          <div class="quick-actions-grid">
+            <div class="qa-btn" id="qaExplainPage">
+              <span class="qa-btn-title">🔍 Understand Page</span>
+              <span class="qa-btn-desc">Analyze DOM structure & inputs</span>
+            </div>
+            <div class="qa-btn" id="qaResearch">
+              <span class="qa-btn-title">🌐 Research Anything</span>
+              <span class="qa-btn-desc">Cross-reference verified facts</span>
+            </div>
+            <div class="qa-btn" id="qaWorkWithFiles">
+              <span class="qa-btn-title">📑 Work With Files</span>
+              <span class="qa-btn-desc">Spreadsheets, CSV & audits</span>
+            </div>
+            <div class="qa-btn" id="qaAutomateTask">
+              <span class="qa-btn-title">⚡ Automate a Task</span>
+              <span class="qa-btn-desc">Multi-step autonomous workflow</span>
+            </div>
+          </div>
+        </div>
 
-        <!-- Authentic Mascot Vector Rig (Adaptive Outfit, Face, Props, & Connected Movable Arm) -->
-        <div id="buddyAvatar" data-emotion="idle">
-          <svg
-            id="characterSvg"
-            class="character-rig-svg"
-            viewBox="0 0 100 105"
-            width="100%"
-            height="100%"
-          >
-            <defs>
-              <linearGradient id="bodyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stop-color="#ffffff" />
-                <stop offset="100%" stop-color="#f1f5f9" />
-              </linearGradient>
-              <linearGradient id="outfitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stop-color="#0d9488" id="outfitStop1" />
-                <stop offset="100%" stop-color="#0f766e" id="outfitStop2" />
-              </linearGradient>
-            </defs>
-
-            <!-- Subtle ground shadow -->
-            <ellipse cx="50" cy="95" rx="22" ry="4" fill="#cbd5e1" opacity="0.4" />
-
-            <!-- Mascot: Feet, Body, Shirt, Head -->
-            <g fill="#f8fafc" stroke="#94a3b8" stroke-width="0.8">
-              <!-- Left & Right Feet -->
-              <ellipse cx="40" cy="88" rx="9" ry="5" />
-              <ellipse cx="61" cy="88" rx="9" ry="5" />
-
-              <!-- Body in specialist outfit -->
-              <path
-                id="rigBody"
-                d="M29 58Q22 65 25 82Q50 92 75 82Q79 65 70 58Z"
-                fill="url(#outfitGrad)"
-              />
-
-              <!-- Inner Shirt -->
-              <path d="M43 59h15l-1 27H44Z" fill="#ffffff" />
-
-              <!-- Left Arm (with movable elbow & sculpted pointing finger) -->
-              <g id="rigArmLeft">
-                <path id="rigArmLeftSleeve" d="m32 60 12 6-4 12-9-12" fill="url(#outfitGrad)" />
-                <ellipse
-                  cx="30"
-                  cy="71"
-                  rx="4"
-                  ry="3"
-                  fill="#f8fafc"
-                  stroke="#94a3b8"
-                  stroke-width="0.7"
-                />
+        <!-- AUTHENTIC BUDDY CHARACTER RIG & 3D ARTWORK -->
+        <div id="characterStage" class="character-stage" title="Tap Buddy to interact">
+          <img
+            id="buddy3dImg"
+            class="character-3d-artwork"
+            src="./assets/buddy-general-3d.webp"
+            alt="AI Buddy"
+            hidden
+          />
+          <div id="buddyAvatar" data-emotion="idle">
+            <svg id="characterSvg" class="character-rig-svg" viewBox="0 0 100 105" width="100%" height="100%">
+              <defs>
+                <linearGradient id="bodyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#ffffff" />
+                  <stop offset="100%" stop-color="#f1f5f9" />
+                </linearGradient>
+                <linearGradient id="outfitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#6366f1" id="outfitStop1" />
+                  <stop offset="100%" stop-color="#4f46e5" id="outfitStop2" />
+                </linearGradient>
+              </defs>
+              <ellipse cx="50" cy="95" rx="22" ry="4" fill="#cbd5e1" opacity="0.4" />
+              <g fill="#f8fafc" stroke="#94a3b8" stroke-width="0.8">
+                <ellipse cx="40" cy="88" rx="9" ry="5" />
+                <ellipse cx="61" cy="88" rx="9" ry="5" />
+                <path id="rigBody" d="M29 58Q22 65 25 82Q50 92 75 82Q79 65 70 58Z" fill="url(#outfitGrad)" />
+                <path d="M43 59h15l-1 27H44Z" fill="#ffffff" />
+                <g id="rigArmLeft">
+                  <path id="rigArmLeftSleeve" d="m32 60 12 6-4 12-9-12" fill="url(#outfitGrad)" />
+                  <ellipse cx="30" cy="71" rx="4" ry="3" fill="#f8fafc" stroke="#94a3b8" stroke-width="0.7" />
+                </g>
+                <g id="rigArmRight">
+                  <path id="rigArmRightSleeve" d="m69 60 11 6 4 12 9-12" fill="url(#outfitGrad)" />
+                  <ellipse cx="71" cy="71" rx="4" ry="3" fill="#f8fafc" stroke="#94a3b8" stroke-width="0.7" />
+                </g>
+                <path d="M64 9C43 5 23 26 23 41c0 14 12 22 27 22s27-8 27-22c0-11-7-20-16-25Z" fill="url(#bodyGrad)" />
               </g>
-
-              <!-- Right Arm -->
-              <g id="rigArmRight">
-                <path id="rigArmRightSleeve" d="m69 60 11 6 4 12 9-12" fill="url(#outfitGrad)" />
-                <ellipse
-                  cx="71"
-                  cy="71"
-                  rx="4"
-                  ry="3"
-                  fill="#f8fafc"
-                  stroke="#94a3b8"
-                  stroke-width="0.7"
-                />
+              <g id="rigBrowLeft" transform="translate(40, 36)">
+                <path d="M -4 0 Q 0 -1 4 0" fill="none" stroke="#334155" stroke-width="0.8" stroke-linecap="round" opacity="0.5" />
               </g>
-
-              <!-- Authentic Pear-Shaped Pearl Head -->
-              <path
-                d="M64 9C43 5 23 26 23 41c0 14 12 22 27 22s27-8 27-22c0-11-7-20-16-25Z"
-                fill="url(#bodyGrad)"
-              />
-            </g>
-
-            <!-- Eyebrows -->
-            <g id="rigBrowLeft" transform="translate(40, 36)">
-              <path
-                d="M -4 0 Q 0 -1 4 0"
-                fill="none"
-                stroke="#334155"
-                stroke-width="0.8"
-                stroke-linecap="round"
-                opacity="0.5"
-              />
-            </g>
-            <g id="rigBrowRight" transform="translate(61, 36)">
-              <path
-                d="M -4 0 Q 0 -1 4 0"
-                fill="none"
-                stroke="#334155"
-                stroke-width="0.8"
-                stroke-linecap="round"
-                opacity="0.5"
-              />
-            </g>
-
-            <!-- Charcoal Ink Eyes & Pupils with gaze tracking -->
-            <g id="rigEyeLeft" transform="translate(40, 42)">
-              <ellipse cx="0" cy="0" rx="2.4" ry="3.7" fill="#1e293b" />
-              <g id="rigPupilLeft">
-                <circle cx="-0.6" cy="-1" r="0.8" fill="#ffffff" />
+              <g id="rigBrowRight" transform="translate(61, 36)">
+                <path d="M -4 0 Q 0 -1 4 0" fill="none" stroke="#334155" stroke-width="0.8" stroke-linecap="round" opacity="0.5" />
               </g>
-              <path
-                id="rigLidLeft"
-                d="M -2.4 0 Q 0 2 2.4 0"
-                fill="none"
-                stroke="#1e293b"
-                stroke-width="0.8"
-                style="display: none"
-              />
-            </g>
-            <g id="rigEyeRight" transform="translate(61, 42)">
-              <ellipse cx="0" cy="0" rx="2.4" ry="3.7" fill="#1e293b" />
-              <g id="rigPupilRight">
-                <circle cx="-0.6" cy="-1" r="0.8" fill="#ffffff" />
+              <g id="rigEyeLeft" transform="translate(40, 42)">
+                <ellipse cx="0" cy="0" rx="2.4" ry="3.7" fill="#1e293b" />
+                <g id="rigPupilLeft"><circle cx="-0.6" cy="-1" r="0.8" fill="#ffffff" /></g>
+                <path id="rigLidLeft" d="M -2.4 0 Q 0 2 2.4 0" fill="none" stroke="#1e293b" stroke-width="0.8" style="display: none" />
               </g>
-              <path
-                id="rigLidRight"
-                d="M -2.4 0 Q 0 2 2.4 0"
-                fill="none"
-                stroke="#1e293b"
-                stroke-width="0.8"
-                style="display: none"
-              />
-            </g>
+              <g id="rigEyeRight" transform="translate(61, 42)">
+                <ellipse cx="0" cy="0" rx="2.4" ry="3.7" fill="#1e293b" />
+                <g id="rigPupilRight"><circle cx="-0.6" cy="-1" r="0.8" fill="#ffffff" /></g>
+                <path id="rigLidRight" d="M -2.4 0 Q 0 2 2.4 0" fill="none" stroke="#1e293b" stroke-width="0.8" style="display: none" />
+              </g>
+              <path id="rigMouth" d="M45 51 Q50 55 55 51" fill="none" stroke="#1e293b" stroke-width="1.2" stroke-linecap="round" />
+              <g id="rigPropContainer" stroke="#94a3b8" stroke-width="0.7"></g>
+            </svg>
+          </div>
+        </div>
 
-            <!-- Dynamic Mouth for lip-sync & emotions -->
-            <path
-              id="rigMouth"
-              d="M45 51 Q50 55 55 51"
-              fill="none"
-              stroke="#1e293b"
-              stroke-width="1.2"
-              stroke-linecap="round"
-            />
+        <!-- CONVERSATION HISTORY -->
+        <div id="historyBox" class="history-box">
+          <div class="msg-bubble msg-buddy">
+            Hey! I am your AI Buddy. Ask me anything, or instruct me to take action across this webpage and your files.
+          </div>
+        </div>
 
-            <!-- Specialist Props & Accessories (Laptop for Dev, Ledger for CA, Parcel for Ecom, etc.) -->
-            <g id="rigPropContainer" stroke="#94a3b8" stroke-width="0.7"></g>
-          </svg>
+        <!-- SMART MODE SELECTOR -->
+        <div class="mode-selector-bar">
+          <span class="mode-pill active" data-mode="auto">⚡ Auto</span>
+          <span class="mode-pill" data-mode="chat">💬 Chat</span>
+          <span class="mode-pill" data-mode="browser">🌐 Browser</span>
+          <span class="mode-pill" data-mode="research">🔍 Research</span>
+          <span class="mode-pill" data-mode="file">📑 Files</span>
+          <span class="mode-pill" data-mode="workflow">🔄 Workflow</span>
+        </div>
+
+        <!-- PREMIUM COMMAND COMPOSER -->
+        <div class="composer-card">
+          <textarea
+            id="promptInput"
+            class="composer-input"
+            rows="2"
+            placeholder="Ask anything... or command: 'Check pending Meesho orders'"
+          ></textarea>
+          <div class="composer-footer">
+            <div class="composer-tools">
+              <button id="attachFileBtn" class="tool-btn" title="Attach spreadsheet, CSV, or document">
+                📎 <span style="font-size: 10px">Attach</span>
+              </button>
+              <input type="file" id="composerFileInput" style="display: none" accept=".csv,.xlsx,.xls,.pdf,.docx,.txt,.json" />
+              <button id="pageContextToggle" class="tool-btn active" title="Send live page snapshot to Buddy">
+                🌐 <span style="font-size: 10px" id="pageContextStatus">Page Vision On</span>
+              </button>
+              <button id="highlightBtn" class="tool-btn" title="Highlight target element on page" hidden>🎯 Point</button>
+              <button id="speakAnswerBtn" class="tool-btn" title="Read response aloud" hidden>🔊 Read</button>
+            </div>
+            <div style="display: flex; align-items: center; gap: 4px">
+              <button id="voiceBtn" class="voice-btn" title="Push to talk with AI Buddy">
+                🎤 Talk
+              </button>
+              <button id="sendBtn" class="send-btn">
+                Send ↵
+              </button>
+            </div>
+          </div>
+        </div>
+        <div id="statusText" class="status-msg"></div>
+      </div>
+
+      <!-- ================= TAB 2: PAGE & ACTIONS ================= -->
+      <div id="tabPage" class="tab-panel" hidden>
+        <div class="section-card">
+          <div class="section-card-title">
+            <span>🌐 Webpage Intelligence</span>
+            <button id="refreshPageContextBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">🔄 Refresh</button>
+          </div>
+          <div id="pageSummaryBox" style="font-size: 11px; color: var(--text-muted); background: #0b0f19; padding: 8px; border-radius: var(--radius-sm); border: 1px solid var(--border)">
+            Loading live page structure…
+          </div>
+          <div style="display: flex; gap: 4px; flex-wrap: wrap">
+            <button id="pageExplainActionBtn" class="ghost" style="font-size: 10px; padding: 4px 8px">🔍 Deep Explain</button>
+            <button id="pageCheckErrorsActionBtn" class="ghost" style="font-size: 10px; padding: 4px 8px">⚠️ Find Page Errors</button>
+            <button id="pageExtractTableActionBtn" class="ghost" style="font-size: 10px; padding: 4px 8px">📋 Extract Tables</button>
+            <button id="pageScrollDownBtn" class="ghost" style="font-size: 10px; padding: 4px 8px">⬇️ Scroll Down</button>
+            <button id="pageScrollUpBtn" class="ghost" style="font-size: 10px; padding: 4px 8px">⬆️ Scroll Up</button>
+          </div>
+        </div>
+
+        <!-- SMART FORM FILLING TOOL -->
+        <div class="section-card">
+          <div class="section-card-title">
+            <span>📝 Smart Form Filler</span>
+            <span style="font-size: 10px; color: var(--accent-cyan); font-weight: 600">Zero Risk</span>
+          </div>
+          <p style="font-size: 10px; color: var(--text-muted)">
+            Automates form filling using verified profiles & memories. Requires explicit confirmation before submit.
+          </p>
+          <div id="formFillReport" class="form-fill-report" style="font-size: 10px; max-height: 80px; overflow-y: auto; background: #0b0f19; padding: 6px; border-radius: var(--radius-sm); border: 1px solid var(--border)" hidden></div>
+          <div style="display: flex; gap: 6px">
+            <button id="autoFillSampleBtn" style="flex: 1; font-size: 10px; padding: 5px; background: var(--accent); color: white; border: none; border-radius: var(--radius-sm); font-weight: 600">✨ Smart Fill Form</button>
+            <button id="verifyFormInputsBtn" class="ghost" style="flex: 1; font-size: 10px; padding: 5px">🔍 Verify Fields</button>
+          </div>
         </div>
       </div>
+
+      <!-- ================= TAB 3: TASKS & MEMORY ================= -->
+      <div id="tabTasks" class="tab-panel" hidden>
+        <!-- MULTI-ACTION TASK PLANNER RUNNER -->
+        <div id="taskPlanCard" class="task-plan-card" hidden>
+          <div class="task-plan-header">
+            <div>
+              <div id="planTitle" class="task-plan-title">Multi-Action Task Plan</div>
+              <div id="planMeta" class="task-plan-meta">Target: current tab · 0 steps</div>
+            </div>
+            <span id="planStatusBadge" class="status-badge">Pending</span>
+          </div>
+          <div class="progress-container">
+            <div class="progress-label-row">
+              <span id="progressStepsLabel">0 of 0 steps completed</span>
+              <span id="progressPercentLabel">0%</span>
+            </div>
+            <div class="progress-bar-bg" id="taskProgressBar">
+              <div id="progressBarFill" class="progress-bar-fill"></div>
+            </div>
+          </div>
+          <div id="planStepsList" class="plan-steps-list"></div>
+          <div style="display: flex; gap: 4px; margin-top: 2px">
+            <button id="planPauseResumeBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">⏸️ Pause</button>
+            <button id="planSkipBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">⏭️ Skip</button>
+            <button id="planStopBtn" class="ghost" style="padding: 3px 8px; font-size: 10px; color: var(--destructive); border-color: rgba(239, 68, 68, 0.4)">⏹️ Stop</button>
+          </div>
+        </div>
+
+        <!-- Proactive Assistant & Saved Checkpoints -->
+        <div id="savedCheckpointCard" class="section-card" style="border-color: rgba(99, 102, 241, 0.4); background: rgba(99, 102, 241, 0.06)" hidden>
+          <div class="section-card-title">
+            <span style="color: var(--accent-cyan)">📌 Saved Task Resumption Checkpoint</span>
+          </div>
+          <p id="savedTaskCheckpointDesc" style="font-size: 11px; margin: 0; color: var(--text-muted)">An interrupted background task is available to resume safely.</p>
+          <div style="display: flex; gap: 4px; margin-top: 4px">
+            <button id="resumeSavedTaskBtn" style="padding: 4px 10px; font-size: 10px; background: var(--accent); color: white; border: none; border-radius: var(--radius-sm); font-weight: 600">▶️ Resume Task</button>
+            <button id="discardSavedTaskBtn" class="ghost" style="padding: 4px 10px; font-size: 10px">Dismiss</button>
+          </div>
+        </div>
+
+        <!-- Workflow Presets -->
+        <div class="section-card">
+          <div class="section-card-title">
+            <span>⚡ Ready Automation Workflows</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px">
+            <button id="runMeeshoWorkflowBtn" class="ghost" style="justify-content: flex-start; text-align: left; font-size: 11px; padding: 6px">
+              📦 Meesho: Check Pending Orders & Prepare List
+            </button>
+            <button id="runReconcileWorkflowBtn" class="ghost" style="justify-content: flex-start; text-align: left; font-size: 11px; padding: 6px">
+              📑 Reconcile Orders with Spreadsheet (Non-Destructive)
+            </button>
+            <button id="runResearchWorkflowBtn" class="ghost" style="justify-content: flex-start; text-align: left; font-size: 11px; padding: 6px">
+              🔍 Multi-Source Research & Fact-Check
+            </button>
+            <button id="runExtractTableWorkflowBtn" class="ghost" style="justify-content: flex-start; text-align: left; font-size: 11px; padding: 6px">
+              📊 Extract Table Rows & Summary
+            </button>
+          </div>
+        </div>
+
+        <!-- Memory & Preferences Section -->
+        <div class="section-card">
+          <div class="section-card-title">
+            <span>🧠 Buddy Memory & Preferences</span>
+            <button id="addMemoryToggleBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">➕ Add</button>
+          </div>
+          <div id="addMemoryForm" style="display: flex; flex-direction: column; gap: 4px" hidden>
+            <input id="memKeyInput" placeholder="Key (e.g. seller_gstin, city)" style="background: #0b0f19; color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px; font-size: 11px" />
+            <input id="memValInput" placeholder="Value (e.g. 24AAAAA0000A1Z5)" style="background: #0b0f19; color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px; font-size: 11px" />
+            <div style="display: flex; gap: 4px">
+              <button id="saveMemoryBtn" style="padding: 4px 10px; font-size: 10px; background: var(--accent); color: white; border: none; border-radius: var(--radius-sm)">Save</button>
+              <button id="cancelMemoryBtn" class="ghost" style="padding: 4px 10px; font-size: 10px">Cancel</button>
+            </div>
+          </div>
+          <div id="memoriesList" class="items-list">
+            <!-- Populated via /api/public/extension/memories -->
+          </div>
+        </div>
+
+        <!-- Recent Task Execution History -->
+        <div class="section-card">
+          <div class="section-card-title">
+            <span>📜 Recent Task History</span>
+            <button id="refreshTasksHistoryBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">🔄</button>
+          </div>
+          <div id="tasksHistoryList" class="items-list">
+            <!-- Populated via /api/public/extension/tasks -->
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= TAB 4: AI MODELS ================= -->
+      <div id="tabModels" class="tab-panel" hidden>
+        <!-- Intelligent Routing Policy Card -->
+        <div class="section-card" style="border-color: var(--border-accent); background: rgba(99, 102, 241, 0.05)">
+          <div class="section-card-title">
+            <span style="color: var(--accent-cyan)">🧠 Intelligent Model Routing</span>
+            <span id="routingModeTag" style="font-size: 9px; color: var(--accent); font-weight: 700">AUTO ACTIVE</span>
+          </div>
+          <p style="font-size: 10px; color: var(--text-muted); line-height: 1.4">
+            AI Buddy automatically evaluates task complexity, vision requirements, and provider latency to dispatch the optimal model.
+          </p>
+          <div id="activeModelRecommendation" style="margin-top: 6px; font-size: 10px; color: var(--accent-cyan); background: rgba(6, 182, 212, 0.08); padding: 6px; border-radius: var(--radius-sm); border: 1px solid rgba(6, 182, 212, 0.2)">
+            Gemini 2.5 Flash recommended for fast DOM grounding, pointing animations, and browser tasks.
+          </div>
+        </div>
+
+        <div class="section-card">
+          <div class="section-card-title">
+            <span>⚡ Model Selection</span>
+            <button id="toggleModelComparisonBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">📊 Compare</button>
+          </div>
+          <select id="modelSelector" style="background: #0b0f19; color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px; font-size: 11px">
+            <option value="auto">Auto Select (Brain Decides)</option>
+            <option value="gemini-3.8-flash">Google Gemini 3.8 Flash (Multimodal & Fast)</option>
+            <option value="groq-llama-3.3-70b">Llama 3.3 70B (GroqCloud Fast)</option>
+            <option value="openrouter-free-gemini-2.0-flash">Gemini 2.0 Flash (Free OpenRouter)</option>
+            <option value="openai-gpt-4o">OpenAI GPT-4o (Vision & Reasoning)</option>
+            <option value="anthropic-claude-3-5-sonnet">Claude 3.5 Sonnet (Deep Synthesis)</option>
+            <option value="ollama-llama-3.2-3b">Ollama Local (100% Offline)</option>
+          </select>
+        </div>
+
+        <!-- Optional Side-by-Side Model Comparison Matrix -->
+        <div id="modelComparisonView" class="section-card" hidden>
+          <div class="section-card-title">
+            <span>📊 Verified Provider Capabilities</span>
+          </div>
+          <div style="overflow-x: auto; font-size: 10px">
+            <table style="width: 100%; border-collapse: collapse; text-align: left">
+              <thead>
+                <tr style="border-bottom: 1px solid var(--border); color: var(--text-muted)">
+                  <th style="padding: 4px">Model</th>
+                  <th style="padding: 4px">Vision</th>
+                  <th style="padding: 4px">Speed</th>
+                  <th style="padding: 4px">Context</th>
+                </tr>
+              </thead>
+              <tbody style="color: var(--text)">
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.04)">
+                  <td style="padding: 4px; font-weight: 600">Gemini 3.8 Flash</td>
+                  <td style="padding: 4px; color: var(--success)">✅ Native</td>
+                  <td style="padding: 4px">~350ms</td>
+                  <td style="padding: 4px">1M tokens</td>
+                </tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.04)">
+                  <td style="padding: 4px; font-weight: 600">Groq Llama 3.3</td>
+                  <td style="padding: 4px; color: var(--text-dim)">Text</td>
+                  <td style="padding: 4px; color: var(--accent-cyan)">~180ms</td>
+                  <td style="padding: 4px">128k tokens</td>
+                </tr>
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.04)">
+                  <td style="padding: 4px; font-weight: 600">OpenAI GPT-4o</td>
+                  <td style="padding: 4px; color: var(--success)">✅ Native</td>
+                  <td style="padding: 4px">~600ms</td>
+                  <td style="padding: 4px">128k tokens</td>
+                </tr>
+                <tr>
+                  <td style="padding: 4px; font-weight: 600">Ollama Local</td>
+                  <td style="padding: 4px; color: var(--text-dim)">Text</td>
+                  <td style="padding: 4px">Local Hardware</td>
+                  <td style="padding: 4px">8k tokens</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="section-card">
+          <div class="section-card-title">
+            <span>🔌 Provider Health & Latency</span>
+            <button id="testActiveProviderBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">⚡ Ping Test</button>
+          </div>
+          <div id="providerStatusList" class="items-list">
+            <!-- Populated via /api/public/extension/models -->
+          </div>
+          <div id="pingTestResult" style="font-size: 11px; color: var(--accent-cyan)" hidden></div>
+        </div>
+      </div>
+
+      <!-- ================= TAB 5: BUDDY RIG CONTROLS ================= -->
+      <div id="tabRig" class="tab-panel" hidden>
+        <div class="section-card">
+          <div class="section-card-title">
+            <span>🎨 Mascot & Visual Rig</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center">
+            <span style="font-size: 11px">Render Mode:</span>
+            <select id="avatarRenderMode" style="background: #0b0f19; color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px; font-size: 11px">
+              <option value="rigged">Live Animated Rig (Vector)</option>
+              <option value="3d">Pre-rendered 3D Artwork</option>
+            </select>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center">
+            <span style="font-size: 11px">Character Scale:</span>
+            <select id="sizeSelect" style="background: #0b0f19; color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px; font-size: 11px">
+              <option value="normal">Standard</option>
+              <option value="compact">Compact</option>
+              <option value="hidden">Hidden</option>
+            </select>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center">
+            <span style="font-size: 11px">Mute Voice Speech:</span>
+            <input type="checkbox" id="muteToggle" />
+          </div>
+          <div style="display: flex; gap: 4px; margin-top: 4px">
+            <button id="testArmWaveBtn" class="ghost" style="flex: 1; font-size: 10px; padding: 5px">👋 Wave Arm</button>
+            <button id="testMouthTalkBtn" class="ghost" style="flex: 1; font-size: 10px; padding: 5px">🗣️ Test Lip-sync</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= SAFETY & CONFIRMATION CARDS ================= -->
+      <!-- Consequential Action Approval Card -->
+      <div id="consequentialApprovalCard" class="confirm-card" hidden>
+        <h4 style="font-size: 11px; color: #fef08a">🛡️ Consequential Step Approval</h4>
+        <p id="consequentialPrompt" style="font-size: 11px; color: var(--text-muted)">
+          Buddy is about to perform a consequential action (e.g. submit, purchase, payment, or delete).
+        </p>
+        <div style="display: flex; gap: 6px; margin-top: 4px">
+          <button id="approveConsequentialBtn" style="padding: 4px 10px; font-size: 11px; background: var(--accent); color: white; border: none; border-radius: var(--radius-sm); font-weight: 600">
+            ✅ Approve & Continue
+          </button>
+          <button id="rejectConsequentialBtn" class="ghost" style="padding: 4px 10px; font-size: 11px">
+            ❌ Skip Step
+          </button>
+        </div>
+      </div>
+
+      <!-- Action Confirmation Card -->
+      <div id="confirmCard" class="confirm-card" hidden>
+        <h4 style="font-size: 11px; color: var(--warning)">⚠️ Confirmation Needed</h4>
+        <p id="confirmDesc" style="font-size: 11px; color: var(--text-muted)"></p>
+        <div style="display: flex; gap: 6px; margin-top: 4px">
+          <button id="confirmApproveBtn" style="padding: 4px 10px; font-size: 11px; background: var(--accent); color: white; border: none; border-radius: var(--radius-sm); font-weight: 600">Approve Action</button>
+          <button id="confirmCancelBtn" class="ghost" style="padding: 4px 10px; font-size: 11px">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Compatibility Elements -->
+      <div id="answerCard" hidden></div>
+      <div id="signedOut" hidden></div>
+      <div id="signedIn" hidden></div>
 
       <!-- Page Issues Banner -->
       <div
@@ -938,257 +1243,24 @@
         <div style="display: flex; gap: 6px; margin-top: 4px">
           <button
             id="fixErrorsBtn"
-            style="padding: 3px 8px; font-size: 11px; background: var(--destructive); color: white"
+            style="padding: 4px 10px; font-size: 11px; background: var(--destructive); color: white; border: none; border-radius: var(--radius-sm); font-weight: 600"
           >
             Fix & Explain Errors
           </button>
-          <button id="dismissErrorsBtn" class="ghost" style="padding: 3px 8px; font-size: 11px">
+          <button id="dismissErrorsBtn" class="ghost" style="padding: 4px 10px; font-size: 11px">
             Dismiss
           </button>
         </div>
       </div>
+      <div id="pageCompletenessBanner" hidden></div>
 
-      <!-- MULTI-ACTION BROWSER OPERATOR PANEL -->
-      <div id="taskPlanCard" class="task-plan-card" hidden>
-        <div class="task-plan-header">
-          <div>
-            <div id="planTitle" class="task-plan-title">Multi-Action Task Plan</div>
-            <div id="planMeta" class="task-plan-meta">Target: current tab · 0 steps</div>
-          </div>
-          <span id="planStatusBadge" class="status-badge">Pending</span>
-        </div>
-
-        <div class="progress-container">
-          <div class="progress-label-row">
-            <span id="progressStepsLabel">0 of 0 steps completed</span>
-            <span id="progressPercentLabel">0%</span>
-          </div>
-          <div class="progress-bar-bg">
-            <div id="progressBarFill" class="progress-bar-fill"></div>
-          </div>
-        </div>
-
-        <div id="planStepsList" class="plan-steps-list"></div>
-
-        <div class="plan-controls-bar">
-          <button id="planPauseResumeBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
-            ⏸️ Pause
-          </button>
-          <button id="planSkipBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
-            ⏭️ Skip
-          </button>
-          <button
-            id="planStopBtn"
-            class="ghost"
-            style="
-              padding: 3px 8px;
-              font-size: 10px;
-              color: var(--destructive);
-              border-color: rgba(239, 68, 68, 0.4);
-            "
-          >
-            ⏹️ Stop
-          </button>
-          <button id="planRetryBtn" class="ghost" style="padding: 3px 8px; font-size: 10px" hidden>
-            🔄 Retry
-          </button>
-        </div>
-      </div>
-
-      <!-- EXTRACTED DATA & REPORT CARD -->
-      <div id="extractedDataCard" class="extracted-card" hidden>
-        <div class="extracted-header">
-          <span id="extractedCountTitle">📊 Extracted Page Data (0 items)</span>
-          <button id="copyExtractedBtn" style="padding: 2px 7px; font-size: 10px">
-            📋 Copy List
-          </button>
-        </div>
-        <div id="extractedContent" class="extracted-content"></div>
-      </div>
-
-      <!-- CONSEQUENTIAL ACTION APPROVAL CARD -->
-      <div id="consequentialApprovalCard" class="confirm-card" hidden>
-        <h4>🛡️ Consequential Step Approval</h4>
-        <p id="consequentialPrompt" style="font-size: 11px; color: #fef08a">
-          Buddy is about to perform a consequential action (e.g. submit, purchase, payment, or
-          delete).
-        </p>
-        <div style="display: flex; gap: 6px; margin-top: 4px">
-          <button id="approveConsequentialBtn" style="padding: 4px 10px; font-size: 11px">
-            ✅ Approve & Continue
-          </button>
-          <button
-            id="rejectConsequentialBtn"
-            class="ghost"
-            style="padding: 4px 10px; font-size: 11px"
-          >
-            ❌ Skip Step
-          </button>
-        </div>
-      </div>
-
-      <!-- SMART FORM FILLING HELPER (Collapsible / Active) -->
-      <div id="formFillCard" class="form-fill-panel" hidden>
-        <div class="form-fill-title">
-          <span>📝 Smart Form Fill Assistant</span>
-          <button id="closeFormFillBtn" class="ghost" style="padding: 1px 4px; font-size: 10px">
-            ✕
-          </button>
-        </div>
-        <p style="color: var(--muted); font-size: 10px">
-          Buddy matches fields, preserves existing user data, and verifies every filled value.
-        </p>
-        <div id="formFillReport" class="form-fill-report" hidden></div>
-        <div style="display: flex; gap: 5px; margin-top: 2px">
-          <button id="autoFillSampleBtn" style="padding: 4px 8px; font-size: 10px">
-            ✨ Auto-fill Verified Info
-          </button>
-          <button id="verifyFormInputsBtn" class="ghost" style="padding: 4px 8px; font-size: 10px">
-            🔍 Check Field Values
-          </button>
-        </div>
-      </div>
-
-      <!-- Action Confirmation Card (High Impact Protection) -->
-      <div id="confirmCard" class="confirm-card" hidden>
-        <h4>⚠️ Confirmation Needed</h4>
-        <p id="confirmDesc" style="font-size: 11px; color: var(--muted)"></p>
-        <div style="display: flex; gap: 6px; margin-top: 4px">
-          <button id="confirmApproveBtn" style="padding: 4px 8px; font-size: 11px">
-            Approve Action
-          </button>
-          <button id="confirmCancelBtn" class="ghost" style="padding: 4px 8px; font-size: 11px">
-            Cancel
-          </button>
-        </div>
-      </div>
-
-      <!-- Answer Card Container for compatibility -->
-      <div id="answerCard" class="answer-card" hidden></div>
-      <div id="signedOut" class="auth-banner" hidden></div>
-
-      <!-- Page Completeness Notice Banner -->
-      <div
-        id="pageCompletenessBanner"
-        class="confirm-card"
-        style="
-          border-color: rgba(245, 158, 11, 0.4);
-          background: rgba(245, 158, 11, 0.12);
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 4px 8px;
-        "
-        hidden
-      >
-        <span id="completenessText" style="font-size: 11px; color: #fbbf24"
-          >📜 More content exists below visible fold</span
-        >
-        <button
-          id="scrollDownBannerBtn"
-          class="ghost"
-          style="
-            padding: 2px 7px;
-            font-size: 10px;
-            color: #fbbf24;
-            border-color: rgba(245, 158, 11, 0.4);
-          "
-        >
-          ⬇️ Scroll Down
-        </button>
-      </div>
-
-      <!-- Main Interface -->
-      <div id="signedIn" class="content-area">
-        <div class="quick-chips">
-          <span
-            class="chip"
-            id="meeshoTaskChip"
-            style="border-color: rgba(20, 184, 166, 0.4); color: var(--accent)"
-            title="Execute multi-step Meesho supplier workflow"
-            data-multi-task="Open Meesho Supplier Panel, go to Orders, open today's orders, find pending orders, copy their order IDs, and prepare a list of them"
-          >
-            📦 Meesho: Pending Orders
-          </span>
-          <span
-            class="chip"
-            id="scrapeTableChip"
-            title="Extract table data and copy to clipboard"
-            data-multi-task="Find tables on this page, extract all rows and columns, copy list to clipboard"
-          >
-            📋 Copy Table
-          </span>
-          <span class="chip" id="scrollDownChip" title="Scroll page down"> ⬇️ Scroll Down </span>
-          <span class="chip" id="scrollUpChip" title="Scroll page up"> ⬆️ Scroll Up </span>
-          <span
-            class="chip"
-            data-q="Analyze what this page is about simply and summarize key points."
-            data-i="explain_page"
-          >
-            🔍 Analyze page
-          </span>
-          <span
-            class="chip"
-            data-q="Where is the GSTIN or registration field on this page?"
-            data-i="locate_element"
-          >
-            🎯 Locate field
-          </span>
-          <span class="chip" id="openFormAssistantChip"> 📝 Fill form </span>
-          <span
-            class="chip"
-            data-q="Are there any validation errors or missing required fields?"
-            data-i="classify"
-          >
-            ⚠️ Check errors
-          </span>
-          <span class="chip" data-q="What should I do next on this page?" data-i="plan">
-            ➡️ Next step
-          </span>
-        </div>
-
-        <!-- History conversation box -->
-        <div id="historyBox" class="history-box">
-          <div class="msg-bubble msg-buddy">
-            Hey! I am your AI Buddy. Ask me anything about this page or select any of the 16
-            specialists above!
-          </div>
-        </div>
-
-        <!-- Input box -->
-        <div class="input-box">
-          <textarea
-            id="promptInput"
-            placeholder="Ask Buddy… e.g. Where do I enter GSTIN?"
-          ></textarea>
-          <div class="controls">
-            <div class="action-group">
-              <button id="voiceBtn" class="voice-btn" title="Push to talk">🎤 Talk</button>
-              <button
-                id="highlightBtn"
-                class="ghost"
-                title="Highlight target element on page"
-                hidden
-              >
-                🎯 Point Arm
-              </button>
-              <button id="speakAnswerBtn" class="ghost" title="Read aloud" hidden>🔊 Read</button>
-            </div>
-            <button id="sendBtn">Ask</button>
-          </div>
-        </div>
-
-        <div id="statusText" class="status-msg"></div>
-      </div>
-
+      <!-- FOOTER -->
       <footer>
         <span id="userAccount">Guest Mode (Sign in optional)</span>
-        <button id="connectBtn" class="ghost" style="padding: 2px 6px; font-size: 11px">
-          Connect
-        </button>
-        <button id="signoutBtn" class="ghost" style="padding: 2px 6px; font-size: 11px" hidden>
-          Sign out
-        </button>
+        <div style="display: flex; gap: 4px">
+          <button id="connectBtn" class="ghost" style="padding: 2px 6px; font-size: 10px">Connect</button>
+          <button id="signoutBtn" class="ghost" style="padding: 2px 6px; font-size: 10px" hidden>Sign out</button>
+        </div>
       </footer>
     </div>
     <script src="sidepanel.js"></script>
