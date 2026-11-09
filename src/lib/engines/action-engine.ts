@@ -95,7 +95,13 @@ export function validateAction(req: ActionExecutionRequest): ActionExecutionVali
 
   // 2. Sensitive field check
   if (req.target.role === "textbox" || req.target.role === "textarea") {
-    if (isSensitiveField(req.target.text ?? "", req.target.selector)) {
+    if (
+      isSensitiveField({
+        label: req.target.text ?? "",
+        name: req.target.selector,
+        type: req.target.role,
+      })
+    ) {
       return {
         allowed: false,
         requiresConsent: false,

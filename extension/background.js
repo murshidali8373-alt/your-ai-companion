@@ -48,19 +48,39 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg.type === "SAVE_SESSION") {
-    const url = sender.url || "";
-    if (!sender.tab || !msg.session?.apiBase || !url.startsWith(msg.session.apiBase)) {
+    if (!sender.tab || !sender.url || !msg.session?.apiBase) {
       reply({ ok: false });
       return;
     }
-    chrome.storage.local.set({ session: msg.session }).then(() => reply({ ok: true }));
-    return true;
+    try {
+      const senderParsed = new URL(sender.url);
+      const apiBaseParsed = new URL(msg.session.apiBase);
+
+      // Strict origin match: protocol, hostname, and port must match exactly
+      if (senderParsed.origin !== apiBaseParsed.origin) {
+        reply({ ok: false, error: "Origin mismatch" });
+        return;
+      }
+
+      // Strict pathname check: must be exactly "/connect" or "/connect/"
+      const path = senderParsed.pathname.replace(/\/+$/, "") || "/";
+      if (path !== "/connect") {
+        reply({ ok: false, error: "Invalid route for session handshake" });
+        return;
+      }
+
+      chrome.storage.local
+        .set({ session: msg.session, lastBase: apiBaseParsed.origin })
+        .then(() => reply({ ok: true }));
+      return true;
+    } catch {
+      reply({ ok: false, error: "Invalid URL structure" });
+      return;
+    }
   }
   if (msg.type === "ASK") {
-    ask(msg.question, msg.intent, msg.history, msg.buddySlug, msg.customBuddyId, msg.preferredModel).then(
-      reply,
-      (e) => reply({ error: String(e?.message || e) }),
-    );
+    // prettier-ignore
+    ask(msg.question, msg.intent, msg.history, msg.buddySlug, msg.customBuddyId, msg.preferredModel).then(reply, (e) => reply({ error: String(e?.message || e) }));
     return true;
   }
   if (msg.type === "SIGN_OUT") {
@@ -738,14 +758,29 @@ async function smartFillForm(fields, options = {}) {
       const successfullyFilled = [];
 
       const FIELD_SYNONYMS = {
-        name: ["fullname", "legalname", "username", "contactname", "applicantname", "ownername", "firstname"],
+        name: [
+          "fullname",
+          "legalname",
+          "username",
+          "contactname",
+          "applicantname",
+          "ownername",
+          "firstname",
+        ],
         fullname: ["name", "legalname", "username"],
         legalname: ["company", "businessname", "firmname", "organization", "companyname", "name"],
         tradename: ["businessname", "storename", "shopname", "brandname", "company"],
         email: ["mail", "emailaddress", "contactemail"],
         phone: ["mobile", "contact", "contactnumber", "tel", "phonenumber", "cellphone"],
         gstin: ["gst", "taxid", "gstnumber", "gstinnumber", "tin"],
-        address: ["street", "line1", "addressline1", "shippingaddress", "billingaddress", "fulladdress"],
+        address: [
+          "street",
+          "line1",
+          "addressline1",
+          "shippingaddress",
+          "billingaddress",
+          "fulladdress",
+        ],
         city: ["town", "district"],
         state: ["province", "region"],
         pincode: ["zip", "zipcode", "postalcode", "pin"],
@@ -759,9 +794,7 @@ async function smartFillForm(fields, options = {}) {
         // Find candidate field on the page
         const candidate = elements.find((el) => {
           const ids = getFieldIdentifiers(el);
-          return ids.some((id) =>
-            keyCandidates.some((k) => id.includes(k) || k.includes(id)),
-          );
+          return ids.some((id) => keyCandidates.some((k) => id.includes(k) || k.includes(id)));
         });
 
         if (!candidate) {

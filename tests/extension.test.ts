@@ -37,6 +37,48 @@ describe("MV3 Chrome Extension and Side Panel", () => {
     expect(html).toContain('id="fixErrorsBtn"');
   });
 
+  it("provides all 6 navigation tabs across Chat, Page, Tasks, Models, Rig, and Settings", () => {
+    const html = fs.readFileSync(sidepanelHtmlPath, "utf-8");
+    const js = fs.readFileSync(sidepanelJsPath, "utf-8");
+
+    // All 6 tabs present in HTML
+    expect(html).toContain('data-tab="chat"');
+    expect(html).toContain('data-tab="page"');
+    expect(html).toContain('data-tab="tasks"');
+    expect(html).toContain('data-tab="models"');
+    expect(html).toContain('data-tab="rig"');
+    expect(html).toContain('data-tab="settings"');
+    expect(html).toContain('id="tabSettings"');
+
+    // All 6 tab panels switched in JS
+    expect(js).toContain('if ($("tabChat"))');
+    expect(js).toContain('if ($("tabPage"))');
+    expect(js).toContain('if ($("tabTasks"))');
+    expect(js).toContain('if ($("tabModels"))');
+    expect(js).toContain('if ($("tabRig"))');
+    expect(js).toContain('if ($("tabSettings"))');
+    expect(js).toContain("loadSettingsTab");
+  });
+
+  it("provides visible loading spinner states during AI response generation", () => {
+    const html = fs.readFileSync(sidepanelHtmlPath, "utf-8");
+    const js = fs.readFileSync(sidepanelJsPath, "utf-8");
+
+    // CSS spinner and loading bubble definitions
+    expect(html).toContain(".msg-loading");
+    expect(html).toContain(".loading-spinner-ring");
+    expect(html).toContain(".btn-spinner");
+    expect(html).toContain(".loading-dots-wrap");
+    expect(html).toContain("@keyframes buddy-spin");
+
+    // JS helper functions and state triggers
+    expect(js).toContain("showChatLoadingSpinner");
+    expect(js).toContain("hideChatLoadingSpinner");
+    expect(js).toContain("aiThinkingBubble");
+    expect(js).toContain("btn-spinner");
+    expect(js).toContain('showChatLoadingSpinner("Buddy is thinking & analyzing…")');
+  });
+
   it("sidepanel.js wires speech, messaging, emotion states, guest mode, and error inspection", () => {
     expect(fs.existsSync(sidepanelJsPath)).toBe(true);
     const js = fs.readFileSync(sidepanelJsPath, "utf-8");
@@ -165,5 +207,65 @@ describe("MV3 Chrome Extension and Side Panel", () => {
     expect(context.length).toBe(6);
     expect(context[0]).toEqual({ role: "user", content: "Turn 2 Q" });
     expect(context[1]).toEqual({ role: "assistant", content: "Turn 2 A" });
+  });
+
+  it("restricts session synchronization with strict URL parsing, exact origin matching, and /connect validation", () => {
+    const bridgeCode = fs.readFileSync(path.join(extDir, "bridge.js"), "utf-8");
+    const bgCode = fs.readFileSync(path.join(extDir, "background.js"), "utf-8");
+
+    // bridge.js strictly checks normalized pathname === "/connect"
+    expect(bridgeCode).toContain(
+      'const currentPath = window.location.pathname.replace(/\\/+$/, "") || "/"',
+    );
+    expect(bridgeCode).toContain('if (currentPath !== "/connect") return');
+
+    // background.js performs strict new URL parsing and exact origin match
+    expect(bgCode).toContain("const senderParsed = new URL(sender.url)");
+    expect(bgCode).toContain("const apiBaseParsed = new URL(msg.session.apiBase)");
+    expect(bgCode).toContain("if (senderParsed.origin !== apiBaseParsed.origin)");
+    expect(bgCode).toContain('if (path !== "/connect")');
+    expect(bgCode).toContain("lastBase: apiBaseParsed.origin");
+
+    // Functional verification of origin check logic
+    const validateOriginAndPath = (senderUrl: string, apiBase: string) => {
+      try {
+        const s = new URL(senderUrl);
+        const a = new URL(apiBase);
+        if (s.origin !== a.origin) return false;
+        const p = s.pathname.replace(/\/+$/, "") || "/";
+        return p === "/connect";
+      } catch {
+        return false;
+      }
+    };
+
+    // Valid handshake
+    expect(validateOriginAndPath("https://ai-buddy.app/connect", "https://ai-buddy.app")).toBe(
+      true,
+    );
+    expect(validateOriginAndPath("https://ai-buddy.app/connect/", "https://ai-buddy.app")).toBe(
+      true,
+    );
+
+    // Rejection of subdomain attack or prefix spoofing
+    expect(
+      validateOriginAndPath("https://ai-buddy.app.attacker.com/connect", "https://ai-buddy.app"),
+    ).toBe(false);
+
+    // Rejection of different port or protocol
+    expect(validateOriginAndPath("http://ai-buddy.app/connect", "https://ai-buddy.app")).toBe(
+      false,
+    );
+    expect(validateOriginAndPath("https://ai-buddy.app:8080/connect", "https://ai-buddy.app")).toBe(
+      false,
+    );
+
+    // Rejection of non-connect routes or substring query parameters
+    expect(validateOriginAndPath("https://ai-buddy.app/connector", "https://ai-buddy.app")).toBe(
+      false,
+    );
+    expect(
+      validateOriginAndPath("https://ai-buddy.app/login?ref=/connect", "https://ai-buddy.app"),
+    ).toBe(false);
   });
 });

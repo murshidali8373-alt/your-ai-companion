@@ -84,7 +84,15 @@ export interface UseFormFillerOptions {
 }
 
 export const FIELD_SYNONYMS: Record<string, string[]> = {
-  name: ["fullname", "legalname", "username", "contactname", "applicantname", "ownername", "firstname"],
+  name: [
+    "fullname",
+    "legalname",
+    "username",
+    "contactname",
+    "applicantname",
+    "ownername",
+    "firstname",
+  ],
   fullname: ["name", "legalname", "username"],
   legalname: ["company", "businessname", "firmname", "organization", "companyname", "name"],
   tradename: ["businessname", "storename", "shopname", "brandname", "company"],
@@ -470,9 +478,7 @@ export async function executeFormFill(
     // Find matching candidate
     const candidate = allFormElements.find((el) => {
       const ids = getFieldIdentifiers(el);
-      return ids.some((id) =>
-        keyCandidates.some((k) => id.includes(k) || k.includes(id)),
-      );
+      return ids.some((id) => keyCandidates.some((k) => id.includes(k) || k.includes(id)));
     });
 
     if (!candidate) {

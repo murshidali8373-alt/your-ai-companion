@@ -97,8 +97,8 @@ describe("Phase 4: Premium Side Panel Redesign & Intelligent Model Experience", 
     );
 
     const bgJs = fs.readFileSync(backgroundJsPath, "utf-8");
-    expect(bgJs).toContain(
-      "ask(msg.question, msg.intent, msg.history, msg.buddySlug, msg.customBuddyId, msg.preferredModel)",
+    expect(bgJs).toMatch(
+      /ask\(\s*msg\.question,\s*msg\.intent,\s*msg\.history,\s*msg\.buddySlug,\s*msg\.customBuddyId,\s*msg\.preferredModel\s*\)/,
     );
     expect(bgJs).toContain("preferredModel: preferredModel || undefined");
   });

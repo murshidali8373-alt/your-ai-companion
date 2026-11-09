@@ -452,6 +452,79 @@
         border: 1px solid var(--border);
         border-bottom-left-radius: 2px;
       }
+      .msg-loading {
+        align-self: flex-start;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(99, 102, 241, 0.08);
+        border: 1px dashed var(--border-accent);
+        color: var(--text-muted);
+        border-bottom-left-radius: 2px;
+        font-size: 11px;
+        padding: 8px 12px;
+      }
+      .loading-spinner-ring {
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(99, 102, 241, 0.25);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        display: inline-block;
+        animation: buddy-spin 0.75s linear infinite;
+        flex-shrink: 0;
+      }
+      .loading-dots-wrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin-left: 2px;
+      }
+      .loading-dots-wrap .typing-dot {
+        width: 3.5px;
+        height: 3.5px;
+        background-color: var(--accent);
+        border-radius: 50%;
+        display: inline-block;
+        animation: buddy-bounce 1.4s infinite ease-in-out both;
+      }
+      .loading-dots-wrap .typing-dot:nth-child(1) {
+        animation-delay: -0.32s;
+      }
+      .loading-dots-wrap .typing-dot:nth-child(2) {
+        animation-delay: -0.16s;
+      }
+      .loading-dots-wrap .typing-dot:nth-child(3) {
+        animation-delay: 0s;
+      }
+      .btn-spinner {
+        width: 11px;
+        height: 11px;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        border-top-color: #ffffff;
+        border-radius: 50%;
+        display: inline-block;
+        animation: buddy-spin 0.75s linear infinite;
+        vertical-align: middle;
+      }
+      @keyframes buddy-spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      @keyframes buddy-bounce {
+        0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+        40% { transform: scale(1.2); opacity: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .loading-spinner-ring,
+        .btn-spinner {
+          animation-duration: 2s;
+        }
+        .loading-dots-wrap .typing-dot {
+          animation: none;
+          opacity: 0.8;
+        }
+      }
 
       /* ================= SMART MODE SELECTOR ================= */
       .mode-selector-bar {
@@ -819,6 +892,7 @@
         <button class="tab-btn" data-tab="tasks">🧠 Tasks</button>
         <button class="tab-btn" data-tab="models">⚡ Models</button>
         <button class="tab-btn" data-tab="rig">🎨 Rig</button>
+        <button class="tab-btn" data-tab="settings">⚙️ Settings</button>
       </nav>
 
       <!-- ================= ALL 16 BUDDIES SELECTOR CAROUSEL ================= -->
@@ -1624,6 +1698,246 @@
               🙂 Idle / Reset
             </button>
           </div>
+        </div>
+      </div>
+
+      <!-- ================= TAB 6: SETTINGS & PREFERENCES ================= -->
+      <div id="tabSettings" class="tab-panel" hidden>
+        <!-- Account & Session Status Card -->
+        <div class="section-card">
+          <div class="section-card-title">
+            <span>👤 Account & Handshake</span>
+            <span id="settingsAccountBadge" class="status-badge">Guest Mode</span>
+          </div>
+          <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px">
+            <span id="settingsUserEmail">Sign in to sync custom buddies, tasks, and memory.</span>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px">
+            <label
+              style="
+                font-size: 10px;
+                font-weight: 600;
+                color: var(--text-dim);
+                text-transform: uppercase;
+              "
+              >Backend Server URL</label
+            >
+            <div style="display: flex; gap: 4px">
+              <input
+                id="settingsApiBaseInput"
+                type="text"
+                placeholder="https://..."
+                style="
+                  flex: 1;
+                  padding: 5px 8px;
+                  font-size: 11px;
+                  background: var(--bg);
+                  border: 1px solid var(--border);
+                  border-radius: var(--radius-sm);
+                  color: var(--text);
+                "
+              />
+              <button
+                id="settingsSaveApiBaseBtn"
+                class="ghost"
+                style="padding: 4px 8px; font-size: 10px; font-weight: 600"
+              >
+                Save
+              </button>
+              <button
+                id="settingsDetectHostBtn"
+                class="ghost"
+                style="padding: 4px 8px; font-size: 10px"
+                title="Detect current active tab host"
+              >
+                Auto
+              </button>
+            </div>
+            <span
+              id="settingsHostFeedback"
+              style="font-size: 10px; color: var(--accent-cyan); display: none"
+            ></span>
+          </div>
+
+          <div style="display: flex; gap: 6px; margin-top: 4px">
+            <button
+              id="settingsConnectWebBtn"
+              style="
+                flex: 1;
+                padding: 6px;
+                font-size: 11px;
+                font-weight: 600;
+                background: var(--accent);
+                color: white;
+                border: none;
+                border-radius: var(--radius-sm);
+                cursor: pointer;
+              "
+            >
+              🔗 Connect Web Session
+            </button>
+            <button
+              id="settingsSignOutBtn"
+              class="ghost"
+              style="padding: 6px 10px; font-size: 11px"
+            >
+              Sign Out
+            </button>
+          </div>
+        </div>
+
+        <!-- Security & Automation Guardrails -->
+        <div class="section-card">
+          <div class="section-card-title">
+            <span>🛡️ Security & Permissions</span>
+            <span class="status-badge" style="background: rgba(16, 185, 129, 0.15); color: #6ee7b7"
+              >Guarded</span
+            >
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 8px">
+            <div>
+              <label
+                style="
+                  font-size: 10px;
+                  font-weight: 600;
+                  color: var(--text-dim);
+                  text-transform: uppercase;
+                  display: block;
+                  margin-bottom: 3px;
+                "
+                >Browser Permission Ladder</label
+              >
+              <select
+                id="settingsPermissionLevel"
+                style="
+                  width: 100%;
+                  padding: 5px 8px;
+                  font-size: 11px;
+                  background: var(--bg);
+                  border: 1px solid var(--border);
+                  border-radius: var(--radius-sm);
+                  color: var(--text);
+                "
+              >
+                <option value="observe">Level 1: Observe (Read page content only)</option>
+                <option value="explain">Level 2: Explain (Highlight elements & explain)</option>
+                <option value="suggest">Level 3: Suggest (Propose action plans)</option>
+                <option value="assist" selected>
+                  Level 4: Assist (Prompt for high-impact actions)
+                </option>
+                <option value="execute">Level 5: Execute (Full autonomous execution)</option>
+              </select>
+            </div>
+
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 6px 0;
+                border-top: 1px solid var(--border);
+              "
+            >
+              <div>
+                <span style="font-size: 11px; font-weight: 500; display: block"
+                  >Consequential Action Gates</span
+                >
+                <span style="font-size: 9px; color: var(--text-dim)"
+                  >Require approval for checkout, deletes, & submit</span
+                >
+              </div>
+              <input
+                id="settingsConsequentialGate"
+                type="checkbox"
+                checked
+                style="accent-color: var(--accent); width: 14px; height: 14px"
+              />
+            </div>
+
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 6px 0;
+                border-top: 1px solid var(--border);
+              "
+            >
+              <div>
+                <span style="font-size: 11px; font-weight: 500; display: block"
+                  >Sensitive Data Filter</span
+                >
+                <span style="font-size: 9px; color: var(--text-dim)"
+                  >Zero interaction with passwords, OTPs, CVVs</span
+                >
+              </div>
+              <span style="font-size: 10px; font-weight: 600; color: #10b981">Always Active</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Voice & Audio Feedback -->
+        <div class="section-card">
+          <div class="section-card-title">
+            <span>🔊 Audio & Narration</span>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between">
+            <div>
+              <span style="font-size: 11px; font-weight: 500; display: block"
+                >Vocal Buddy Speech</span
+              >
+              <span style="font-size: 9px; color: var(--text-dim)"
+                >Narrate answers and actions via Web Speech TTS</span
+              >
+            </div>
+            <button
+              id="settingsVoiceToggleBtn"
+              class="ghost"
+              style="padding: 4px 8px; font-size: 10px; font-weight: 600"
+            >
+              🔊 Unmuted
+            </button>
+          </div>
+        </div>
+
+        <!-- Storage & Diagnostics -->
+        <div class="section-card">
+          <div class="section-card-title">
+            <span>🧹 Data & Memory Maintenance</span>
+          </div>
+          <p style="font-size: 10px; color: var(--text-muted); margin-bottom: 8px">
+            Clear stored multi-turn conversation context or local caching if you encounter stale
+            page states.
+          </p>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap">
+            <button
+              id="settingsClearBufferBtn"
+              class="ghost"
+              style="padding: 4px 8px; font-size: 10px"
+            >
+              Clear 3-Turn Context
+            </button>
+            <button
+              id="settingsClearStorageBtn"
+              class="ghost"
+              style="padding: 4px 8px; font-size: 10px"
+            >
+              Reset Local Storage
+            </button>
+            <button
+              id="settingsOpenDashboardBtn"
+              class="ghost"
+              style="padding: 4px 8px; font-size: 10px"
+            >
+              🖥️ Open Dashboard
+            </button>
+          </div>
+          <span
+            id="settingsStorageFeedback"
+            style="font-size: 10px; color: var(--accent-cyan); display: none; margin-top: 4px"
+          ></span>
         </div>
       </div>
 

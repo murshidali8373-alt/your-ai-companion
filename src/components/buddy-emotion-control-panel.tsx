@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   Sparkles,
   Play,
@@ -175,14 +175,17 @@ export function BuddyEmotionControlPanel({
   const tourTimerRef = useRef<NodeJS.Timeout | null>(null);
   const burstTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const currentDef = useMemo(() => {
-    return ALL_EMOTIONS.find((e) => e.id === activeEmotion) || ALL_EMOTIONS[0];
+  const currentDef: EmotionDefinition = useMemo(() => {
+    return ALL_EMOTIONS.find((e) => e.id === activeEmotion) ?? ALL_EMOTIONS[0]!;
   }, [activeEmotion]);
 
-  const setEmotionAndNotify = (emo: BuddyEmotion) => {
-    setActiveEmotion(emo);
-    onEmotionChange?.(emo);
-  };
+  const setEmotionAndNotify = useCallback(
+    (emo: BuddyEmotion) => {
+      setActiveEmotion(emo);
+      onEmotionChange?.(emo);
+    },
+    [onEmotionChange],
+  );
 
   const handleSelectEmotion = (emo: BuddyEmotion) => {
     if (triggerMode === "tour") {
@@ -222,7 +225,10 @@ export function BuddyEmotionControlPanel({
       tourTimerRef.current = setInterval(
         () => {
           idx = (idx + 1) % tourList.length;
-          setEmotionAndNotify(tourList[idx]);
+          const nextEmo = tourList[idx];
+          if (nextEmo) {
+            setEmotionAndNotify(nextEmo);
+          }
         },
         3000 * (1 / animSpeed),
       );
@@ -234,7 +240,7 @@ export function BuddyEmotionControlPanel({
       if (tourTimerRef.current) clearInterval(tourTimerRef.current);
       if (burstTimerRef.current) clearTimeout(burstTimerRef.current);
     };
-  }, [triggerMode, animSpeed, activeEmotion]);
+  }, [triggerMode, animSpeed, activeEmotion, setEmotionAndNotify]);
 
   const cssSnippet = useMemo(() => {
     return `/* Active AI Buddy Emotion: ${currentDef.label.toUpperCase()} */

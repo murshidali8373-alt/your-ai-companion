@@ -1,5 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const DEFAULT_BASE = "https://id-preview--142f3fbd-6878-42b4-9fe5-1517e2fe8f28.lovable.app";
+const RESTRICTED =
+  /^(chrome|edge|about|chrome-extension|devtools|view-source):|chromewebstore\.google\.com|chrome\.google\.com\/webstore/;
 
 // --- CANONICAL 16 BUDDIES REGISTRY ---
 // 15 specialist buddies + 1 user Custom Buddy preloaded for offline/immediate access
@@ -698,6 +700,46 @@ function appendHistory(role, text) {
   box.scrollTop = box.scrollHeight;
 }
 
+function showChatLoadingSpinner(customText) {
+  hideChatLoadingSpinner();
+  const box = $("historyBox");
+  if (!box) return null;
+  const bubble = document.createElement("div");
+  bubble.id = "aiThinkingBubble";
+  bubble.className = "msg-bubble msg-buddy msg-loading";
+
+  const ring = document.createElement("span");
+  ring.className = "loading-spinner-ring";
+  ring.setAttribute("aria-hidden", "true");
+
+  const textSpan = document.createElement("span");
+  textSpan.className = "loading-text";
+  textSpan.textContent = customText || "Thinking…";
+
+  const dots = document.createElement("span");
+  dots.className = "loading-dots-wrap";
+  for (let i = 0; i < 3; i++) {
+    const dot = document.createElement("span");
+    dot.className = "typing-dot";
+    dots.appendChild(dot);
+  }
+
+  bubble.appendChild(ring);
+  bubble.appendChild(textSpan);
+  bubble.appendChild(dots);
+
+  box.appendChild(bubble);
+  box.scrollTop = box.scrollHeight;
+  return bubble;
+}
+
+function hideChatLoadingSpinner() {
+  const existing = $("aiThinkingBubble");
+  if (existing) {
+    existing.remove();
+  }
+}
+
 function getRecentHistoryContext() {
   return conversationBuffer.slice(-MAX_CONVERSATION_TURNS).flatMap((turn) => [
     { role: "user", content: turn.user },
@@ -988,10 +1030,14 @@ async function sendQuery(question, intent) {
 
   busy = true;
   $("sendBtn").disabled = true;
+  $("sendBtn").classList.add("is-loading");
+  $("sendBtn").innerHTML = '<span class="btn-spinner"></span> Thinking…';
 
   const historyPayload = getRecentHistoryContext();
   appendHistory("user", trimmed);
   $("promptInput").value = "";
+
+  showChatLoadingSpinner("Buddy is thinking & analyzing…");
 
   setRigEmotion("thinking", "Thinking…");
   $("statusText").textContent = "Inspecting active webpage & reasoning…";
@@ -1012,6 +1058,8 @@ async function sendQuery(question, intent) {
       customBuddyId: active.isCustom ? active.id || active.slug.replace("custom:", "") : undefined,
       preferredModel: preferredModel && preferredModel !== "auto" ? preferredModel : undefined,
     });
+
+    hideChatLoadingSpinner();
 
     if (res?.error) {
       setRigEmotion("error", "Notice");
@@ -1069,11 +1117,15 @@ async function sendQuery(question, intent) {
       ? `Grounded on active page (${active.name}).`
       : "Answered using specialist knowledge.";
   } catch (err) {
+    hideChatLoadingSpinner();
     setRigEmotion("error", "Error");
     $("statusText").textContent = "Could not reach AI service. Please verify your connection.";
   } finally {
+    hideChatLoadingSpinner();
     busy = false;
     $("sendBtn").disabled = false;
+    $("sendBtn").classList.remove("is-loading");
+    $("sendBtn").textContent = "Send ↵";
   }
 }
 
@@ -1462,7 +1514,9 @@ async function runPlanLoop() {
           currentStep.textTarget ||
           currentStep.title ||
           ""
-        ).toLowerCase().trim();
+        )
+          .toLowerCase()
+          .trim();
 
         if (targetQ && (!currentStep.selector || currentStep.selector === "body")) {
           const cleanQ = targetQ
@@ -1472,7 +1526,7 @@ async function runPlanLoop() {
 
           const matched = allElements.find((el) => {
             const name = (el.name || "").toLowerCase();
-            const ph = ((el.placeholder || "")).toLowerCase();
+            const ph = (el.placeholder || "").toLowerCase();
             return name === cleanQ || name.includes(cleanQ) || ph.includes(cleanQ);
           });
 
@@ -2098,8 +2152,18 @@ $("confirmCancelBtn").onclick = () => {
 };
 
 $("connectBtn").onclick = async () => {
-  const { lastBase } = await chrome.storage.local.get("lastBase");
-  chrome.tabs.create({ url: `${lastBase || DEFAULT_BASE}/connect` });
+  const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
+  let targetBase = session?.apiBase || lastBase;
+  if (!targetBase) {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.url && !RESTRICTED.test(tab.url)) {
+        const u = new URL(tab.url);
+        if (u.protocol.startsWith("http")) targetBase = u.origin;
+      }
+    } catch {}
+  }
+  chrome.tabs.create({ url: `${targetBase || DEFAULT_BASE}/connect` });
 };
 
 $("signoutBtn").onclick = async () => {
@@ -2140,6 +2204,7 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     if ($("tabTasks")) $("tabTasks").hidden = targetTab !== "tasks";
     if ($("tabModels")) $("tabModels").hidden = targetTab !== "models";
     if ($("tabRig")) $("tabRig").hidden = targetTab !== "rig";
+    if ($("tabSettings")) $("tabSettings").hidden = targetTab !== "settings";
 
     if (targetTab === "page") loadPageContextSummary();
     if (targetTab === "tasks") {
@@ -2147,12 +2212,14 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
       loadTasksHistory();
     }
     if (targetTab === "models") loadModelHubStatus();
+    if (targetTab === "settings") loadSettingsTab();
   };
 });
 
 // Clear Chat History Button
 if ($("clearChatBtn")) {
   $("clearChatBtn").onclick = () => {
+    hideChatLoadingSpinner();
     conversationBuffer.length = 0;
     if ($("historyBox")) {
       $("historyBox").innerHTML =
@@ -2707,6 +2774,165 @@ if ($("sizeSelect")) {
         $("buddy3dImg").style.height = "110px";
       }
     }
+  };
+}
+
+// ================= TAB 6: SETTINGS LOGIC =================
+async function loadSettingsTab() {
+  const { session, lastBase, permissionLevel, requireConsent } = await chrome.storage.local.get([
+    "session",
+    "lastBase",
+    "permissionLevel",
+    "requireConsent",
+  ]);
+
+  if ($("settingsAccountBadge")) {
+    $("settingsAccountBadge").textContent = session ? "Connected" : "Guest Mode";
+    $("settingsAccountBadge").className = `status-badge ${session ? "happy" : ""}`;
+  }
+  if ($("settingsUserEmail")) {
+    $("settingsUserEmail").textContent = session?.email
+      ? `Connected as ${session.email}`
+      : "Guest mode (All 16 specialist buddies ready offline). Connect for cloud memory.";
+  }
+  if ($("settingsApiBaseInput")) {
+    $("settingsApiBaseInput").value = session?.apiBase || lastBase || DEFAULT_BASE;
+  }
+
+  if ($("settingsPermissionLevel")) {
+    $("settingsPermissionLevel").value = permissionLevel || "assist";
+  }
+  if ($("settingsConsequentialGate")) {
+    $("settingsConsequentialGate").checked = requireConsent !== false;
+  }
+
+  if ($("settingsVoiceToggleBtn")) {
+    $("settingsVoiceToggleBtn").textContent = isMuted ? "🔇 Muted" : "🔊 Unmuted";
+  }
+}
+
+if ($("settingsSaveApiBaseBtn")) {
+  $("settingsSaveApiBaseBtn").onclick = async () => {
+    const val = $("settingsApiBaseInput")?.value?.trim();
+    if (val) {
+      try {
+        const parsed = new URL(val);
+        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+          await chrome.storage.local.set({ lastBase: parsed.origin });
+          if ($("settingsHostFeedback")) {
+            $("settingsHostFeedback").textContent = `✓ Saved server: ${parsed.origin}`;
+            $("settingsHostFeedback").style.display = "block";
+            setTimeout(() => {
+              if ($("settingsHostFeedback")) $("settingsHostFeedback").style.display = "none";
+            }, 2500);
+          }
+          return;
+        }
+      } catch {}
+      if ($("settingsHostFeedback")) {
+        $("settingsHostFeedback").textContent = "⚠️ Invalid URL (must be http:// or https://)";
+        $("settingsHostFeedback").style.display = "block";
+        setTimeout(() => {
+          if ($("settingsHostFeedback")) $("settingsHostFeedback").style.display = "none";
+        }, 3000);
+      }
+    }
+  };
+}
+
+if ($("settingsDetectHostBtn")) {
+  $("settingsDetectHostBtn").onclick = async () => {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.url && !RESTRICTED.test(tab.url)) {
+        const u = new URL(tab.url);
+        if (u.protocol.startsWith("http")) {
+          if ($("settingsApiBaseInput")) $("settingsApiBaseInput").value = u.origin;
+          await chrome.storage.local.set({ lastBase: u.origin });
+          if ($("settingsHostFeedback")) {
+            $("settingsHostFeedback").textContent = `✓ Auto-detected: ${u.origin}`;
+            $("settingsHostFeedback").style.display = "block";
+            setTimeout(() => {
+              if ($("settingsHostFeedback")) $("settingsHostFeedback").style.display = "none";
+            }, 2500);
+          }
+        }
+      }
+    } catch {}
+  };
+}
+
+if ($("settingsConnectWebBtn")) {
+  $("settingsConnectWebBtn").onclick = () => {
+    $("connectBtn")?.click();
+  };
+}
+
+if ($("settingsSignOutBtn")) {
+  $("settingsSignOutBtn").onclick = () => {
+    $("signoutBtn")?.click();
+    loadSettingsTab();
+  };
+}
+
+if ($("settingsPermissionLevel")) {
+  $("settingsPermissionLevel").onchange = (e) => {
+    chrome.storage.local.set({ permissionLevel: e.target.value });
+  };
+}
+
+if ($("settingsConsequentialGate")) {
+  $("settingsConsequentialGate").onchange = (e) => {
+    chrome.storage.local.set({ requireConsent: e.target.checked });
+  };
+}
+
+if ($("settingsVoiceToggleBtn")) {
+  $("settingsVoiceToggleBtn").onclick = () => {
+    $("voiceToggleBtn")?.click();
+    if ($("settingsVoiceToggleBtn")) {
+      $("settingsVoiceToggleBtn").textContent = isMuted ? "🔇 Muted" : "🔊 Unmuted";
+    }
+  };
+}
+
+if ($("settingsClearBufferBtn")) {
+  $("settingsClearBufferBtn").onclick = async () => {
+    conversationBuffer.length = 0;
+    await chrome.storage.local.remove("conversationBuffer");
+    if ($("settingsStorageFeedback")) {
+      $("settingsStorageFeedback").textContent = "✓ Cleared conversation buffer";
+      $("settingsStorageFeedback").style.display = "block";
+      setTimeout(() => {
+        if ($("settingsStorageFeedback")) $("settingsStorageFeedback").style.display = "none";
+      }, 2500);
+    }
+  };
+}
+
+if ($("settingsClearStorageBtn")) {
+  $("settingsClearStorageBtn").onclick = async () => {
+    const { session } = await chrome.storage.local.get("session");
+    await chrome.storage.local.clear();
+    if (session) await chrome.storage.local.set({ session });
+    conversationBuffer.length = 0;
+    if ($("settingsStorageFeedback")) {
+      $("settingsStorageFeedback").textContent = "✓ Local storage refreshed";
+      $("settingsStorageFeedback").style.display = "block";
+      setTimeout(() => {
+        if ($("settingsStorageFeedback")) $("settingsStorageFeedback").style.display = "none";
+      }, 2500);
+    }
+    render();
+    loadSettingsTab();
+  };
+}
+
+if ($("settingsOpenDashboardBtn")) {
+  $("settingsOpenDashboardBtn").onclick = async () => {
+    const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
+    const base = session?.apiBase || lastBase || DEFAULT_BASE;
+    chrome.tabs.create({ url: `${base}/dashboard` });
   };
 }
 

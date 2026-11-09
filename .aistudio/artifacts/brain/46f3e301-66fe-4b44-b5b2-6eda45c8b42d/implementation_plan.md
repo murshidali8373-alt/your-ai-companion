@@ -9,12 +9,14 @@
 ## 1. Executive Summary & Verification of Codebase Reality
 
 Our independent audit of the repository verified the following baseline:
+
 - **22 Vitest Test Suites (184 Tests)**: 100% passing.
 - **Production Build & Lint**: 0 compilation errors, 0 ESLint errors.
 - **Mascot Emotion & Keyframe Rig**: 10 CSS keyframe animations, 15 specialist costumes, live Emotion Lab on Dashboard, quick emotion test strip on landing page and extension side panel.
 - **Extension Artifact**: MV3 compatible, packaged cleanly at `public/ai-buddy-extension.zip`.
 
 ### The Core Architectural Problem:
+
 Currently, multi-step browser execution is formulated at $T_0$ from the initial prompt or snapshot. When Step 1 navigates to a new URL or triggers an AJAX tab filter, subsequent steps attempt to click or type into elements using pre-baked selectors that either no longer exist or belong to a superseded DOM tree.
 
 **The Solution:** The **Adaptive Observe–Act–Verify (OAV) Execution Loop** transforms AI Buddy from a static command dispatcher into an autonomous browser agent that dynamically re-observes the live tab, re-grounds element references against the fresh accessibility tree, dispatches synthetic framework-compatible actions, awaits genuine page settling, semantically verifies the outcome, and passes cross-step data context down the workflow.
@@ -103,62 +105,67 @@ export interface CrossStepTaskContext {
   activeTabId: number;
   currentUrl: string;
   status: "planning" | "running" | "paused" | "awaiting_approval" | "completed" | "failed";
-  
+
   // Data transferred across steps
   stepDataStore: Record<string, unknown>; // e.g. { extractedOrderIds: ["ORD-991", "ORD-992"], totalCount: 2 }
-  
+
   // Adaptive Steps
   steps: MultiActionStep[];
   currentStepIndex: number;
   totalSteps: number;
-  
+
   // Reliability & Action Deduplication
   executedActionHashes: string[];
   retryHistory: Record<string, number>;
-  
+
   // Safety
   pendingApprovalStepId?: string;
   approvalPrompt?: string;
-  
+
   createdAt: string;
   updatedAt: string;
 }
 ```
-*Persistence*: Synced to `chrome.storage.local` under `"ai_buddy_active_task"` on every step transition.
+
+_Persistence_: Synced to `chrome.storage.local` under `"ai_buddy_active_task"` on every step transition.
 
 ---
 
 ## 4. Failure Recovery Matrix
 
-| Condition | Immediate Action | Automated Recovery | Max Retries |
-|---|---|---|---|
-| **Element Not Found** | Halt step; log failure | Re-run semantic resolution against fresh snapshot with broader query | 2 retries |
-| **Stale Reference** | Catch DOM disconnection | Re-query live DOM using tag + accessible text | 2 retries |
-| **Navigation Timeout** | Check tab state | Poll active URL; if URL changed, trigger Triple-Signal settle | 1 retry |
-| **Form Validation Error** | Detect `.invalid-feedback` or `aria-invalid` | Read error message, query user profile for corrected format | 2 retries |
-| **Consequential Action** | Pre-action classifier halts | Present yellow approval card; await explicit user button click | 0 (Human gate) |
-| **Duplicate Action Risk** | Check hash in `executedActionHashes` | Skip re-execution and resume from next pending step | Immediate stop |
+| Condition                 | Immediate Action                             | Automated Recovery                                                   | Max Retries    |
+| ------------------------- | -------------------------------------------- | -------------------------------------------------------------------- | -------------- |
+| **Element Not Found**     | Halt step; log failure                       | Re-run semantic resolution against fresh snapshot with broader query | 2 retries      |
+| **Stale Reference**       | Catch DOM disconnection                      | Re-query live DOM using tag + accessible text                        | 2 retries      |
+| **Navigation Timeout**    | Check tab state                              | Poll active URL; if URL changed, trigger Triple-Signal settle        | 1 retry        |
+| **Form Validation Error** | Detect `.invalid-feedback` or `aria-invalid` | Read error message, query user profile for corrected format          | 2 retries      |
+| **Consequential Action**  | Pre-action classifier halts                  | Present yellow approval card; await explicit user button click       | 0 (Human gate) |
+| **Duplicate Action Risk** | Check hash in `executedActionHashes`         | Skip re-execution and resume from next pending step                  | Immediate stop |
 
 ---
 
 ## 5. Implementation Phases & Proposed Changes
 
 ### Phase 1: Dynamic In-Flight Semantic Re-Grounding
+
 - **Files**: `src/shared/browser-action.ts`, `src/lib/engines/action-engine.ts`
 - **Scope**: Add `resolveLiveElementTarget()` and enhance `MultiActionStep` with dynamic target descriptors.
 - **Verification**: Vitest tests verifying element resolution across shifting DOM class names and dynamic IDs.
 
 ### Phase 2: Triple-Signal Settle & Navigation Watchdog
+
 - **Files**: `extension/background.js`, `extension/snapshot.js`
 - **Scope**: Implement `waitForPageSettle()` combining network idle, `MutationObserver`, and `requestAnimationFrame`.
 - **Verification**: Tests verifying waiting for asynchronous DOM mutations without hardcoded sleep timers.
 
 ### Phase 3: Adaptive OAV Execution Loop & Cross-Step Context in Sidepanel
+
 - **Files**: `extension/sidepanel.js`, `src/shared/task-lifecycle.ts`
 - **Scope**: Upgrade `runPlanLoop()` to execute the 9-stage cycle, persist state to `chrome.storage.local`, and pass extracted data across steps.
 - **Verification**: End-to-end multi-step workflow simulation test (Navigate $\to$ Filter $\to$ Extract $\to$ Complete).
 
 ### Phase 4: Full System Verification & Extension Repackaging
+
 - **Files**: `public/ai-buddy-extension.zip` via `scripts/pack.py`
 - **Scope**: Run full Vitest suite (184+ tests), verify 0 TypeScript and 0 ESLint errors, and package production extension ZIP.
 

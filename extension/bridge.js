@@ -22,6 +22,9 @@ window.addEventListener("message", (e) => {
   }
 
   if (d.type !== "AI_BUDDY_SESSION" || typeof d.accessToken !== "string") return;
+  // Security guard: Strict route check - only accept session synchronization on /connect
+  const currentPath = window.location.pathname.replace(/\/+$/, "") || "/";
+  if (currentPath !== "/connect") return;
   chrome.runtime.sendMessage(
     {
       type: "SAVE_SESSION",

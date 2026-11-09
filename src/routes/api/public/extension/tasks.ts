@@ -176,7 +176,11 @@ export const Route = createFileRoute("/api/public/extension/tasks")({
                 actionHash: s.actionHash || null,
               },
             }));
-            await auth.db.from("task_events").insert(events).catch(() => undefined);
+            try {
+              await auth.db.from("task_events").insert(events);
+            } catch {
+              // Non-fatal
+            }
           }
 
           return json({ ok: true, taskId, status: body.status, checkpoint: body.checkpoint });
