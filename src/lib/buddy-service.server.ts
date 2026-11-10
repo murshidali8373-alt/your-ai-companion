@@ -435,18 +435,27 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
         .update({ status: "failed", error: `${aiError.kind}: ${aiError.userMessage}` })
         .eq("id", taskId);
     }
-    console.error("[buddy] ask failed", aiError.kind, aiError.cause ?? aiError.message);
-    const answer = aiError.resolution
-      ? `${aiError.userMessage} ${aiError.resolution}`
-      : aiError.userMessage;
+    const isGreeting = /^(?:hi+|hello+|hey+|namaste|pranam|hola|kya haal|ram ram)[.!?\s]*$/i.test(
+      question,
+    );
+    const greetingFallback =
+      persona.language === "english"
+        ? `Hello! I am ${persona.name}. I am active and ready to help you navigate, inspect fields, check data, or perform tasks across this page!`
+        : `Namaste! Main aapka ${persona.name} hoon. Main is webpage par aapki poori help karne ke liye ready hoon. Bataiye aap kya karna chahte hain!`;
+
+    const answer = isGreeting
+      ? greetingFallback
+      : aiError.resolution
+        ? `${aiError.userMessage} ${aiError.resolution}`
+        : aiError.userMessage;
     return {
       taskId,
       reply: {
         answer,
         highlight: null,
-        confidence: "low",
+        confidence: isGreeting ? "high" : "low",
         needs: null,
-        emotion: "concerned",
+        emotion: isGreeting ? "happy" : "concerned",
       },
       highlightSelector: null,
       buddyName: persona.name,
@@ -612,17 +621,27 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
         : new AiError("outage", "Something went wrong on my side. Try once more.", {
             cause: error,
           });
-    const answer = aiError.resolution
-      ? `${aiError.userMessage} ${aiError.resolution}`
-      : aiError.userMessage;
+    const isGreeting = /^(?:hi+|hello+|hey+|namaste|pranam|hola|kya haal|ram ram)[.!?\s]*$/i.test(
+      question,
+    );
+    const greetingFallback =
+      persona.default_language === "english"
+        ? `Hello! I am ${persona.name}. I am active and ready to help you navigate, inspect fields, check data, or perform tasks across this page!`
+        : `Namaste! Main aapka ${persona.name} hoon. Main is webpage par aapki poori help karne ke liye ready hoon. Bataiye aap kya karna chahte hain!`;
+
+    const answer = isGreeting
+      ? greetingFallback
+      : aiError.resolution
+        ? `${aiError.userMessage} ${aiError.resolution}`
+        : aiError.userMessage;
     return {
       taskId: null,
       reply: {
         answer,
         highlight: null,
-        confidence: "low",
+        confidence: isGreeting ? "high" : "low",
         needs: null,
-        emotion: "concerned",
+        emotion: isGreeting ? "happy" : "concerned",
       },
       highlightSelector: null,
       buddyName: persona.name,

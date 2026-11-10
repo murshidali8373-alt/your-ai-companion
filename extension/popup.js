@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const DEFAULT_BASE = "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
+const DEFAULT_BASE = "https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app";
 
 async function render() {
   const { session } = await chrome.storage.local.get("session");
@@ -20,9 +20,12 @@ $("connect").onclick = async () => {
           u.protocol.startsWith("http") &&
           (u.hostname.includes("run.app") ||
             u.hostname === "localhost" ||
-            tab.title?.includes("AI Buddy"))
+            u.hostname === "127.0.0.1" ||
+            tab.title?.includes("AI Buddy") ||
+            tab.title?.includes("your-ai-companion") ||
+            u.hostname.includes("aistudio.google.com"))
         ) {
-          targetBase = u.origin;
+          targetBase = u.hostname.includes("aistudio.google.com") ? DEFAULT_BASE : u.origin;
         }
       }
     } catch {}

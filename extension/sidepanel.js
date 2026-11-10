@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const DEFAULT_BASE = "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
+const DEFAULT_BASE = "https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app";
 const RESTRICTED =
   /^(chrome|edge|about|chrome-extension|devtools|view-source):|chromewebstore\.google\.com|chrome\.google\.com\/webstore/;
 
@@ -982,6 +982,24 @@ async function sendQuery(question, intent) {
   const lower = trimmed.toLowerCase();
 
   // 1. Direct browser command intercepts for zero-latency execution
+  const greetingMatch = lower.match(
+    /^(?:hi+|hello+|hey+|namaste|pranam|hola|kya haal|ram ram)[.!?\s]*$/i,
+  );
+  if (greetingMatch) {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    const active = getActiveBuddy();
+    setRigEmotion("celebrate", "Namaste!");
+    const greetingText =
+      active.defaultLanguage === "english"
+        ? `Hey there! I am ${active.name}. Ask me anything about this page, or tell me what action to take (fill forms, find elements, analyze tables, or automate workflows)!`
+        : `Namaste! Main aapka ${active.name} hoon. Aap is page par jo bhi karna chahte hain—forms fill karna, buttons dhoondhna, data copy karna ya Meesho orders check karna—bataiye, main turant help karunga!`;
+    appendHistory("buddy", greetingText);
+    $("statusText").textContent = `Ready with ${active.name}.`;
+    speakResponse(greetingText, "happy");
+    return;
+  }
+
   if (
     /^(?:scroll\s+(?:down|up|to top|top|to bottom|bottom)|neeche jao|upar jao|page down|page up)$/i.test(
       lower,
@@ -2176,9 +2194,15 @@ $("connectBtn").onclick = async () => {
           (u.hostname.includes("run.app") ||
             u.hostname === "localhost" ||
             u.hostname === "127.0.0.1" ||
-            tab.title?.includes("AI Buddy"))
+            tab.title?.includes("AI Buddy") ||
+            tab.title?.includes("your-ai-companion") ||
+            u.hostname.includes("aistudio.google.com"))
         ) {
-          targetBase = u.origin;
+          if (u.hostname.includes("aistudio.google.com")) {
+            targetBase = DEFAULT_BASE;
+          } else {
+            targetBase = u.origin;
+          }
         }
       }
     } catch {}
@@ -2194,9 +2218,11 @@ $("connectBtn").onclick = async () => {
             u.protocol.startsWith("http") &&
             (u.hostname.includes("run.app") ||
               u.hostname === "localhost" ||
-              t.title?.includes("AI Buddy"))
+              t.title?.includes("AI Buddy") ||
+              t.title?.includes("your-ai-companion") ||
+              u.hostname.includes("aistudio.google.com"))
           ) {
-            targetBase = u.origin;
+            targetBase = u.hostname.includes("aistudio.google.com") ? DEFAULT_BASE : u.origin;
             break;
           }
         }

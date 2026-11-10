@@ -2,7 +2,7 @@
 const RESTRICTED =
   /^(chrome|edge|about|chrome-extension|devtools|view-source):|chromewebstore\.google\.com|chrome\.google\.com\/webstore/;
 
-const DEFAULT_HOST = "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
+const DEFAULT_HOST = "https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app";
 const MAX_CONVERSATION_TURNS = 3;
 let conversationBuffer = [];
 
@@ -48,8 +48,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg.type === "SAVE_SESSION") {
-    if (!sender.tab || !sender.url || !msg.session?.apiBase) {
-      reply({ ok: false });
+    if (!sender.url || !msg.session?.apiBase) {
+      reply({ ok: false, error: "Missing sender URL or session payload" });
       return;
     }
     try {
@@ -343,9 +343,15 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
           (u.hostname.includes("run.app") ||
             u.hostname === "localhost" ||
             u.hostname === "127.0.0.1" ||
-            tab.title?.includes("AI Buddy"))
+            tab.title?.includes("AI Buddy") ||
+            tab.title?.includes("your-ai-companion") ||
+            u.hostname.includes("aistudio.google.com"))
         ) {
-          apiBase = u.origin;
+          if (u.hostname.includes("aistudio.google.com")) {
+            apiBase = DEFAULT_HOST;
+          } else {
+            apiBase = u.origin;
+          }
         }
       }
     } catch {}
@@ -395,6 +401,7 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
         method: "POST",
         headers,
         body: payload,
+        credentials: "include",
       });
     } catch (networkErr) {
       if (apiBase !== DEFAULT_HOST) {
@@ -403,12 +410,25 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
             method: "POST",
             headers,
             body: payload,
+            credentials: "include",
           });
         } catch {
           throw networkErr;
         }
       } else {
         throw networkErr;
+      }
+    }
+
+    const contentType = res.headers.get("content-type") || "";
+    if (contentType.includes("text/html")) {
+      const htmlText = await res.text().catch(() => "");
+      if (htmlText.includes("302 Found") || htmlText.includes("__cookie_check") || res.redirected) {
+        return {
+          error: "auth_proxy",
+          message:
+            "Please open your AI Buddy web tab or click 'Connect' to initialize your session cookies.",
+        };
       }
     }
 
@@ -421,7 +441,7 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
       const errMsg =
         body.message ||
         body.error ||
-        `Server returned error (${res.status}). Please check server configuration.`;
+        `Server returned error (${res.status}). Please verify connection.`;
       return { error: "server", message: errMsg };
     }
 
