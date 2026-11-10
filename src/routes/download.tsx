@@ -103,18 +103,24 @@ function Download() {
         </div>
 
         <div className="panel space-y-3 p-6">
-          <h2 className="font-semibold">Connect your account</h2>
+          <h2 className="font-semibold">Connect your account &amp; extension</h2>
           <p className="text-sm text-muted-foreground">
-            After loading the extension, sign in here and open the connect page. The extension picks
-            up the session from that page only.
+            After loading the extension in Chrome, click below to synchronize your account in 1
+            click.
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button asChild variant="secondary">
-              <Link to="/auth">Sign in</Link>
+            <Button asChild className="bg-teal-600 hover:bg-teal-500 text-white font-medium">
+              <Link to="/connect">Connect Extension (/connect)</Link>
             </Button>
             <Button asChild variant="outline">
-              <Link to="/connect">Connect extension</Link>
+              <Link to="/auth">Sign in with Email</Link>
             </Button>
+          </div>
+          <div className="mt-3 rounded border border-border/80 bg-muted/40 p-2 text-xs text-muted-foreground">
+            Active Backend URL:{" "}
+            <code className="font-mono text-foreground font-semibold">
+              https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app
+            </code>
           </div>
         </div>
       </main>
