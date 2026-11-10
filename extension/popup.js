@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const DEFAULT_BASE = "https://id-preview--142f3fbd-6878-42b4-9fe5-1517e2fe8f28.lovable.app";
+const DEFAULT_BASE = "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
 
 async function render() {
   const { session } = await chrome.storage.local.get("session");
@@ -9,8 +9,35 @@ async function render() {
 }
 
 $("connect").onclick = async () => {
-  const { lastBase } = await chrome.storage.local.get("lastBase");
-  chrome.tabs.create({ url: `${lastBase || DEFAULT_BASE}/connect` });
+  const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
+  let targetBase = session?.apiBase || lastBase;
+  if (!targetBase) {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.url) {
+        const u = new URL(tab.url);
+        if (
+          u.protocol.startsWith("http") &&
+          (u.hostname.includes("run.app") ||
+            u.hostname === "localhost" ||
+            tab.title?.includes("AI Buddy"))
+        ) {
+          targetBase = u.origin;
+        }
+      }
+    } catch {}
+  }
+  const resolvedBase = targetBase || DEFAULT_BASE;
+  await chrome.storage.local.set({ lastBase: resolvedBase });
+
+  const connectUrl = new URL(`${resolvedBase}/connect`);
+  if (session?.accessToken) {
+    connectUrl.searchParams.set("ext_session", "active");
+    if (session.email) connectUrl.searchParams.set("email", session.email);
+  }
+  connectUrl.searchParams.set("src", "extension_popup");
+
+  chrome.tabs.create({ url: connectUrl.toString() });
 };
 
 $("signout").onclick = async () => {

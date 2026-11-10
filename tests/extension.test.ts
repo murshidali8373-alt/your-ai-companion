@@ -268,4 +268,36 @@ describe("MV3 Chrome Extension and Side Panel", () => {
       validateOriginAndPath("https://ai-buddy.app/login?ref=/connect", "https://ai-buddy.app"),
     ).toBe(false);
   });
+
+  it("dynamically resolves backend URL from chrome.storage.local and synchronizes /connect with active session state", () => {
+    const spCode = fs.readFileSync(path.join(extDir, "sidepanel.js"), "utf-8");
+    const popupCode = fs.readFileSync(path.join(extDir, "popup.js"), "utf-8");
+    const bgCode = fs.readFileSync(path.join(extDir, "background.js"), "utf-8");
+    const askRouteCode = fs.readFileSync(
+      path.join(root, "src/routes/api/public/extension/ask.ts"),
+      "utf-8",
+    );
+
+    // Dynamic resolution in sidepanel connect button
+    expect(spCode).toContain('chrome.storage.local.get(["lastBase", "session"])');
+    expect(spCode).toContain("new URL(`${resolvedBase}/connect`)");
+    expect(spCode).toContain('ext_session", "active"');
+    expect(spCode).toContain("chrome.storage.local.set({ lastBase: resolvedBase })");
+
+    // Dynamic resolution in popup connect button
+    expect(popupCode).toContain('chrome.storage.local.get(["lastBase", "session"])');
+    expect(popupCode).toContain("new URL(`${resolvedBase}/connect`)");
+    expect(popupCode).toContain('ext_session", "active"');
+
+    // Dynamic resolution and error transparency in background worker
+    expect(bgCode).toContain('"lastBase"');
+    expect(bgCode).toContain('"userApiKey"');
+    expect(bgCode).toContain('"customBaseUrl"');
+    expect(bgCode).toContain("userApiKey: userApiKey || undefined");
+    expect(bgCode).toContain("Could not reach AI Buddy service at");
+
+    // ask.ts returns descriptive error message rather than masking
+    expect(askRouteCode).toContain("error instanceof Error");
+    expect(askRouteCode).toContain("error.message");
+  });
 });

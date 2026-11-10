@@ -24,6 +24,10 @@ import { Route as AuthenticatedBuddiesNewRouteImport } from './routes/_authentic
 import { Route as ApiPublicExtensionAskRouteImport } from './routes/api/public/extension/ask'
 import { Route as ApiPublicExtensionBuddiesRouteImport } from './routes/api/public/extension/buddies'
 import { Route as ApiPublicExtensionHealthRouteImport } from './routes/api/public/extension/health'
+import { Route as ApiPublicExtensionMemoriesRouteImport } from './routes/api/public/extension/memories'
+import { Route as ApiPublicExtensionModelsRouteImport } from './routes/api/public/extension/models'
+import { Route as ApiPublicExtensionTasksRouteImport } from './routes/api/public/extension/tasks'
+import { Route as ApiPublicExtensionTestModelRouteImport } from './routes/api/public/extension/test-model'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -101,6 +105,29 @@ const ApiPublicExtensionHealthRoute =
     path: '/api/public/extension/health',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiPublicExtensionMemoriesRoute =
+  ApiPublicExtensionMemoriesRouteImport.update({
+    id: '/api/public/extension/memories',
+    path: '/api/public/extension/memories',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPublicExtensionModelsRoute =
+  ApiPublicExtensionModelsRouteImport.update({
+    id: '/api/public/extension/models',
+    path: '/api/public/extension/models',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiPublicExtensionTasksRoute = ApiPublicExtensionTasksRouteImport.update({
+  id: '/api/public/extension/tasks',
+  path: '/api/public/extension/tasks',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicExtensionTestModelRoute =
+  ApiPublicExtensionTestModelRouteImport.update({
+    id: '/api/public/extension/test-model',
+    path: '/api/public/extension/test-model',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -117,6 +144,10 @@ export interface FileRoutesByFullPath {
   '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
   '/api/public/extension/buddies': typeof ApiPublicExtensionBuddiesRoute
   '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
+  '/api/public/extension/memories': typeof ApiPublicExtensionMemoriesRoute
+  '/api/public/extension/models': typeof ApiPublicExtensionModelsRoute
+  '/api/public/extension/tasks': typeof ApiPublicExtensionTasksRoute
+  '/api/public/extension/test-model': typeof ApiPublicExtensionTestModelRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -133,6 +164,10 @@ export interface FileRoutesByTo {
   '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
   '/api/public/extension/buddies': typeof ApiPublicExtensionBuddiesRoute
   '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
+  '/api/public/extension/memories': typeof ApiPublicExtensionMemoriesRoute
+  '/api/public/extension/models': typeof ApiPublicExtensionModelsRoute
+  '/api/public/extension/tasks': typeof ApiPublicExtensionTasksRoute
+  '/api/public/extension/test-model': typeof ApiPublicExtensionTestModelRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -151,6 +186,10 @@ export interface FileRoutesById {
   '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
   '/api/public/extension/buddies': typeof ApiPublicExtensionBuddiesRoute
   '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
+  '/api/public/extension/memories': typeof ApiPublicExtensionMemoriesRoute
+  '/api/public/extension/models': typeof ApiPublicExtensionModelsRoute
+  '/api/public/extension/tasks': typeof ApiPublicExtensionTasksRoute
+  '/api/public/extension/test-model': typeof ApiPublicExtensionTestModelRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -169,6 +208,10 @@ export interface FileRouteTypes {
     | '/api/public/extension/ask'
     | '/api/public/extension/buddies'
     | '/api/public/extension/health'
+    | '/api/public/extension/memories'
+    | '/api/public/extension/models'
+    | '/api/public/extension/tasks'
+    | '/api/public/extension/test-model'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -185,6 +228,10 @@ export interface FileRouteTypes {
     | '/api/public/extension/ask'
     | '/api/public/extension/buddies'
     | '/api/public/extension/health'
+    | '/api/public/extension/memories'
+    | '/api/public/extension/models'
+    | '/api/public/extension/tasks'
+    | '/api/public/extension/test-model'
   id:
     | '__root__'
     | '/'
@@ -202,6 +249,10 @@ export interface FileRouteTypes {
     | '/api/public/extension/ask'
     | '/api/public/extension/buddies'
     | '/api/public/extension/health'
+    | '/api/public/extension/memories'
+    | '/api/public/extension/models'
+    | '/api/public/extension/tasks'
+    | '/api/public/extension/test-model'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -213,6 +264,10 @@ export interface RootRouteChildren {
   ApiPublicExtensionAskRoute: typeof ApiPublicExtensionAskRoute
   ApiPublicExtensionBuddiesRoute: typeof ApiPublicExtensionBuddiesRoute
   ApiPublicExtensionHealthRoute: typeof ApiPublicExtensionHealthRoute
+  ApiPublicExtensionMemoriesRoute: typeof ApiPublicExtensionMemoriesRoute
+  ApiPublicExtensionModelsRoute: typeof ApiPublicExtensionModelsRoute
+  ApiPublicExtensionTasksRoute: typeof ApiPublicExtensionTasksRoute
+  ApiPublicExtensionTestModelRoute: typeof ApiPublicExtensionTestModelRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -322,6 +377,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicExtensionHealthRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/extension/memories': {
+      id: '/api/public/extension/memories'
+      path: '/api/public/extension/memories'
+      fullPath: '/api/public/extension/memories'
+      preLoaderRoute: typeof ApiPublicExtensionMemoriesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/extension/models': {
+      id: '/api/public/extension/models'
+      path: '/api/public/extension/models'
+      fullPath: '/api/public/extension/models'
+      preLoaderRoute: typeof ApiPublicExtensionModelsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/extension/tasks': {
+      id: '/api/public/extension/tasks'
+      path: '/api/public/extension/tasks'
+      fullPath: '/api/public/extension/tasks'
+      preLoaderRoute: typeof ApiPublicExtensionTasksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/extension/test-model': {
+      id: '/api/public/extension/test-model'
+      path: '/api/public/extension/test-model'
+      fullPath: '/api/public/extension/test-model'
+      preLoaderRoute: typeof ApiPublicExtensionTestModelRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -374,6 +457,10 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicExtensionAskRoute: ApiPublicExtensionAskRoute,
   ApiPublicExtensionBuddiesRoute: ApiPublicExtensionBuddiesRoute,
   ApiPublicExtensionHealthRoute: ApiPublicExtensionHealthRoute,
+  ApiPublicExtensionMemoriesRoute: ApiPublicExtensionMemoriesRoute,
+  ApiPublicExtensionModelsRoute: ApiPublicExtensionModelsRoute,
+  ApiPublicExtensionTasksRoute: ApiPublicExtensionTasksRoute,
+  ApiPublicExtensionTestModelRoute: ApiPublicExtensionTestModelRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

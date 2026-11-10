@@ -2,7 +2,7 @@
 const RESTRICTED =
   /^(chrome|edge|about|chrome-extension|devtools|view-source):|chromewebstore\.google\.com|chrome\.google\.com\/webstore/;
 
-const DEFAULT_HOST = "https://id-preview--142f3fbd-6878-42b4-9fe5-1517e2fe8f28.lovable.app";
+const DEFAULT_HOST = "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
 const MAX_CONVERSATION_TURNS = 3;
 let conversationBuffer = [];
 
@@ -326,8 +326,31 @@ async function getPageSnapshot() {
 
 async function ask(question, intent, history, buddySlug, customBuddyId, preferredModel) {
   const { session } = await chrome.storage.local.get("session");
-  const { lastBase } = await chrome.storage.local.get("lastBase");
-  const apiBase = session?.apiBase || lastBase || "http://localhost:3000";
+  const { lastBase, userApiKey, customBaseUrl } = await chrome.storage.local.get([
+    "lastBase",
+    "userApiKey",
+    "customBaseUrl",
+  ]);
+
+  let apiBase = session?.apiBase || lastBase;
+  if (!apiBase) {
+    try {
+      const tab = await activeTab();
+      if (tab?.url && !RESTRICTED.test(tab.url)) {
+        const u = new URL(tab.url);
+        if (
+          u.protocol.startsWith("http") &&
+          (u.hostname.includes("run.app") ||
+            u.hostname === "localhost" ||
+            u.hostname === "127.0.0.1" ||
+            tab.title?.includes("AI Buddy"))
+        ) {
+          apiBase = u.origin;
+        }
+      }
+    } catch {}
+    if (!apiBase) apiBase = DEFAULT_HOST;
+  }
 
   const tab = await activeTab();
   let snapshot = null;
@@ -361,6 +384,8 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
     buddySlug: buddySlug || undefined,
     customBuddyId: customBuddyId || undefined,
     preferredModel: preferredModel || undefined,
+    userApiKey: userApiKey || undefined,
+    customBaseUrl: customBaseUrl || undefined,
   });
 
   try {
@@ -373,11 +398,15 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
       });
     } catch (networkErr) {
       if (apiBase !== DEFAULT_HOST) {
-        res = await fetch(`${DEFAULT_HOST}/api/public/extension/ask`, {
-          method: "POST",
-          headers,
-          body: payload,
-        });
+        try {
+          res = await fetch(`${DEFAULT_HOST}/api/public/extension/ask`, {
+            method: "POST",
+            headers,
+            body: payload,
+          });
+        } catch {
+          throw networkErr;
+        }
       } else {
         throw networkErr;
       }
@@ -386,10 +415,14 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
     const body = await res.json().catch(() => ({}));
     if (res.status === 401 && session) {
       await chrome.storage.local.remove("session");
-      return ask(question, intent, history, buddySlug, customBuddyId);
+      return ask(question, intent, history, buddySlug, customBuddyId, preferredModel);
     }
     if (!res.ok) {
-      return { error: "server", message: body.message || "Buddy could not finish that." };
+      const errMsg =
+        body.message ||
+        body.error ||
+        `Server returned error (${res.status}). Please check server configuration.`;
+      return { error: "server", message: errMsg };
     }
 
     if (body.reply?.answer) {
@@ -411,10 +444,10 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
         .catch(() => undefined);
     }
     return { ...body, pageReadable: Boolean(snapshot), snapshot };
-  } catch {
+  } catch (err) {
     return {
       error: "network",
-      message: "Could not reach AI Buddy service. Check your connection.",
+      message: `Could not reach AI Buddy service at ${apiBase || DEFAULT_HOST}. Check your connection or update the Server URL in Settings.`,
     };
   }
 }

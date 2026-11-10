@@ -240,52 +240,70 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
     return refuse(permissionDeniedMessage(permission, "answer"));
   }
 
-  const { data: allowed, error: usageError } = await db.rpc("bump_usage", {
-    _max: DAILY_REQUEST_LIMIT,
-    _tokens: 0,
-  });
-  if (!usageError && allowed === false) {
+  let allowed = true;
+  try {
+    const { data, error: usageError } = await db.rpc("bump_usage", {
+      _max: DAILY_REQUEST_LIMIT,
+      _tokens: 0,
+    });
+    if (!usageError && data === false) allowed = false;
+  } catch (err) {
+    void err;
+  }
+  if (!allowed) {
     return refuse(
       `You have reached today's limit of ${DAILY_REQUEST_LIMIT} Buddy requests. It resets at midnight UTC.`,
     );
   }
 
-  const memories =
-    privacyMode || settings?.allow_memory === false
-      ? []
-      : ((
-          await db
-            .from("memories")
-            .select("key, value")
-            .eq("user_id", userId)
-            .order("updated_at", { ascending: false })
-            .limit(20)
-        ).data ?? []);
+  let memories: Array<{ key: string; value: string }> = [];
+  if (!privacyMode && settings?.allow_memory !== false) {
+    try {
+      const res = await db
+        .from("memories")
+        .select("key, value")
+        .eq("user_id", userId)
+        .order("updated_at", { ascending: false })
+        .limit(20);
+      memories = (res.data as Array<{ key: string; value: string }>) ?? [];
+    } catch (err) {
+      void err;
+    }
+  }
 
-  const { data: task } = await db
-    .from("tasks")
-    .insert({
-      user_id: userId,
-      title: question.slice(0, 140),
-      intent: input.intent,
-      status: "running",
-      buddy_slug: persona.slug,
-      page_url: input.snapshot?.url ?? null,
-      page_title: input.snapshot?.title ?? null,
-    })
-    .select("id")
-    .maybeSingle();
-  const taskId = task?.id ?? null;
+  let taskId: string | null = null;
+  try {
+    const { data: task } = await db
+      .from("tasks")
+      .insert({
+        user_id: userId,
+        title: question.slice(0, 140),
+        intent: input.intent,
+        status: "running",
+        buddy_slug: persona.slug,
+        page_url: input.snapshot?.url ?? null,
+        page_title: input.snapshot?.title ?? null,
+      })
+      .select("id")
+      .maybeSingle();
+    taskId = task?.id ?? null;
+  } catch (err) {
+    void err;
+  }
 
-  await event(
-    db,
-    taskId,
-    userId,
-    "observe",
-    input.snapshot
-      ? `Snapshot: ${input.snapshot.forms.length} fields, ${input.snapshot.controls.length} controls, ${input.snapshot.alerts.length} alerts`
-      : "No page snapshot was provided",
-  );
+  try {
+    await event(
+      db,
+      taskId,
+      userId,
+      "observe",
+      input.snapshot
+        ? `Snapshot: ${input.snapshot.forms.length} fields, ${input.snapshot.controls.length} controls, ${input.snapshot.alerts.length} alerts`
+        : "No page snapshot was provided",
+    );
+  } catch (err) {
+    void err;
+  }
 
   const pageContext = input.snapshot
     ? buildPageContext(input.snapshot)
@@ -418,10 +436,13 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
         .eq("id", taskId);
     }
     console.error("[buddy] ask failed", aiError.kind, aiError.cause ?? aiError.message);
+    const answer = aiError.resolution
+      ? `${aiError.userMessage} ${aiError.resolution}`
+      : aiError.userMessage;
     return {
       taskId,
       reply: {
-        answer: aiError.userMessage,
+        answer,
         highlight: null,
         confidence: "low",
         needs: null,
@@ -591,10 +612,13 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
         : new AiError("outage", "Something went wrong on my side. Try once more.", {
             cause: error,
           });
+    const answer = aiError.resolution
+      ? `${aiError.userMessage} ${aiError.resolution}`
+      : aiError.userMessage;
     return {
       taskId: null,
       reply: {
-        answer: aiError.userMessage,
+        answer,
         highlight: null,
         confidence: "low",
         needs: null,

@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const DEFAULT_BASE = "https://id-preview--142f3fbd-6878-42b4-9fe5-1517e2fe8f28.lovable.app";
+const DEFAULT_BASE = "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
 const RESTRICTED =
   /^(chrome|edge|about|chrome-extension|devtools|view-source):|chromewebstore\.google\.com|chrome\.google\.com\/webstore/;
 
@@ -2152,18 +2152,71 @@ $("confirmCancelBtn").onclick = () => {
 };
 
 $("connectBtn").onclick = async () => {
+  // Dynamically fetch active backend base and session state from chrome.storage.local
   const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
   let targetBase = session?.apiBase || lastBase;
+
+  // Fallback checks: Settings DOM input, active tab, and open AI Buddy tabs
+  if (!targetBase) {
+    try {
+      const settingsInput = $("settingsApiBaseInput");
+      if (settingsInput?.value?.trim()?.startsWith("http")) {
+        targetBase = new URL(settingsInput.value.trim()).origin;
+      }
+    } catch {}
+  }
+
   if (!targetBase) {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tab?.url && !RESTRICTED.test(tab.url)) {
         const u = new URL(tab.url);
-        if (u.protocol.startsWith("http")) targetBase = u.origin;
+        if (
+          u.protocol.startsWith("http") &&
+          (u.hostname.includes("run.app") ||
+            u.hostname === "localhost" ||
+            u.hostname === "127.0.0.1" ||
+            tab.title?.includes("AI Buddy"))
+        ) {
+          targetBase = u.origin;
+        }
       }
     } catch {}
   }
-  chrome.tabs.create({ url: `${targetBase || DEFAULT_BASE}/connect` });
+
+  if (!targetBase) {
+    try {
+      const allTabs = await chrome.tabs.query({});
+      for (const t of allTabs) {
+        if (t.url && !RESTRICTED.test(t.url)) {
+          const u = new URL(t.url);
+          if (
+            u.protocol.startsWith("http") &&
+            (u.hostname.includes("run.app") ||
+              u.hostname === "localhost" ||
+              t.title?.includes("AI Buddy"))
+          ) {
+            targetBase = u.origin;
+            break;
+          }
+        }
+      }
+    } catch {}
+  }
+
+  const resolvedBase = targetBase || DEFAULT_BASE;
+  // Synchronize lastBase in storage so background worker and subsequent calls use it
+  await chrome.storage.local.set({ lastBase: resolvedBase });
+
+  // Ensure it correctly redirects to /connect with the active extension session state
+  const connectUrl = new URL(`${resolvedBase}/connect`);
+  if (session?.accessToken) {
+    connectUrl.searchParams.set("ext_session", "active");
+    if (session.email) connectUrl.searchParams.set("email", session.email);
+  }
+  connectUrl.searchParams.set("src", "extension_sidepanel");
+
+  chrome.tabs.create({ url: connectUrl.toString() });
 };
 
 $("signoutBtn").onclick = async () => {

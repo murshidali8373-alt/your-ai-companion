@@ -126,8 +126,14 @@ export const Route = createFileRoute("/api/public/extension/ask")({
           }
         } catch (error) {
           console.error("[extension/ask]", error);
+          const message =
+            error instanceof Error
+              ? error.message
+              : typeof error === "string"
+                ? error
+                : "Buddy encountered an unexpected server error. Try again.";
           return json(
-            { error: "server_error", message: "Buddy could not finish that. Try again." },
+            { error: "server_error", message },
             500,
           );
         }
