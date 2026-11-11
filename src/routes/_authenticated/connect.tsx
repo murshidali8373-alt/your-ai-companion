@@ -128,33 +128,52 @@ function Connect() {
   const handleQuickConnect = async () => {
     setBusy(true);
     try {
-      const email = userEmail || "sk8404530@gmail.com";
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password: "demo-password-123",
-      });
-      if (error && !data.session) {
-        // Fallback to existing session or alert
-        const { data: sData } = await supabase.auth.getSession();
-        if (sData.session) {
-          setUserEmail(sData.session.user.email ?? email);
-          sendSessionToExtension(sData.session);
-          toast.info("Syncing session with extension…");
-        } else {
-          toast.error("Could not create instant session. Try email sign-in.");
-        }
-      } else if (data.session) {
-        setUserEmail(data.session.user.email ?? email);
-        sendSessionToExtension(data.session);
-        toast.success(`Signed in as ${data.session.user.email}. Connecting to extension…`);
+      // 1. Check if user already has an active session
+      const { data: currentSession } = await supabase.auth.getSession();
+      if (currentSession?.session) {
+        setUserEmail(currentSession.session.user.email ?? "Signed-in user");
+        sendSessionToExtension(currentSession.session);
+        toast.success(`Syncing session for ${currentSession.session.user.email}…`);
         setStatus("syncing");
+        pingExtension();
+        return;
+      }
+
+      // 2. Try demo user login
+      const demoRes = await supabase.auth.signInWithPassword({
+        email: "demo@example.com",
+        password: "password123",
+      });
+
+      if (demoRes.data?.session) {
+        setUserEmail(demoRes.data.session.user.email ?? "demo@example.com");
+        sendSessionToExtension(demoRes.data.session);
+        toast.success(`Connected as ${demoRes.data.session.user.email}!`);
+        setStatus("syncing");
+      } else {
+        // 3. Fallback: Pair as Guest (sync server URL to extension without account)
+        handleGuestConnect();
       }
       pingExtension();
     } catch {
-      toast.error("Connection attempt failed. Please reload.");
+      handleGuestConnect();
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleGuestConnect = () => {
+    if (typeof window === "undefined") return;
+    window.postMessage(
+      {
+        type: "AI_BUDDY_GUEST_CONNECT",
+        apiBase: window.location.origin,
+      },
+      window.location.origin,
+    );
+    toast.success("Synchronized server URL with extension in Guest Mode!");
+    setStatus("syncing");
+    pingExtension();
   };
 
   const copyOrigin = () => {
@@ -244,9 +263,18 @@ function Connect() {
                 <Zap className="size-4" />
                 {busy ? "Connecting…" : "1-Click Connect Account"}
               </Button>
+              <Button
+                onClick={handleGuestConnect}
+                disabled={busy}
+                variant="outline"
+                size="sm"
+                className="gap-2"
+              >
+                Pair as Guest (No Account Required)
+              </Button>
               <Button asChild variant="ghost" size="sm">
                 <Link to="/auth" search={{ next: "/connect" }}>
-                  Sign in with different email
+                  Sign in with email
                 </Link>
               </Button>
             </div>

@@ -983,7 +983,7 @@ async function sendQuery(question, intent) {
 
   // 1. Direct browser command intercepts for zero-latency execution
   const greetingMatch = lower.match(
-    /^(?:hi+|hello+|hey+|namaste|pranam|hola|kya haal|ram ram)[.!?\s]*$/i,
+    /^(?:hi+|hello+|hey+|namaste|pranam|hola|kya haal(?:\s+hai)?|ram ram|good\s+(?:morning|afternoon|evening)|kaise ho)(?:\s+(?:buddy|dost|ai buddy|ji))?[.!?\s]*$/i,
   );
   if (greetingMatch) {
     appendHistory("user", trimmed);
@@ -997,6 +997,24 @@ async function sendQuery(question, intent) {
     appendHistory("buddy", greetingText);
     $("statusText").textContent = `Ready with ${active.name}.`;
     speakResponse(greetingText, "happy");
+    return;
+  }
+
+  const helpMatch = lower.match(
+    /^(?:what can you do|help|kaam kya hai|kya kar sakte ho|features|commands|guide me)[.!?\s]*$/i,
+  );
+  if (helpMatch) {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    const active = getActiveBuddy();
+    setRigEmotion("happy", "Ready");
+    const helpMsg =
+      active.defaultLanguage === "english"
+        ? `I am ${active.name}, your browser companion! Here is what I can do:\n• Explain any webpage or dashboard\n• Find & highlight any button, link or menu (e.g. 'find login button')\n• Auto-fill form fields and verify mistakes\n• Extract order lists and tables (Meesho, Flipkart, Excel)\n• Automate multi-step browser tasks\n\nTry typing: 'Explain this page' or 'Check pending orders'!`
+        : `Main aapka ${active.name} hoon! Main aapke browser par ye sab kar sakta hoon:\n• Current page explain karna\n• Kisi bhi button ya menu ko dhundh kar highlight karna ('find submit button')\n• Safe form filling aur errors check karna\n• Meesho / Flipkart orders aur tables extract karna\n• Multi-step browser workflows automate karna\n\nTry kijiye: 'Explain this page' ya 'Check pending orders'!`;
+    appendHistory("buddy", helpMsg);
+    $("statusText").textContent = `Capabilities of ${active.name}.`;
+    speakResponse(helpMsg, "happy");
     return;
   }
 

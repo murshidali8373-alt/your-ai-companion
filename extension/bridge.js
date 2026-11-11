@@ -21,23 +21,69 @@ window.addEventListener("message", (e) => {
     return;
   }
 
-  if (d.type !== "AI_BUDDY_SESSION" || typeof d.accessToken !== "string") return;
-  // Security guard: Strict route check - only accept session synchronization on /connect
-  const currentPath = window.location.pathname.replace(/\/+$/, "") || "/";
-  if (currentPath !== "/connect") return;
-  chrome.runtime.sendMessage(
-    {
-      type: "SAVE_SESSION",
-      session: {
-        apiBase: window.location.origin,
-        accessToken: d.accessToken,
-        refreshToken: d.refreshToken,
-        expiresAt: d.expiresAt,
-        email: d.email,
+  if (d.type === "AI_BUDDY_SESSION" || d.type === "AI_BUDDY_GUEST_CONNECT") {
+    // Security guard: Strict route check - only accept session synchronization on /connect
+    const currentPath = window.location.pathname.replace(/\/+$/, "") || "/";
+    if (currentPath !== "/connect") return;
+
+    chrome.runtime.sendMessage(
+      {
+        type: "SAVE_SESSION",
+        session: {
+          apiBase: window.location.origin,
+          accessToken: typeof d.accessToken === "string" ? d.accessToken : undefined,
+          refreshToken: typeof d.refreshToken === "string" ? d.refreshToken : undefined,
+          expiresAt: typeof d.expiresAt === "number" ? d.expiresAt : undefined,
+          email: d.email || (d.type === "AI_BUDDY_GUEST_CONNECT" ? "Guest User" : undefined),
+          isGuest: d.type === "AI_BUDDY_GUEST_CONNECT" || !d.accessToken,
+        },
       },
-    },
-    (res) => {
-      if (res && res.ok) window.postMessage({ type: "AI_BUDDY_EXT_ACK" }, window.location.origin);
-    },
-  );
+      (res) => {
+        if (res && res.ok) {
+          window.postMessage(
+            { type: "AI_BUDDY_EXT_ACK", isGuest: !d.accessToken },
+            window.location.origin,
+          );
+        }
+      },
+    );
+  }
 });
+
+// Proxy fetch handler for background worker when running under Cloud Run / auth bridge environments
+if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg.type === "AI_BUDDY_PAGE_FETCH") {
+      const { url, method = "GET", headers = {}, body } = msg;
+      fetch(url, {
+        method,
+        headers,
+        body: body ? (typeof body === "string" ? body : JSON.stringify(body)) : undefined,
+        credentials: "include",
+      })
+        .then(async (res) => {
+          const text = await res.text();
+          let json = null;
+          try {
+            json = JSON.parse(text);
+          } catch {}
+          sendResponse({
+            ok: res.ok,
+            status: res.status,
+            contentType: res.headers.get("content-type") || "",
+            text,
+            json,
+          });
+        })
+        .catch((err) => {
+          sendResponse({
+            ok: false,
+            status: 0,
+            error: String(err?.message || err),
+          });
+        });
+      return true; // Keep message channel open for async response
+    }
+    return false;
+  });
+}

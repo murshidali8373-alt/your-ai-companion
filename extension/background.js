@@ -420,24 +420,88 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
       }
     }
 
-    const contentType = res.headers.get("content-type") || "";
+    let body = null;
+    let isHtmlAuthRedirect = false;
+    const contentType = res ? (res.headers.get("content-type") || "") : "";
     if (contentType.includes("text/html")) {
       const htmlText = await res.text().catch(() => "");
       if (htmlText.includes("302 Found") || htmlText.includes("__cookie_check") || res.redirected) {
-        return {
-          error: "auth_proxy",
-          message:
-            "Please open your AI Buddy web tab or click 'Connect' to initialize your session cookies.",
-        };
+        isHtmlAuthRedirect = true;
       }
     }
 
-    const body = await res.json().catch(() => ({}));
+    if (!isHtmlAuthRedirect && res) {
+      body = await res.json().catch(() => null);
+    }
+
+    // If direct fetch hit Cloud Run auth bridge or failed, attempt transparent proxy via open web tab
+    if (isHtmlAuthRedirect || !body) {
+      try {
+        const allTabs = await chrome.tabs.query({});
+        const buddyTab = allTabs.find((t) => {
+          if (!t.url) return false;
+          try {
+            const u = new URL(t.url);
+            return (
+              u.hostname.includes("run.app") ||
+              u.hostname.includes("aistudio.google.com") ||
+              u.hostname === "localhost" ||
+              t.title?.includes("AI Buddy") ||
+              t.title?.includes("your-ai-companion")
+            );
+          } catch {
+            return false;
+          }
+        });
+
+        if (buddyTab?.id) {
+          const proxyRes = await new Promise((resolve) => {
+            chrome.tabs.sendMessage(
+              buddyTab.id,
+              {
+                type: "AI_BUDDY_PAGE_FETCH",
+                url: `${apiBase}/api/public/extension/ask`,
+                method: "POST",
+                headers,
+                body: payload,
+              },
+              (response) => {
+                if (chrome.runtime.lastError || !response) {
+                  resolve(null);
+                } else {
+                  resolve(response);
+                }
+              },
+            );
+          });
+
+          if (proxyRes?.json && proxyRes.ok) {
+            body = proxyRes.json;
+            isHtmlAuthRedirect = false;
+          }
+        }
+      } catch {
+        // Continue to fallback
+      }
+    }
+
+    if (isHtmlAuthRedirect && !body) {
+      return {
+        error: "auth_proxy",
+        message:
+          "Please open your AI Buddy web tab or click 'Connect' to initialize your session cookies.",
+      };
+    }
+
+    if (!body) {
+      body = {};
+    }
+
     if (res.status === 401 && session) {
       await chrome.storage.local.remove("session");
       return ask(question, intent, history, buddySlug, customBuddyId, preferredModel);
     }
-    if (!res.ok) {
+    if (!res.ok && !body.reply?.answer) {
       const errMsg =
         body.message ||
         body.error ||
