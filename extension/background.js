@@ -2,7 +2,7 @@
 const RESTRICTED =
   /^(chrome|edge|about|chrome-extension|devtools|view-source):|chromewebstore\.google\.com|chrome\.google\.com\/webstore/;
 
-const DEFAULT_HOST = "https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app";
+const DEFAULT_HOST = "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
 const MAX_CONVERSATION_TURNS = 3;
 let conversationBuffer = [];
 
@@ -333,24 +333,30 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
   ]);
 
   let apiBase = session?.apiBase || lastBase;
+  if (apiBase && (apiBase.includes("5t53lwemhepi") || apiBase.includes("152127168827"))) {
+    apiBase = DEFAULT_HOST;
+    chrome.storage.local.set({ lastBase: DEFAULT_HOST }).catch(() => {});
+  }
+
   if (!apiBase) {
     try {
-      const tab = await activeTab();
-      if (tab?.url && !RESTRICTED.test(tab.url)) {
-        const u = new URL(tab.url);
-        if (
-          u.protocol.startsWith("http") &&
-          (u.hostname.includes("run.app") ||
-            u.hostname === "localhost" ||
-            u.hostname === "127.0.0.1" ||
-            tab.title?.includes("AI Buddy") ||
-            tab.title?.includes("your-ai-companion") ||
-            u.hostname.includes("aistudio.google.com"))
-        ) {
-          if (u.hostname.includes("aistudio.google.com")) {
-            apiBase = DEFAULT_HOST;
-          } else {
-            apiBase = u.origin;
+      const allTabs = await chrome.tabs.query({});
+      for (const t of allTabs) {
+        if (t?.url && !RESTRICTED.test(t.url)) {
+          const u = new URL(t.url);
+          if (
+            u.protocol.startsWith("http") &&
+            (u.hostname.includes("run.app") ||
+              u.hostname === "localhost" ||
+              u.hostname === "127.0.0.1" ||
+              t.title?.includes("AI Buddy") ||
+              t.title?.includes("your-ai-companion"))
+          ) {
+            if (!u.hostname.includes("5t53lwemhepi") && !u.hostname.includes("aistudio.google.com")) {
+              apiBase = u.origin;
+              chrome.storage.local.set({ lastBase: apiBase }).catch(() => {});
+              break;
+            }
           }
         }
       }
@@ -454,13 +460,14 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
           }
         });
 
-        if (buddyTab?.id) {
+        if (buddyTab?.id && buddyTab?.url) {
+          const tabOrigin = new URL(buddyTab.url).origin;
           const proxyRes = await new Promise((resolve) => {
             chrome.tabs.sendMessage(
               buddyTab.id,
               {
                 type: "AI_BUDDY_PAGE_FETCH",
-                url: `${apiBase}/api/public/extension/ask`,
+                url: `${tabOrigin}/api/public/extension/ask`,
                 method: "POST",
                 headers,
                 body: payload,
@@ -478,6 +485,8 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
           if (proxyRes?.json && proxyRes.ok) {
             body = proxyRes.json;
             isHtmlAuthRedirect = false;
+            apiBase = tabOrigin;
+            chrome.storage.local.set({ lastBase: tabOrigin }).catch(() => {});
           }
         }
       } catch {

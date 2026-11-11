@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const DEFAULT_BASE = "https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app";
+const DEFAULT_BASE = "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
 
 async function render() {
   const { session } = await chrome.storage.local.get("session");
@@ -11,21 +11,27 @@ async function render() {
 $("connect").onclick = async () => {
   const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
   let targetBase = session?.apiBase || lastBase;
+  if (targetBase && (targetBase.includes("5t53lwemhepi") || targetBase.includes("152127168827"))) {
+    targetBase = DEFAULT_BASE;
+  }
   if (!targetBase) {
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab?.url) {
-        const u = new URL(tab.url);
-        if (
-          u.protocol.startsWith("http") &&
-          (u.hostname.includes("run.app") ||
-            u.hostname === "localhost" ||
-            u.hostname === "127.0.0.1" ||
-            tab.title?.includes("AI Buddy") ||
-            tab.title?.includes("your-ai-companion") ||
-            u.hostname.includes("aistudio.google.com"))
-        ) {
-          targetBase = u.hostname.includes("aistudio.google.com") ? DEFAULT_BASE : u.origin;
+      const allTabs = await chrome.tabs.query({});
+      for (const t of allTabs) {
+        if (t?.url) {
+          const u = new URL(t.url);
+          if (
+            u.protocol.startsWith("http") &&
+            (u.hostname.includes("run.app") ||
+              u.hostname === "localhost" ||
+              u.hostname === "127.0.0.1" ||
+              t.title?.includes("AI Buddy"))
+          ) {
+            if (!u.hostname.includes("5t53lwemhepi") && !u.hostname.includes("aistudio.google.com")) {
+              targetBase = u.origin;
+              break;
+            }
+          }
         }
       }
     } catch {}

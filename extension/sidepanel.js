@@ -1,7 +1,41 @@
 const $ = (id) => document.getElementById(id);
-const DEFAULT_BASE = "https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app";
+const DEFAULT_BASE = "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
 const RESTRICTED =
   /^(chrome|edge|about|chrome-extension|devtools|view-source):|chromewebstore\.google\.com|chrome\.google\.com\/webstore/;
+
+async function getResolvedBackendBase() {
+  const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
+  let base = session?.apiBase || lastBase;
+  if (base && (base.includes("5t53lwemhepi") || base.includes("152127168827"))) {
+    base = DEFAULT_BASE;
+    chrome.storage.local.set({ lastBase: DEFAULT_BASE }).catch(() => {});
+  }
+  if (!base) {
+    try {
+      const allTabs = await chrome.tabs.query({});
+      for (const t of allTabs) {
+        if (t?.url && !RESTRICTED.test(t.url)) {
+          const u = new URL(t.url);
+          if (
+            u.protocol.startsWith("http") &&
+            (u.hostname.includes("run.app") ||
+              u.hostname === "localhost" ||
+              u.hostname === "127.0.0.1" ||
+              t.title?.includes("AI Buddy"))
+          ) {
+            if (!u.hostname.includes("5t53lwemhepi") && !u.hostname.includes("aistudio.google.com")) {
+              base = u.origin;
+              chrome.storage.local.set({ lastBase: base }).catch(() => {});
+              break;
+            }
+          }
+        }
+      }
+    } catch {}
+    if (!base) base = DEFAULT_BASE;
+  }
+  return base;
+}
 
 // --- CANONICAL 16 BUDDIES REGISTRY ---
 // 15 specialist buddies + 1 user Custom Buddy preloaded for offline/immediate access
@@ -839,7 +873,7 @@ async function render() {
   }
 
   // Sync latest custom buddies from backend if available
-  const apiBase = session?.apiBase || DEFAULT_BASE;
+  const apiBase = await getResolvedBackendBase();
   fetch(`${apiBase}/api/public/extension/buddies`, {
     headers: session?.accessToken ? { authorization: `Bearer ${session.accessToken}` } : {},
   })
@@ -2188,68 +2222,8 @@ $("confirmCancelBtn").onclick = () => {
 };
 
 $("connectBtn").onclick = async () => {
-  // Dynamically fetch active backend base and session state from chrome.storage.local
-  const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
-  let targetBase = session?.apiBase || lastBase;
-
-  // Fallback checks: Settings DOM input, active tab, and open AI Buddy tabs
-  if (!targetBase) {
-    try {
-      const settingsInput = $("settingsApiBaseInput");
-      if (settingsInput?.value?.trim()?.startsWith("http")) {
-        targetBase = new URL(settingsInput.value.trim()).origin;
-      }
-    } catch {}
-  }
-
-  if (!targetBase) {
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab?.url && !RESTRICTED.test(tab.url)) {
-        const u = new URL(tab.url);
-        if (
-          u.protocol.startsWith("http") &&
-          (u.hostname.includes("run.app") ||
-            u.hostname === "localhost" ||
-            u.hostname === "127.0.0.1" ||
-            tab.title?.includes("AI Buddy") ||
-            tab.title?.includes("your-ai-companion") ||
-            u.hostname.includes("aistudio.google.com"))
-        ) {
-          if (u.hostname.includes("aistudio.google.com")) {
-            targetBase = DEFAULT_BASE;
-          } else {
-            targetBase = u.origin;
-          }
-        }
-      }
-    } catch {}
-  }
-
-  if (!targetBase) {
-    try {
-      const allTabs = await chrome.tabs.query({});
-      for (const t of allTabs) {
-        if (t.url && !RESTRICTED.test(t.url)) {
-          const u = new URL(t.url);
-          if (
-            u.protocol.startsWith("http") &&
-            (u.hostname.includes("run.app") ||
-              u.hostname === "localhost" ||
-              t.title?.includes("AI Buddy") ||
-              t.title?.includes("your-ai-companion") ||
-              u.hostname.includes("aistudio.google.com"))
-          ) {
-            targetBase = u.hostname.includes("aistudio.google.com") ? DEFAULT_BASE : u.origin;
-            break;
-          }
-        }
-      }
-    } catch {}
-  }
-
-  const resolvedBase = targetBase || DEFAULT_BASE;
-  // Synchronize lastBase in storage so background worker and subsequent calls use it
+  const { session } = await chrome.storage.local.get("session");
+  const resolvedBase = await getResolvedBackendBase();
   await chrome.storage.local.set({ lastBase: resolvedBase });
 
   // Ensure it correctly redirects to /connect with the active extension session state
@@ -2261,6 +2235,7 @@ $("connectBtn").onclick = async () => {
   connectUrl.searchParams.set("src", "extension_sidepanel");
 
   chrome.tabs.create({ url: connectUrl.toString() });
+
 };
 
 $("signoutBtn").onclick = async () => {
@@ -2470,8 +2445,8 @@ async function loadMemories() {
   if (!list) return;
   list.innerHTML = '<div style="color: var(--muted); font-size: 10px;">Loading memories…</div>';
   try {
-    const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
-    const base = lastBase || DEFAULT_BASE;
+    const { session } = await chrome.storage.local.get("session");
+    const base = await getResolvedBackendBase();
     const headers = {};
     if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
     const res = await fetch(`${base}/api/public/extension/memories`, { headers });
@@ -2509,8 +2484,8 @@ async function loadMemories() {
 
 async function deleteMemory(key) {
   try {
-    const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
-    const base = lastBase || DEFAULT_BASE;
+    const { session } = await chrome.storage.local.get("session");
+    const base = await getResolvedBackendBase();
     const headers = {};
     if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
     await fetch(`${base}/api/public/extension/memories?key=${encodeURIComponent(key)}`, {
@@ -2544,8 +2519,8 @@ if ($("saveMemoryBtn")) {
     if (!key || !value) return;
 
     try {
-      const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
-      const base = lastBase || DEFAULT_BASE;
+      const { session } = await chrome.storage.local.get("session");
+      const base = await getResolvedBackendBase();
       const headers = { "Content-Type": "application/json" };
       if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
       const res = await fetch(`${base}/api/public/extension/memories`, {
@@ -2574,8 +2549,8 @@ async function loadTasksHistory() {
   if (!list) return;
   list.innerHTML = '<div style="color: var(--muted); font-size: 10px;">Loading task history…</div>';
   try {
-    const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
-    const base = lastBase || DEFAULT_BASE;
+    const { session } = await chrome.storage.local.get("session");
+    const base = await getResolvedBackendBase();
     const headers = {};
     if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
     const res = await fetch(`${base}/api/public/extension/tasks`, { headers });
@@ -2634,11 +2609,8 @@ async function loadModelHubStatus() {
   list.innerHTML =
     '<div style="color: var(--muted); font-size: 10px;">Checking provider statuses…</div>';
   try {
-    const { lastBase, preferredModel } = await chrome.storage.local.get([
-      "lastBase",
-      "preferredModel",
-    ]);
-    const base = lastBase || DEFAULT_BASE;
+    const { preferredModel } = await chrome.storage.local.get("preferredModel");
+    const base = await getResolvedBackendBase();
     const res = await fetch(`${base}/api/public/extension/models`);
     const data = await res.json();
     if (data?.ok) {
@@ -2732,8 +2704,7 @@ if ($("testActiveProviderBtn")) {
       pingBox.textContent = "Pinging Google Gemini API…";
     }
     try {
-      const { lastBase } = await chrome.storage.local.get("lastBase");
-      const base = lastBase || DEFAULT_BASE;
+      const base = await getResolvedBackendBase();
       const res = await fetch(`${base}/api/public/extension/test-model`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2893,7 +2864,11 @@ async function loadSettingsTab() {
       : "Guest mode (All 16 specialist buddies ready offline). Connect for cloud memory.";
   }
   if ($("settingsApiBaseInput")) {
-    $("settingsApiBaseInput").value = session?.apiBase || lastBase || DEFAULT_BASE;
+    let resolved = session?.apiBase || lastBase;
+    if (resolved && (resolved.includes("5t53lwemhepi") || resolved.includes("152127168827"))) {
+      resolved = DEFAULT_BASE;
+    }
+    $("settingsApiBaseInput").value = resolved || DEFAULT_BASE;
   }
 
   if ($("settingsPermissionLevel")) {

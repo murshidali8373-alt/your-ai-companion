@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { SiteFooter, SiteHeader } from "@/components/site-chrome";
@@ -34,6 +34,15 @@ const STEPS = [
 
 function Download() {
   const [busy, setBusy] = useState(false);
+  const [activeBackendUrl, setActiveBackendUrl] = useState(
+    "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app",
+  );
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.location.origin) {
+      setActiveBackendUrl(window.location.origin);
+    }
+  }, []);
 
   const download = async () => {
     setBusy(true);
@@ -118,9 +127,7 @@ function Download() {
           </div>
           <div className="mt-3 rounded border border-border/80 bg-muted/40 p-2 text-xs text-muted-foreground">
             Active Backend URL:{" "}
-            <code className="font-mono text-foreground font-semibold">
-              https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app
-            </code>
+            <code className="font-mono text-foreground font-semibold">{activeBackendUrl}</code>
           </div>
         </div>
       </main>
