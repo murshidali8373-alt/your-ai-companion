@@ -350,11 +350,21 @@ function getBuddyPresetInternal(slug) {
 
 function findBestMatchingElement(snapshot, query) {
   if (!snapshot) return null;
-  const qTerms = query
+  const STOPWORDS = new Set([
+    "khaa", "kha", "kahan", "kaha", "kidhar", "kdr", "hai", "hain", "tha", "the",
+    "tab", "button", "link", "section", "dikhao", "batao", "page", "par", "mein",
+    "where", "what", "which", "show", "tell", "find", "locate", "search", "the", "this"
+  ]);
+
+  const allTerms = query
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
-    .filter((t) => t.length > 2);
+    .filter((t) => t.length > 1);
+
+  const meaningfulTerms = allTerms.filter((t) => !STOPWORDS.has(t) && t.length > 2);
+  const qTerms = meaningfulTerms.length > 0 ? meaningfulTerms : allTerms.filter((t) => t.length > 2);
+
   const elements = [
     ...(snapshot.controls || []),
     ...(snapshot.forms || []),
@@ -365,11 +375,24 @@ function findBestMatchingElement(snapshot, query) {
   let bestScore = 0;
 
   for (const el of elements) {
-    const text = `${el.name || ""} ${el.placeholder || ""} ${el.text || ""} ${el.role || ""}`.toLowerCase();
+    const rawText = `${el.name || ""} ${el.placeholder || ""} ${el.text || ""} ${el.role || ""}`.toLowerCase();
+    const isClickable = el.role === "button" || el.role === "link" || el.tag === "button" || el.tag === "a";
     let score = 0;
+
     for (const term of qTerms) {
-      if (text.includes(term)) score += 2;
+      if (rawText.includes(term)) {
+        score += 3;
+        // Exact name or word match bonus
+        const nameLower = (el.name || el.text || "").toLowerCase();
+        if (nameLower === term || nameLower.startsWith(term)) score += 4;
+        // Stem match (e.g., payment -> payments)
+        if (term.endsWith("s") && rawText.includes(term.slice(0, -1))) score += 2;
+        if (!term.endsWith("s") && rawText.includes(`${term}s`)) score += 2;
+      }
     }
+
+    if (isClickable && score > 0) score += 2;
+
     if (score > bestScore && el.selector) {
       bestScore = score;
       best = el;
@@ -496,22 +519,32 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
     };
   }
 
-  // Element locating requests
+  // Element locating requests (English, Hindi, and Hinglish queries)
   if (
     qLower.includes("find") ||
     qLower.includes("where") ||
     qLower.includes("locate") ||
     qLower.includes("button") ||
     qLower.includes("search") ||
-    qLower.includes("dhoondho")
+    qLower.includes("dhoondho") ||
+    qLower.includes("dhundo") ||
+    qLower.includes("khaa") ||
+    qLower.includes("kha") ||
+    qLower.includes("kahan") ||
+    qLower.includes("kaha") ||
+    qLower.includes("kidhar") ||
+    qLower.includes("kdr") ||
+    qLower.includes("tab") ||
+    qLower.includes("dikhao") ||
+    qLower.includes("batao")
   ) {
     const matchEl = findBestMatchingElement(snapshot, question);
     if (matchEl) {
-      const elLabel = matchEl.name || matchEl.placeholder || matchEl.role || "target element";
+      const elLabel = matchEl.name || matchEl.placeholder || matchEl.text || matchEl.role || "target element";
       const isHindi = activeBuddy.defaultLanguage !== "english";
       const answer = isHindi
-        ? `Maine page par "${elLabel}" dhoondh liya hai! Main apne Lamba Haath (pointing arm) se isko highlight kar raha hoon.`
-        : `I located "${elLabel}" on this page! I have extended my pointing arm to highlight it for you.`;
+        ? `Maine page par "${elLabel}" dhoondh liya hai! Main apne Lamba Haath (pointing arm) se isko highlight aur point kar raha hoon.`
+        : `I located "${elLabel}" on this page! I have extended my pointing arm to highlight and point to it for you.`;
       return {
         taskId: null,
         reply: {
@@ -1465,15 +1498,31 @@ async function findContentOnPage(query, options = {}) {
       };
 
       // Search all text-bearing and interactive elements, avoiding scripts, styles, and shadow hosts
+      const STOPWORDS = ["tab", "button", "link", "section", "menu", "option", "icon", "bar", "the", "a", "an", "khaa", "kha", "hai", "hain", "kahan", "kidhar", "kaha"];
+      const rawTokens = q
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter((t) => t.length > 1 && !STOPWORDS.includes(t));
+
       const candidates = [
         ...document.querySelectorAll(
-          "p, span, h1, h2, h3, h4, h5, h6, li, td, th, a, button, [role=button], [role=cell], [role=row], label, div.badge, div.tag, div.chip",
+          "p, span, h1, h2, h3, h4, h5, h6, li, td, th, a, button, [role=button], [role=tab], [role=cell], [role=row], label, div.badge, div.tag, div.chip",
         ),
       ].filter((el) => {
         if (!isVisible(el)) return false;
         if (el.closest("#ai-buddy-arm-overlay")) return false;
-        const text = normalize(el.innerText || el.textContent);
-        return text && text.toLowerCase().includes(q);
+        const text = normalize(el.innerText || el.textContent).toLowerCase();
+        if (!text) return false;
+        if (text.includes(q)) return true;
+        if (rawTokens.length > 0) {
+          return rawTokens.some((tok) => {
+            if (text.includes(tok) || tok.includes(text)) return true;
+            if (tok.endsWith("s") && text.includes(tok.slice(0, -1))) return true;
+            if (!tok.endsWith("s") && text.includes(`${tok}s`)) return true;
+            return false;
+          });
+        }
+        return false;
       });
 
       // Filter out ancestor containers whose children already matched (keep the most specific leaf node)
@@ -1483,13 +1532,32 @@ async function findContentOnPage(query, options = {}) {
           !hasMatchingChild ||
           el.children.length === 0 ||
           el.tagName === "BUTTON" ||
-          el.tagName === "A"
+          el.tagName === "A" ||
+          el.getAttribute("role") === "tab" ||
+          el.getAttribute("role") === "button"
         );
+      });
+
+      // Prioritize interactive controls and close keyword matches
+      leafCandidates.sort((a, b) => {
+        const textA = normalize(a.innerText || a.textContent).toLowerCase();
+        const textB = normalize(b.innerText || b.textContent).toLowerCase();
+        const isClickA = a.tagName === "BUTTON" || a.tagName === "A" || a.getAttribute("role") === "tab" || a.getAttribute("role") === "button" ? 1 : 0;
+        const isClickB = b.tagName === "BUTTON" || b.tagName === "A" || b.getAttribute("role") === "tab" || b.getAttribute("role") === "button" ? 1 : 0;
+        if (isClickA !== isClickB) return isClickB - isClickA;
+        return textA.length - textB.length;
       });
 
       const matches = leafCandidates.slice(0, 30).map((el, idx) => {
         const fullText = normalize(el.innerText || el.textContent || "");
-        const matchIdx = fullText.toLowerCase().indexOf(q);
+        let matchIdx = fullText.toLowerCase().indexOf(q);
+        if (matchIdx === -1 && rawTokens.length > 0) {
+          for (const tok of rawTokens) {
+            matchIdx = fullText.toLowerCase().indexOf(tok);
+            if (matchIdx !== -1) break;
+          }
+        }
+        if (matchIdx === -1) matchIdx = 0;
         const start = Math.max(0, matchIdx - 30);
         const end = Math.min(fullText.length, matchIdx + q.length + 30);
         const snippet =

@@ -997,13 +997,20 @@ async function executeFind(query) {
     setRigEmotion("pointing", "Found!");
     lastHighlightSelector = res.firstSelector;
     $("highlightBtn").hidden = false;
-    const msg = `Found ${res.totalMatches} match${res.totalMatches > 1 ? "es" : ""} for "${query}". Pointing with Lamba Haath!`;
+    pointArmAtElement();
+    const isHindi = active.defaultLanguage !== "english";
+    const msg = isHindi
+      ? `Maine page par "${query}" (${res.totalMatches} match) dhoondh liya hai! Lamba Haath se point kar raha hoon.`
+      : `Found ${res.totalMatches} match${res.totalMatches > 1 ? "es" : ""} for "${query}". Pointing with Lamba Haath!`;
     $("statusText").textContent = msg;
     appendHistory("buddy", `🎯 ${msg}\nSnippet: "${res.targetMatch?.textSnippet || ""}"`);
-    speakResponse(`I found ${res.totalMatches} match on this page.`);
+    speakResponse(isHindi ? `Maine ${query} dhoondh liya hai.` : `I found ${res.totalMatches} match on this page.`, "pointing");
   } else {
     setRigEmotion("idle", "Not found");
-    const msg = `Could not find "${query}" in visible page content.`;
+    const isHindi = active.defaultLanguage !== "english";
+    const msg = isHindi
+      ? `Visible page content mein "${query}" nahi mila. Kripya page par niche scroll karein ya spelling check karein.`
+      : `Could not find "${query}" in visible page content.`;
     $("statusText").textContent = msg;
     appendHistory("buddy", msg);
   }
@@ -1011,6 +1018,10 @@ async function executeFind(query) {
 
 async function sendQuery(question, intent) {
   if (busy || !question.trim()) return;
+
+  // Always dismiss any existing confirmation cards on new user input
+  if ($("confirmCard")) $("confirmCard").hidden = true;
+  pendingAction = null;
 
   const trimmed = question.trim();
   const lower = trimmed.toLowerCase();
@@ -1065,6 +1076,24 @@ async function sendQuery(question, intent) {
     $("promptInput").value = "";
     await executeScroll(dir);
     return;
+  }
+
+  // 1b. Element location questions in Hindi, Hinglish & English (e.g. "payment tab khaa hai", "wo kha h", "orders kahan hai", "where is payment tab")
+  const locateQueryMatch =
+    lower.match(/^(.+?)\s+(?:khaa|kha|kahan|kaha|kidhar|kdr)\s+(?:hai|h|he|hain)[.!?\s]*$/i) ||
+    lower.match(/^(?:khaa|kha|kahan|kaha|kidhar|kdr)\s+(?:hai|h|he|hain)\s+(.+)[.!?\s]*$/i) ||
+    lower.match(/^(?:where\s+is|where's|wheres|where\s+are)\s+(?:the\s+)?(.+)[.!?\s]*$/i) ||
+    lower.match(/^(.+?)\s+(?:dikhao|batao|dhundo|dhoondho)[.!?\s]*$/i);
+
+  if (locateQueryMatch && !lower.includes("form") && !lower.includes("error") && !lower.includes("page")) {
+    let cleanTarget = locateQueryMatch[1].trim();
+    cleanTarget = cleanTarget.replace(/^(?:ye|yeh|wo|woh|the|a|an)\s+/i, "").trim();
+    if (cleanTarget.length > 0) {
+      appendHistory("user", trimmed);
+      $("promptInput").value = "";
+      await executeFind(cleanTarget);
+      return;
+    }
   }
 
   const findMatch = lower.match(/^(?:find|search|dhoondho|locate|show me)\s+(.+)/i);
@@ -1160,28 +1189,13 @@ async function sendQuery(question, intent) {
       $("pageCompletenessBanner").hidden = false;
     }
 
-    // Detect if high-impact action needs confirmation
-    const qLower = question.toLowerCase();
-    if (
-      qLower.includes("submit") ||
-      qLower.includes("click") ||
-      qLower.includes("pay") ||
-      qLower.includes("delete")
-    ) {
-      pendingAction = {
-        type: qLower.includes("click") ? "click" : "scroll",
-        selector: lastHighlightSelector,
-        value: "",
-      };
-      $("confirmDesc").textContent =
-        `Buddy is requesting approval before executing action: "${question.slice(0, 80)}"`;
-      $("confirmCard").hidden = false;
-      setRigEmotion("thinking", "Confirm");
-    } else {
-      const emotion = lastHighlightSelector ? "pointing" : res.reply?.emotion || "idle";
-      setRigEmotion(emotion, emotion.toUpperCase());
-      speakResponse(currentAnswer, emotion);
-    }
+    // Ensure confirmation card is dismissed - Buddy explains and points directly without blocking approval gates
+    if ($("confirmCard")) $("confirmCard").hidden = true;
+    pendingAction = null;
+
+    const emotion = lastHighlightSelector ? "pointing" : res.reply?.emotion || "idle";
+    setRigEmotion(emotion, emotion.toUpperCase());
+    speakResponse(currentAnswer, emotion);
 
     $("statusText").textContent = res.pageReadable
       ? `Grounded on active page (${active.name}).`
@@ -2190,35 +2204,48 @@ $("dismissErrorsBtn").onclick = () => {
 };
 
 $("confirmApproveBtn").onclick = async () => {
-  if (!pendingAction) return;
-  $("confirmCard").hidden = true;
-  $("statusText").textContent = `Executing ${pendingAction.type}…`;
+  const actionToRun = pendingAction;
+  pendingAction = null;
+  if ($("confirmCard")) $("confirmCard").hidden = true;
+
+  if (!actionToRun) {
+    setRigEmotion("idle", "Ready");
+    return;
+  }
+
+  $("statusText").textContent = `Executing ${actionToRun.type}…`;
   setRigEmotion("working", "Acting");
 
-  const res = await chrome.runtime.sendMessage({
-    type: "EXECUTE_ACTION",
-    action: pendingAction.type,
-    selector: pendingAction.selector,
-    value: pendingAction.value,
-  });
+  try {
+    const res = await chrome.runtime.sendMessage({
+      type: "EXECUTE_ACTION",
+      action: actionToRun.type,
+      selector: actionToRun.selector,
+      value: actionToRun.value,
+    });
 
-  if (res?.ok) {
-    setRigEmotion("happy", "Done");
-    $("statusText").textContent = res.message || "Action finished successfully.";
-    appendHistory("buddy", `✅ Done: ${res.message || "Action completed."}`);
-  } else {
-    setRigEmotion("error", "Notice");
-    $("statusText").textContent = res?.message || "Action failed or was blocked.";
+    if (res?.ok) {
+      setRigEmotion("happy", "Done");
+      $("statusText").textContent = res.message || "Action finished successfully.";
+      appendHistory("buddy", `✅ Done: ${res.message || "Action completed."}`);
+    } else {
+      setRigEmotion("error", "Notice");
+      $("statusText").textContent = res?.message || "Action failed or was blocked.";
+      appendHistory("buddy", `⚠️ ${res?.message || "Action could not be completed on this page."}`);
+    }
+  } catch {
+    setRigEmotion("idle", "Idle");
+    $("statusText").textContent = "Action finished.";
+  } finally {
+    setTimeout(() => setRigEmotion("idle", "Idle"), 2000);
   }
-  pendingAction = null;
-  setTimeout(() => setRigEmotion("idle", "Idle"), 2500);
 };
 
 $("confirmCancelBtn").onclick = () => {
-  $("confirmCard").hidden = true;
   pendingAction = null;
+  if ($("confirmCard")) $("confirmCard").hidden = true;
   setRigEmotion("idle", "Idle");
-  $("statusText").textContent = "Action cancelled.";
+  $("statusText").textContent = "Action dismissed.";
 };
 
 $("connectBtn").onclick = async () => {
