@@ -1772,6 +1772,45 @@
             ></span>
           </div>
 
+          <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; border-top: 1px solid var(--border); padding-top: 8px">
+            <label
+              style="
+                font-size: 10px;
+                font-weight: 600;
+                color: var(--text-dim);
+                text-transform: uppercase;
+              "
+              >Google Gemini API Key (Direct Mode)</label
+            >
+            <div style="display: flex; gap: 4px">
+              <input
+                id="settingsApiKeyInput"
+                type="password"
+                placeholder="AIzaSy... (Runs 100% serverless)"
+                style="
+                  flex: 1;
+                  padding: 5px 8px;
+                  font-size: 11px;
+                  background: var(--bg);
+                  border: 1px solid var(--border);
+                  border-radius: var(--radius-sm);
+                  color: var(--text);
+                "
+              />
+              <button
+                id="settingsSaveApiKeyBtn"
+                class="ghost"
+                style="padding: 4px 8px; font-size: 10px; font-weight: 600"
+              >
+                Save
+              </button>
+            </div>
+            <span
+              id="settingsApiKeyFeedback"
+              style="font-size: 10px; color: var(--accent-cyan); display: none"
+            ></span>
+          </div>
+
           <div style="display: flex; gap: 6px; margin-top: 4px">
             <button
               id="settingsConnectWebBtn"

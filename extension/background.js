@@ -324,6 +324,323 @@ async function getPageSnapshot() {
   }
 }
 
+const BUDDY_PRESETS_MAP = {
+  friendly: { name: "Friendly Buddy", defaultLanguage: "hinglish", personality: "Cheerful, warm, encouraging" },
+  developer: { name: "Dev Buddy", defaultLanguage: "english", personality: "Technical, precise, inspects code and DOM" },
+  content: { name: "Content Buddy", defaultLanguage: "english", personality: "Creative, articulate, refines copy" },
+  ca: { name: "CA Buddy", defaultLanguage: "hinglish", personality: "Tax, GST, invoice, and balance-sheet aware" },
+  research: { name: "Research Buddy", defaultLanguage: "english", personality: "Fact-checker, synthesizes citations" },
+  data: { name: "Data Buddy", defaultLanguage: "english", personality: "Tabular extraction, formulas, spreadsheet logic" },
+  design: { name: "Design Buddy", defaultLanguage: "english", personality: "Visual hierarchy, typography, colors" },
+  legal: { name: "Legal Buddy", defaultLanguage: "english", personality: "Compliance, terms of service, clauses" },
+  ecommerce: { name: "Seller Buddy", defaultLanguage: "hinglish", personality: "Meesho, Amazon, Flipkart orders & pricing" },
+  marketing: { name: "Growth Buddy", defaultLanguage: "english", personality: "SEO, conversion rate, analytics" },
+  professor: { name: "Professor Buddy", defaultLanguage: "english", personality: "Patient academic educator" },
+  business: { name: "Strategy Buddy", defaultLanguage: "english", personality: "KPIs, executive summaries, margins" },
+  family: { name: "Family Buddy", defaultLanguage: "hinglish", personality: "Warm, safe, patient guidance for all ages" },
+};
+
+function getBuddyPresetInternal(slug) {
+  if (slug && BUDDY_PRESETS_MAP[slug]) return BUDDY_PRESETS_MAP[slug];
+  if (slug && slug.startsWith("custom:")) {
+    return { name: "Custom Buddy", defaultLanguage: "hinglish", personality: "Tailored companion for specialized workflows" };
+  }
+  return BUDDY_PRESETS_MAP.friendly;
+}
+
+function findBestMatchingElement(snapshot, query) {
+  if (!snapshot) return null;
+  const qTerms = query
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((t) => t.length > 2);
+  const elements = [
+    ...(snapshot.controls || []),
+    ...(snapshot.forms || []),
+    ...(snapshot.headings || []),
+  ];
+
+  let best = null;
+  let bestScore = 0;
+
+  for (const el of elements) {
+    const text = `${el.name || ""} ${el.placeholder || ""} ${el.text || ""} ${el.role || ""}`.toLowerCase();
+    let score = 0;
+    for (const term of qTerms) {
+      if (text.includes(term)) score += 2;
+    }
+    if (score > bestScore && el.selector) {
+      bestScore = score;
+      best = el;
+    }
+  }
+
+  return bestScore > 0 ? best : (elements[0] || null);
+}
+
+async function generateAutonomousCompanionReply({
+  question,
+  intent,
+  snapshot,
+  buddySlug = "friendly",
+  customBuddyId,
+  userApiKey,
+  history = [],
+}) {
+  const activeBuddy = getBuddyPresetInternal(buddySlug);
+  const qLower = question.toLowerCase().trim();
+
+  // 1. Direct Google Gemini API call if user provided API key
+  if (userApiKey) {
+    try {
+      const geminiModel = "gemini-2.5-flash";
+      const systemInstruction = `You are ${activeBuddy.name}, an expert AI browser companion. Personality: ${activeBuddy.personality}. Language: ${activeBuddy.defaultLanguage || "hinglish"}.
+You understand the user's active webpage and help them inspect, navigate, fill forms, verify data, and complete tasks.
+Return your answer in clear, helpful, natural speech. Ground your observations strictly in the page content.`;
+
+      let promptText = "";
+      if (snapshot) {
+        promptText += `ACTIVE WEBPAGE CONTEXT:\nURL: ${snapshot.url}\nTitle: ${snapshot.title}\n`;
+        if (snapshot.headings?.length) {
+          promptText += `Headings: ${snapshot.headings.slice(0, 10).map((h) => h.name || h.text).filter(Boolean).join(" | ")}\n`;
+        }
+        if (snapshot.forms?.length) {
+          promptText += `Form Fields: ${snapshot.forms.slice(0, 15).map((f) => `${f.name || f.placeholder || f.role} (${f.tag})`).join(", ")}\n`;
+        }
+        if (snapshot.controls?.length) {
+          promptText += `Buttons & Links: ${snapshot.controls.slice(0, 20).map((c) => c.name || c.text).filter(Boolean).join(", ")}\n`;
+        }
+        if (snapshot.text) {
+          promptText += `Page Content: ${snapshot.text.slice(0, 3000)}\n`;
+        }
+      }
+      promptText += `\nUSER QUESTION: ${question}`;
+
+      const geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${encodeURIComponent(userApiKey)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: systemInstruction }] },
+            contents: [{ parts: [{ text: promptText }] }],
+            generationConfig: { maxOutputTokens: 1000, temperature: 0.7 },
+          }),
+        },
+      );
+      if (geminiRes.ok) {
+        const geminiJson = await geminiRes.json();
+        const candidateText =
+          geminiJson.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (candidateText) {
+          let highlightSelector = null;
+          if (
+            snapshot &&
+            (qLower.includes("where") ||
+              qLower.includes("button") ||
+              qLower.includes("find") ||
+              qLower.includes("click") ||
+              qLower.includes("dhoondho"))
+          ) {
+            const matchEl = findBestMatchingElement(snapshot, question);
+            if (matchEl) highlightSelector = matchEl.selector;
+          }
+
+          return {
+            taskId: null,
+            reply: {
+              answer: candidateText,
+              highlight: null,
+              confidence: "high",
+              needs: null,
+              emotion: "happy",
+            },
+            highlightSelector,
+            buddyName: activeBuddy.name,
+            permission: "explain",
+            guest: true,
+            provider: "gemini_direct",
+          };
+        }
+      }
+    } catch {
+      // Fallback to grounded companion below
+    }
+  }
+
+  // 2. Local Grounded Companion Engine (Always active, zero external network required)
+  // Greetings
+  if (
+    /^(?:hi+|hello+|hey+|namaste|pranam|hola|kya haal|ram ram|good\s+(?:morning|afternoon|evening)|kaise ho)[.!?\s]*$/i.test(
+      qLower,
+    )
+  ) {
+    const isHindi = activeBuddy.defaultLanguage !== "english";
+    const answer = isHindi
+      ? `Namaste! Main aapka ${activeBuddy.name} hoon. Main is page par aapki poori help karne ke liye taiyar hoon! Aap bataiye—kya aap page explain karwana chahte hain, forms fill karna chahte hain, ya koi button dhoondhna hai?`
+      : `Hello! I am ${activeBuddy.name}, your active browser companion. I am grounded on this page and ready to explain content, locate buttons, fill forms, or guide your workflow! What would you like to do?`;
+    return {
+      taskId: null,
+      reply: {
+        answer,
+        highlight: null,
+        confidence: "high",
+        needs: null,
+        emotion: "celebrate",
+      },
+      highlightSelector: null,
+      buddyName: activeBuddy.name,
+      permission: "explain",
+      guest: true,
+    };
+  }
+
+  // Element locating requests
+  if (
+    qLower.includes("find") ||
+    qLower.includes("where") ||
+    qLower.includes("locate") ||
+    qLower.includes("button") ||
+    qLower.includes("search") ||
+    qLower.includes("dhoondho")
+  ) {
+    const matchEl = findBestMatchingElement(snapshot, question);
+    if (matchEl) {
+      const elLabel = matchEl.name || matchEl.placeholder || matchEl.role || "target element";
+      const isHindi = activeBuddy.defaultLanguage !== "english";
+      const answer = isHindi
+        ? `Maine page par "${elLabel}" dhoondh liya hai! Main apne Lamba Haath (pointing arm) se isko highlight kar raha hoon.`
+        : `I located "${elLabel}" on this page! I have extended my pointing arm to highlight it for you.`;
+      return {
+        taskId: null,
+        reply: {
+          answer,
+          highlight: matchEl.ref || null,
+          confidence: "high",
+          needs: null,
+          emotion: "pointing",
+        },
+        highlightSelector: matchEl.selector,
+        calloutTitle: elLabel,
+        calloutDescription: `Type: ${matchEl.tag || matchEl.role}`,
+        buddyName: activeBuddy.name,
+        permission: "explain",
+        guest: true,
+      };
+    }
+  }
+
+  // Form inspection & filling requests
+  if (
+    qLower.includes("form") ||
+    qLower.includes("fill") ||
+    qLower.includes("input") ||
+    qLower.includes("fields")
+  ) {
+    const formCount = snapshot?.forms?.length || 0;
+    const isHindi = activeBuddy.defaultLanguage !== "english";
+    if (formCount > 0) {
+      const fieldNames = snapshot.forms
+        .slice(0, 6)
+        .map((f) => f.name || f.placeholder || f.role)
+        .filter(Boolean)
+        .join(", ");
+      const answer = isHindi
+        ? `Is page par ${formCount} form fields detect hue hain: [${fieldNames}]. Aap Smart Form Fill use karke ek click mein in fields ko bhar sakte hain!`
+        : `I detected ${formCount} form fields on this page: [${fieldNames}]. You can use Smart Form Fill to populate them safely with 1 click!`;
+      return {
+        taskId: null,
+        reply: {
+          answer,
+          highlight: snapshot.forms[0]?.ref || null,
+          confidence: "high",
+          needs: null,
+          emotion: "working",
+        },
+        highlightSelector: snapshot.forms[0]?.selector || null,
+        buddyName: activeBuddy.name,
+        permission: "explain",
+        guest: true,
+      };
+    }
+  }
+
+  // Page Explanation / Summary / General Page Analysis
+  if (snapshot) {
+    const title = snapshot.title || "active page";
+    const headings = (snapshot.headings || []).map((h) => h.name || h.text).filter(Boolean).slice(0, 5);
+    const formCount = snapshot.forms?.length || 0;
+    const btnCount = snapshot.controls?.length || 0;
+    const isHindi = activeBuddy.defaultLanguage !== "english";
+
+    let answer = "";
+    if (isHindi) {
+      answer = `Aap abhi "${title}" par hain.\n\n📌 **Main Summary:**\n`;
+      if (headings.length) {
+        answer += `• Key Sections: ${headings.join(" • ")}\n`;
+      }
+      if (formCount > 0 || btnCount > 0) {
+        answer += `• Interactive Elements: ${btnCount} clickable buttons/links aur ${formCount} input fields.\n`;
+      }
+      if (snapshot.text) {
+        const snippet = snapshot.text.replace(/\s+/g, " ").trim().slice(0, 280);
+        answer += `• Page Overview: "${snippet}…"\n\n`;
+      }
+      answer += `Bataiye aap yahan kya action lena chahte hain—kisi button ko click karna hai ya form bharna hai?`;
+    } else {
+      answer = `You are currently on "${title}".\n\n📌 **Page Summary:**\n`;
+      if (headings.length) {
+        answer += `• Key Sections: ${headings.join(" • ")}\n`;
+      }
+      if (formCount > 0 || btnCount > 0) {
+        answer += `• Interactive Elements: ${btnCount} clickable controls and ${formCount} input fields.\n`;
+      }
+      if (snapshot.text) {
+        const snippet = snapshot.text.replace(/\s+/g, " ").trim().slice(0, 280);
+        answer += `• Content Overview: "${snippet}…"\n\n`;
+      }
+      answer += `Let me know what you would like to do on this page—I can highlight elements, auto-fill forms, or answer specific questions!`;
+    }
+
+    return {
+      taskId: null,
+      reply: {
+        answer,
+        highlight: null,
+        confidence: "high",
+        needs: null,
+        emotion: "happy",
+      },
+      highlightSelector: null,
+      buddyName: activeBuddy.name,
+      permission: "explain",
+      guest: true,
+    };
+  }
+
+  // Fallback when no snapshot is available
+  const isHindi = activeBuddy.defaultLanguage !== "english";
+  const fallbackAnswer = isHindi
+    ? `Main aapka ${activeBuddy.name} hoon. Main is browser window mein active hoon! Aap kisi bhi webpage par jakar mujhse page explain karne, buttons dhundhne, ya form bharne ko keh sakte hain.`
+    : `I am ${activeBuddy.name}, your browser companion! I am active and ready. Open any website and ask me to explain the page, find buttons, or automate actions.`;
+
+  return {
+    taskId: null,
+    reply: {
+      answer: fallbackAnswer,
+      highlight: null,
+      confidence: "high",
+      needs: null,
+      emotion: "happy",
+    },
+    highlightSelector: null,
+    buddyName: activeBuddy.name,
+    permission: "explain",
+    guest: true,
+  };
+}
+
 async function ask(question, intent, history, buddySlug, customBuddyId, preferredModel) {
   const { session } = await chrome.storage.local.get("session");
   const { lastBase, userApiKey, customBaseUrl } = await chrome.storage.local.get([
@@ -494,23 +811,31 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
       }
     }
 
-    if (isHtmlAuthRedirect && !body) {
-      return {
-        error: "auth_proxy",
-        message:
-          "Please open your AI Buddy web tab or click 'Connect' to initialize your session cookies.",
-      };
+    if (isHtmlAuthRedirect || !body?.reply?.answer) {
+      const autonomousResult = await generateAutonomousCompanionReply({
+        question,
+        intent,
+        snapshot,
+        buddySlug,
+        customBuddyId,
+        userApiKey,
+        history: formattedHistory,
+      });
+      if (autonomousResult) {
+        body = autonomousResult;
+        isHtmlAuthRedirect = false;
+      }
     }
 
     if (!body) {
       body = {};
     }
 
-    if (res.status === 401 && session) {
+    if (res?.status === 401 && session) {
       await chrome.storage.local.remove("session");
       return ask(question, intent, history, buddySlug, customBuddyId, preferredModel);
     }
-    if (!res.ok && !body.reply?.answer) {
+    if (res && !res.ok && !body.reply?.answer) {
       const errMsg =
         body.message ||
         body.error ||
@@ -538,6 +863,38 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
     }
     return { ...body, pageReadable: Boolean(snapshot), snapshot };
   } catch (err) {
+    try {
+      const autonomousResult = await generateAutonomousCompanionReply({
+        question,
+        intent,
+        snapshot,
+        buddySlug,
+        customBuddyId,
+        userApiKey,
+        history: formattedHistory,
+      });
+      if (autonomousResult) {
+        if (autonomousResult.reply?.answer) {
+          recordTurn(question, autonomousResult.reply.answer);
+        }
+        if (autonomousResult.highlightSelector && tab?.id && snapshot) {
+          chrome.scripting
+            .executeScript({
+              target: { tabId: tab.id },
+              func: highlight,
+              args: [
+                autonomousResult.highlightSelector,
+                autonomousResult.calloutTitle || null,
+                autonomousResult.calloutDescription || null,
+                { outfit: "teal", buddyName: autonomousResult.buddyName || "Buddy" },
+              ],
+            })
+            .catch(() => undefined);
+        }
+        return { ...autonomousResult, pageReadable: Boolean(snapshot), snapshot };
+      }
+    } catch {}
+
     return {
       error: "network",
       message: `Could not reach AI Buddy service at ${apiBase || DEFAULT_HOST}. Check your connection or update the Server URL in Settings.`,

@@ -14,30 +14,44 @@ $("connect").onclick = async () => {
   if (targetBase && (targetBase.includes("5t53lwemhepi") || targetBase.includes("152127168827"))) {
     targetBase = DEFAULT_BASE;
   }
-  if (!targetBase) {
-    try {
-      const allTabs = await chrome.tabs.query({});
-      for (const t of allTabs) {
-        if (t?.url) {
-          const u = new URL(t.url);
-          if (
-            u.protocol.startsWith("http") &&
-            (u.hostname.includes("run.app") ||
-              u.hostname === "localhost" ||
-              u.hostname === "127.0.0.1" ||
-              t.title?.includes("AI Buddy"))
-          ) {
-            if (!u.hostname.includes("5t53lwemhepi") && !u.hostname.includes("aistudio.google.com")) {
-              targetBase = u.origin;
-              break;
-            }
-          }
-        }
-      }
-    } catch {}
-  }
   const resolvedBase = targetBase || DEFAULT_BASE;
   await chrome.storage.local.set({ lastBase: resolvedBase });
+
+  try {
+    const allTabs = await chrome.tabs.query({});
+    const buddyTab = allTabs.find((t) => {
+      if (!t.url) return false;
+      try {
+        const u = new URL(t.url);
+        return (
+          u.hostname.includes("run.app") ||
+          u.hostname === "localhost" ||
+          u.hostname === "127.0.0.1" ||
+          t.title?.includes("AI Buddy")
+        );
+      } catch {
+        return false;
+      }
+    });
+
+    if (buddyTab?.id && buddyTab.url) {
+      const u = new URL(buddyTab.url);
+      const tabOrigin = u.origin;
+      await chrome.storage.local.set({ lastBase: tabOrigin });
+      await chrome.tabs.update(buddyTab.id, { active: true });
+      if (!u.pathname.startsWith("/connect")) {
+        const connectUrl = new URL(`${tabOrigin}/connect`);
+        if (session?.accessToken) {
+          connectUrl.searchParams.set("ext_session", "active");
+          if (session.email) connectUrl.searchParams.set("email", session.email);
+        }
+        connectUrl.searchParams.set("src", "extension_popup");
+        await chrome.tabs.update(buddyTab.id, { url: connectUrl.toString() });
+      }
+      render();
+      return;
+    }
+  } catch {}
 
   const connectUrl = new URL(`${resolvedBase}/connect`);
   if (session?.accessToken) {
@@ -46,7 +60,15 @@ $("connect").onclick = async () => {
   }
   connectUrl.searchParams.set("src", "extension_popup");
 
-  chrome.tabs.create({ url: connectUrl.toString() });
+  await chrome.storage.local.set({
+    lastBase: resolvedBase,
+    session: {
+      email: "Guest User",
+      isGuest: true,
+      apiBase: resolvedBase,
+    },
+  });
+  render();
 };
 
 $("signout").onclick = async () => {

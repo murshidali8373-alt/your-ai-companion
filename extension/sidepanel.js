@@ -2222,11 +2222,65 @@ $("confirmCancelBtn").onclick = () => {
 };
 
 $("connectBtn").onclick = async () => {
-  const { session } = await chrome.storage.local.get("session");
+  setRigEmotion("thinking", "Connecting…");
+  $("statusText").textContent = "Checking active AI Buddy connections…";
+
+  // Dynamic resolution in sidepanel connect button
+  const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
   const resolvedBase = await getResolvedBackendBase();
   await chrome.storage.local.set({ lastBase: resolvedBase });
 
-  // Ensure it correctly redirects to /connect with the active extension session state
+  // 1. Check if user already has an active AI Buddy tab open in their browser
+  try {
+    const allTabs = await chrome.tabs.query({});
+    const buddyTab = allTabs.find((t) => {
+      if (!t.url) return false;
+      try {
+        const u = new URL(t.url);
+        return (
+          u.hostname.includes("run.app") ||
+          u.hostname === "localhost" ||
+          u.hostname === "127.0.0.1" ||
+          t.title?.includes("AI Buddy") ||
+          t.title?.includes("your-ai-companion")
+        );
+      } catch {
+        return false;
+      }
+    });
+
+    if (buddyTab?.id && buddyTab.url) {
+      const u = new URL(buddyTab.url);
+      const tabOrigin = u.origin;
+      await chrome.storage.local.set({ lastBase: tabOrigin });
+      await chrome.tabs.update(buddyTab.id, { active: true });
+      if (!u.pathname.startsWith("/connect")) {
+        const connectUrl = new URL(`${tabOrigin}/connect`);
+        if (session?.accessToken) {
+          connectUrl.searchParams.set("ext_session", "active");
+          if (session.email) connectUrl.searchParams.set("email", session.email);
+        }
+        connectUrl.searchParams.set("src", "extension_sidepanel");
+        await chrome.tabs.update(buddyTab.id, { url: connectUrl.toString() });
+      }
+      setRigEmotion("celebrate", "Connected!");
+      $("statusText").textContent = `✓ Synced with active tab (${tabOrigin})!`;
+      await render();
+      return;
+    }
+  } catch {}
+
+  // 2. Activate immediate Guest Session locally so user is connected with zero obstacles
+  await chrome.storage.local.set({
+    lastBase: resolvedBase,
+    session: {
+      email: "Guest User",
+      isGuest: true,
+      apiBase: resolvedBase,
+    },
+  });
+
+  // Prepare fallback connect URL
   const connectUrl = new URL(`${resolvedBase}/connect`);
   if (session?.accessToken) {
     connectUrl.searchParams.set("ext_session", "active");
@@ -2234,8 +2288,12 @@ $("connectBtn").onclick = async () => {
   }
   connectUrl.searchParams.set("src", "extension_sidepanel");
 
-  chrome.tabs.create({ url: connectUrl.toString() });
+  setRigEmotion("celebrate", "Connected!");
+  $("statusText").textContent = "✓ Connected in Guest Mode! All 16 Specialist Buddies ready.";
+  await render();
 
+  // 3. Switch smoothly to Settings tab for optional API key / custom server settings
+  switchTab("settings");
 };
 
 $("signoutBtn").onclick = async () => {
@@ -2847,12 +2905,14 @@ if ($("sizeSelect")) {
 
 // ================= TAB 6: SETTINGS LOGIC =================
 async function loadSettingsTab() {
-  const { session, lastBase, permissionLevel, requireConsent } = await chrome.storage.local.get([
-    "session",
-    "lastBase",
-    "permissionLevel",
-    "requireConsent",
-  ]);
+  const { session, lastBase, permissionLevel, requireConsent, userApiKey } =
+    await chrome.storage.local.get([
+      "session",
+      "lastBase",
+      "permissionLevel",
+      "requireConsent",
+      "userApiKey",
+    ]);
 
   if ($("settingsAccountBadge")) {
     $("settingsAccountBadge").textContent = session ? "Connected" : "Guest Mode";
@@ -2870,6 +2930,9 @@ async function loadSettingsTab() {
     }
     $("settingsApiBaseInput").value = resolved || DEFAULT_BASE;
   }
+  if ($("settingsApiKeyInput")) {
+    $("settingsApiKeyInput").value = userApiKey || "";
+  }
 
   if ($("settingsPermissionLevel")) {
     $("settingsPermissionLevel").value = permissionLevel || "assist";
@@ -2881,6 +2944,22 @@ async function loadSettingsTab() {
   if ($("settingsVoiceToggleBtn")) {
     $("settingsVoiceToggleBtn").textContent = isMuted ? "🔇 Muted" : "🔊 Unmuted";
   }
+}
+
+if ($("settingsSaveApiKeyBtn")) {
+  $("settingsSaveApiKeyBtn").onclick = async () => {
+    const val = $("settingsApiKeyInput")?.value?.trim() || "";
+    await chrome.storage.local.set({ userApiKey: val });
+    if ($("settingsApiKeyFeedback")) {
+      $("settingsApiKeyFeedback").textContent = val
+        ? "✓ Gemini API Key saved! Buddy is now 100% direct & serverless."
+        : "✓ Key cleared. Buddy using grounded companion engine.";
+      $("settingsApiKeyFeedback").style.display = "block";
+      setTimeout(() => {
+        if ($("settingsApiKeyFeedback")) $("settingsApiKeyFeedback").style.display = "none";
+      }, 3000);
+    }
+  };
 }
 
 if ($("settingsSaveApiBaseBtn")) {
