@@ -944,7 +944,7 @@
           <div class="greeting-context" id="greetingContext">
             Active on current webpage · Ready for navigation, research, and analysis.
           </div>
-          <div class="quick-actions-grid">
+          <div class="quick-actions-grid" hidden style="display: none">
             <div class="qa-btn" id="qaExplainPage">
               <span class="qa-btn-title">🔍 Understand Page</span>
               <span class="qa-btn-desc">Analyze DOM structure & inputs</span>
@@ -1095,8 +1095,8 @@
           </div>
         </div>
 
-        <!-- SMART MODE SELECTOR -->
-        <div class="mode-selector-bar">
+        <!-- SMART MODE SELECTOR (HIDDEN FOR STREAMLINED ZERO-PILL UI) -->
+        <div class="mode-selector-bar" hidden style="display: none">
           <span class="mode-pill active" data-mode="auto">⚡ Auto</span>
           <span class="mode-pill" data-mode="chat">💬 Chat</span>
           <span class="mode-pill" data-mode="browser">🌐 Browser</span>

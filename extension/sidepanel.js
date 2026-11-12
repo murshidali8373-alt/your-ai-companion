@@ -1016,53 +1016,62 @@ async function executeFind(query) {
   }
 }
 
-async function sendQuery(question, intent) {
-  if (busy || !question.trim()) return;
+function extractFieldsFromMessage(text) {
+  const fields = {};
+  const lower = (text || "").toLowerCase();
 
-  // Always dismiss any existing confirmation cards on new user input
-  if ($("confirmCard")) $("confirmCard").hidden = true;
-  pendingAction = null;
+  // Explicit key: value or key = value
+  const keyValRegex = /\b(name|fullname|legal_name|trade_name|email|phone|mobile|city|state|pincode|pin|gstin|pan|address)\s*[:=]\s*([^,;\n]+)/gi;
+  let m;
+  while ((m = keyValRegex.exec(text)) !== null) {
+    fields[m[1].toLowerCase()] = m[2].trim();
+  }
 
-  const trimmed = question.trim();
+  // Natural phrasing like "name Rahul, email rahul@gmail.com, city Delhi"
+  if (Object.keys(fields).length === 0) {
+    const patterns = [
+      { key: "name", regex: /\bname\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+email|\s+city|\s+pin|\s+phone|\s+bhar|\s+fill|$)/i },
+      { key: "email", regex: /\b(?:email|mail)\s+(?:as\s+|is\s+|:\s*)?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i },
+      { key: "phone", regex: /\b(?:phone|mobile)\s+(?:as\s+|is\s+|:\s*)?(\d{10})/i },
+      { key: "city", regex: /\bcity\s+(?:as\s+|is\s+|:\s*)?([A-Za-z]+)/i },
+      { key: "state", regex: /\bstate\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+pin|\s+city|$)/i },
+      { key: "pincode", regex: /\b(?:pin|pincode|zip)\s+(?:as\s+|is\s+|:\s*)?(\d{6})/i },
+      { key: "gstin", regex: /\b(?:gstin|gst)\s+(?:as\s+|is\s+|:\s*)?([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})/i },
+    ];
+    for (const p of patterns) {
+      const match = text.match(p.regex);
+      if (match && match[1]) {
+        fields[p.key] = match[1].trim();
+      }
+    }
+  }
+
+  return Object.keys(fields).length > 0 ? fields : null;
+}
+
+function parseActionIntent(text) {
+  const trimmed = (text || "").trim();
   const lower = trimmed.toLowerCase();
 
-  // 1. Direct browser command intercepts for zero-latency execution
-  const greetingMatch = lower.match(
-    /^(?:hi+|hello+|hey+|namaste|pranam|hola|kya haal(?:\s+hai)?|ram ram|good\s+(?:morning|afternoon|evening)|kaise ho)(?:\s+(?:buddy|dost|ai buddy|ji))?[.!?\s]*$/i,
-  );
-  if (greetingMatch) {
-    appendHistory("user", trimmed);
-    $("promptInput").value = "";
-    const active = getActiveBuddy();
-    setRigEmotion("celebrate", "Namaste!");
-    const greetingText =
-      active.defaultLanguage === "english"
-        ? `Hey there! I am ${active.name}. Ask me anything about this page, or tell me what action to take (fill forms, find elements, analyze tables, or automate workflows)!`
-        : `Namaste! Main aapka ${active.name} hoon. Aap is page par jo bhi karna chahte hain—forms fill karna, buttons dhoondhna, data copy karna ya Meesho orders check karna—bataiye, main turant help karunga!`;
-    appendHistory("buddy", greetingText);
-    $("statusText").textContent = `Ready with ${active.name}.`;
-    speakResponse(greetingText, "happy");
-    return;
+  // 1. GREETING
+  if (
+    /^(?:hi+|hello+|hey+|namaste|pranam|hola|kya haal(?:\s+hai)?|ram ram|good\s+(?:morning|afternoon|evening)|kaise ho)(?:\s+(?:buddy|dost|ai buddy|ji))?[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
+    return { type: "GREETING" };
   }
 
-  const helpMatch = lower.match(
-    /^(?:what can you do|help|kaam kya hai|kya kar sakte ho|features|commands|guide me)[.!?\s]*$/i,
-  );
-  if (helpMatch) {
-    appendHistory("user", trimmed);
-    $("promptInput").value = "";
-    const active = getActiveBuddy();
-    setRigEmotion("happy", "Ready");
-    const helpMsg =
-      active.defaultLanguage === "english"
-        ? `I am ${active.name}, your browser companion! Here is what I can do:\n• Explain any webpage or dashboard\n• Find & highlight any button, link or menu (e.g. 'find login button')\n• Auto-fill form fields and verify mistakes\n• Extract order lists and tables (Meesho, Flipkart, Excel)\n• Automate multi-step browser tasks\n\nTry typing: 'Explain this page' or 'Check pending orders'!`
-        : `Main aapka ${active.name} hoon! Main aapke browser par ye sab kar sakta hoon:\n• Current page explain karna\n• Kisi bhi button ya menu ko dhundh kar highlight karna ('find submit button')\n• Safe form filling aur errors check karna\n• Meesho / Flipkart orders aur tables extract karna\n• Multi-step browser workflows automate karna\n\nTry kijiye: 'Explain this page' ya 'Check pending orders'!`;
-    appendHistory("buddy", helpMsg);
-    $("statusText").textContent = `Capabilities of ${active.name}.`;
-    speakResponse(helpMsg, "happy");
-    return;
+  // 2. HELP / CAPABILITIES
+  if (
+    /^(?:what can you do|help|kaam kya hai|kya kar sakte ho|features|commands|guide me)[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
+    return { type: "HELP" };
   }
 
+  // 3. SCROLL
   if (
     /^(?:scroll\s+(?:down|up|to top|top|to bottom|bottom)|neeche jao|upar jao|page down|page up)$/i.test(
       lower,
@@ -1072,110 +1081,285 @@ async function sendQuery(question, intent) {
     if (lower.includes("up") || lower.includes("upar")) dir = "up";
     else if (lower.includes("top")) dir = "top";
     else if (lower.includes("bottom")) dir = "bottom";
-    appendHistory("user", trimmed);
-    $("promptInput").value = "";
-    await executeScroll(dir);
-    return;
+    return { type: "SCROLL", direction: dir };
   }
 
-  // 1b. Element location questions in Hindi, Hinglish & English (e.g. "payment tab khaa hai", "wo kha h", "orders kahan hai", "where is payment tab")
-  const locateQueryMatch =
-    lower.match(/^(.+?)\s+(?:khaa|kha|kahan|kaha|kidhar|kdr)\s+(?:hai|h|he|hain)[.!?\s]*$/i) ||
-    lower.match(/^(?:khaa|kha|kahan|kaha|kidhar|kdr)\s+(?:hai|h|he|hain)\s+(.+)[.!?\s]*$/i) ||
-    lower.match(/^(?:where\s+is|where's|wheres|where\s+are)\s+(?:the\s+)?(.+)[.!?\s]*$/i) ||
-    lower.match(/^(.+?)\s+(?:dikhao|batao|dhundo|dhoondho)[.!?\s]*$/i);
+  // 4. MULTI-STEP TASK
+  // Matches chained commands like: "Meesho dashboard open karo, pending orders find karo, first order open karo aur uska order ID batao"
+  const hasStepDelimiters =
+    /(?:,\s*(?:aur|then|and then|uske baad|phir|fir)\s*|\s+(?:aur|then|and then|uske baad|phir|fir)\s+|;\s*)/i.test(
+      lower,
+    );
+  const actionVerbs = lower.match(
+    /\b(?:open|click|press|dabao|fill|bhar|find|dhundo|dhoondho|extract|copy|search|kholo)\b/gi,
+  ) || [];
 
-  if (locateQueryMatch && !lower.includes("form") && !lower.includes("error") && !lower.includes("page")) {
-    let cleanTarget = locateQueryMatch[1].trim();
-    cleanTarget = cleanTarget.replace(/^(?:ye|yeh|wo|woh|the|a|an)\s+/i, "").trim();
-    if (cleanTarget.length > 0) {
-      appendHistory("user", trimmed);
-      $("promptInput").value = "";
-      await executeFind(cleanTarget);
-      return;
-    }
+  if (hasStepDelimiters && actionVerbs.length >= 2) {
+    return { type: "MULTI_STEP", instruction: trimmed };
   }
 
-  // 1c. Form fill commands in Hindi, Hinglish & English
+  // 5. EXTRACT / SEARCH DATA
+  // E.g. "Search karke ye information nikaalo", "Order ID copy karo", "extract orders"
   if (
-    /^(?:fill\s+(?:the\s+)?form|form\s+(?:fill|bhar|bharo)|auto\s*fill(?:\s+form)?|form\s+bhar\s+do|fill\s+(?:all\s+)?(?:inputs|fields))[.!?\s]*$/i.test(
+    /(?:search|dhoondh|dhundh)\s+karke.*(?:nikaalo|nikalo|lao|batao|copy)/i.test(lower) ||
+    /^(?:extract|copy|nikaalo|nikalo)\s+(?:the\s+)?(?:order(?:\s*id)?s?|table|data|details|info|information)/i.test(
+      lower,
+    ) ||
+    /(?:order(?:\s*id)?s?|table|data|details|information)\s+(?:nikaalo|nikalo|copy\s+karo|extract\s+karo)/i.test(
       lower,
     )
   ) {
-    appendHistory("user", trimmed);
-    $("promptInput").value = "";
-    await startSmartFormFill();
-    return;
+    let target = trimmed
+      .replace(/^(?:search\s+karke|extract|copy|dhoondh\s+ke|dhundh\s+ke)\s+/i, "")
+      .replace(/\s+(?:nikaalo|nikalo|lao|batao|copy\s+karo|extract\s+karo)$/i, "")
+      .trim();
+    return { type: "EXTRACT", target: target || "data" };
   }
 
-  // 1d. Button click / press commands in Hindi, Hinglish & English (e.g. "click submit", "submit button dabao", "payments par click karo")
-  const clickMatch =
-    lower.match(/^(?:click|press|tap|dabao)\s+(?:on\s+)?(?:the\s+)?(.+)[.!?\s]*$/i) ||
-    lower.match(/^(.+?)\s+(?:par\s+click|click|press|dabao)(?:\s+karo|\s+kijiye|\s+button|\s+tab)?[.!?\s]*$/i);
+  // 6. FORM FILL
+  // E.g. "Ye form fill kar do", "Form bhar do", "Auto fill inputs", "Fill this form",
+  // or "name Rahul, email rahul@gmail.com, city Delhi fill kar do"
+  const isFormTrigger =
+    /(?:form\s+(?:fill|bhar|bharo)|fill\s+(?:the\s+)?form|auto\s*fill|fill\s+(?:all\s+)?(?:inputs|fields)|form\s+bhar\s+do|is\s+form\s+ko\s+bharo)/i.test(
+      lower,
+    );
+  const hasKeyValueFields =
+    /\b(?:name|email|phone|city|pincode|address|gstin)\s*[:=]\s*[^\s,]+/i.test(lower);
 
-  if (clickMatch && !lower.includes("explain") && !lower.includes("how to") && !lower.includes("kaise") && !lower.includes("kaha") && !lower.includes("where")) {
-    let targetButton = clickMatch[1].trim();
-    targetButton = targetButton.replace(/^(?:ye|yeh|wo|woh|the|a|an)\s+/i, "").replace(/\s+(?:button|tab|link)$/i, "").trim();
-    if (targetButton.length > 0) {
-      appendHistory("user", trimmed);
-      $("promptInput").value = "";
-      setRigEmotion("working", "Acting");
-      $("statusText").textContent = `Clicking "${targetButton}"…`;
-      const res = await chrome.runtime.sendMessage({
-        type: "EXECUTE_ACTION",
-        action: "click",
-        value: targetButton,
-      });
-      if (res?.ok) {
-        setRigEmotion("happy", "Clicked!");
-        const active = getActiveBuddy();
-        const isHindi = active.defaultLanguage !== "english";
-        const msg = isHindi
-          ? `Maine page par "${targetButton}" click kar diya hai!`
-          : `Successfully clicked "${targetButton}"!`;
-        $("statusText").textContent = msg;
-        appendHistory("buddy", `✅ ${msg}`);
-        speakResponse(msg, "happy");
-      } else {
-        setRigEmotion("idle", "Not found");
-        const msg = res?.message || `Could not find button "${targetButton}" on this page.`;
-        $("statusText").textContent = msg;
-        appendHistory("buddy", `⚠️ ${msg}`);
-      }
-      return;
+  if (isFormTrigger || hasKeyValueFields) {
+    const fields = extractFieldsFromMessage(trimmed);
+    return { type: "FORM_FILL", fields };
+  }
+
+  // 7. CLICK / PRESS / TAP ACTION
+  // E.g. "Is page par login button click karo", "submit button dabao", "payments tab par click karo", "cart open karo"
+  const clickTrailingMatch = lower.match(
+    /(.+?)\s+(?:par\s+click\s+karo|pe\s+click\s+karo|ko\s+click\s+karo|par\s+click|pe\s+click|click\s+karo|click\s+kijiye|click\s+do|dabao|daba\s+do|press\s+karo|press\s+kijiye|tap\s+karo|khol\s+do|kholo|open\s+karo)[.!?\s]*$/i,
+  );
+  const clickLeadingMatch = lower.match(
+    /^(?:click|press|tap|dabao|open|kholo)\s+(?:on\s+)?(?:the\s+)?(.+)[.!?\s]*$/i,
+  );
+
+  if (
+    (clickTrailingMatch || clickLeadingMatch) &&
+    !lower.includes("how to") &&
+    !lower.includes("kaise") &&
+    !lower.includes("explain") &&
+    !lower.includes("kaha") &&
+    !lower.includes("where")
+  ) {
+    let raw = clickTrailingMatch ? clickTrailingMatch[1] : clickLeadingMatch[1];
+    let clean = raw
+      .replace(/^(?:is\s+page\s+(?:par|pe|se)|page\s+(?:par|pe|se)|ye|yeh|wo|woh|the|a|an|kripya|please|jaldi)\s+/i, "")
+      .replace(/\s+(?:button|tab|link|icon|menu|bar|option)$/i, "")
+      .trim();
+
+    if (clean.length > 0) {
+      const isConsequential = /purchase|buy|pay|delete|remove account|confirm payment/i.test(
+        clean,
+      );
+      return { type: "CLICK", target: clean, isConsequential };
     }
   }
 
-  const findMatch = lower.match(/^(?:find|search|dhoondho|locate|show me)\s+(.+)/i);
-  if (findMatch && !lower.includes("form") && !lower.includes("error") && !lower.includes("page")) {
-    appendHistory("user", trimmed);
-    $("promptInput").value = "";
-    await executeFind(findMatch[1]);
-    return;
+  // 8. FIND / LOCATE ACTION (STRICT: NEVER CLICKS)
+  // E.g. "Order ID find karo", "Login button dhundo", "payment tab kahan hai", "where is submit button"
+  const findTrailingMatch = lower.match(
+    /(.+?)\s+(?:find\s+karo|locate\s+karo|search\s+karo|dhoondho|dhundo|dhoondh\s+ke\s+dikhao|kaha(?:n)?\s+(?:hai|h|he)|kidhar\s+(?:hai|h|he)|kdr\s+(?:hai|h|he)|khaa\s+(?:hai|h|he)|dikhao|batao)[.!?\s]*$/i,
+  );
+  const findLeadingMatch = lower.match(
+    /^(?:find|locate|search(?:\s+for)?|where\s+is|where's|wheres|where\s+are|show\s+me|dhoondho|dhundo)\s+(?:the\s+)?(.+)[.!?\s]*$/i,
+  );
+
+  if (
+    (findTrailingMatch || findLeadingMatch) &&
+    !lower.includes("form") &&
+    !lower.includes("explain") &&
+    !lower.includes("how to")
+  ) {
+    let raw = findTrailingMatch ? findTrailingMatch[1] : findLeadingMatch[1];
+    let clean = raw
+      .replace(/^(?:is\s+page\s+(?:par|pe|se)|page\s+(?:par|pe|se)|ye|yeh|wo|woh|the|a|an|kripya|please)\s+/i, "")
+      .replace(/\s+(?:button|tab|link|icon|menu|bar|option|field)$/i, "")
+      .trim();
+
+    if (clean.length > 0) {
+      return { type: "FIND", target: clean };
+    }
   }
 
-  const copyMatch = lower.match(/^copy\s+(.+)/i);
-  if (copyMatch) {
+  // 9. EXPLAIN PAGE
+  if (
+    /^(?:explain\s+(?:this\s+)?page|page\s+explain\s+karo|summarize\s+page|what\s+is\s+this\s+page)[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
+    return { type: "EXPLAIN" };
+  }
+
+  // 10. Default: GENERAL ASK / QUESTION
+  return { type: "ASK" };
+}
+
+async function executeNaturalBrowserAction(intent, trimmed) {
+  const active = getActiveBuddy();
+  const isHindi = active.defaultLanguage !== "english";
+
+  if (intent.type === "GREETING") {
     appendHistory("user", trimmed);
     $("promptInput").value = "";
-    setRigEmotion("working", "Copying");
+    setRigEmotion("celebrate", "Namaste!");
+    const greetingText = isHindi
+      ? `Namaste! Main aapka ${active.name} hoon. Main is page par aapki poori help karne ke liye ready hoon—buttons click karna, forms bharna, data dhoondhna ya workflows automate karna. Bataiye kya karna hai!`
+      : `Hey there! I am ${active.name}. I am active on this page and ready to click buttons, fill forms, locate elements, or automate multi-step workflows! What are we working on?`;
+    appendHistory("buddy", greetingText);
+    $("statusText").textContent = `Ready with ${active.name}.`;
+    speakResponse(greetingText, "happy");
+    return true;
+  }
+
+  if (intent.type === "HELP") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    setRigEmotion("happy", "Ready");
+    const helpMsg = isHindi
+      ? `Main aapka ${active.name} hoon! Main aapke browser par ye sab directly perform kar sakta hoon:\n• Page par koi bhi button ya tab click karna ('login button click karo')\n• Forms automatically fill karna aur verify karna ('ye form fill kar do')\n• Specific elements dhoondh kar highlight karna ('Order ID find karo')\n• Tables aur orders extract karna ('Search karke details nikaalo')\n• Multi-step autonomous browser tasks execute karna`
+      : `I am ${active.name}, your browser companion! I directly perform actions across your tabs:\n• Click any button or tab (e.g. 'click login button')\n• Auto-fill form fields safely ('fill this form')\n• Locate & point to elements without clicking ('find order ID')\n• Extract data & copy to clipboard ('search and extract order details')\n• Execute multi-step browser tasks autonomously`;
+    appendHistory("buddy", helpMsg);
+    $("statusText").textContent = `Capabilities of ${active.name}.`;
+    speakResponse(helpMsg, "happy");
+    return true;
+  }
+
+  if (intent.type === "SCROLL") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    await executeScroll(intent.direction);
+    return true;
+  }
+
+  if (intent.type === "MULTI_STEP") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    startMultiActionPlan(trimmed);
+    return true;
+  }
+
+  if (intent.type === "CLICK") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+
+    // Consequential actions approval gate (payment, purchase, deletion)
+    if (intent.isConsequential) {
+      pendingAction = {
+        type: "click",
+        value: intent.target,
+        text: intent.target,
+      };
+      if ($("confirmDesc")) {
+        $("confirmDesc").textContent = isHindi
+          ? `Kripya confirm karein: Buddy "${intent.target}" action execute karne ja raha hai. Kya aap proceed karna chahte hain?`
+          : `Confirmation required: Buddy is about to execute "${intent.target}". Proceed?`;
+      }
+      if ($("confirmCard")) $("confirmCard").hidden = false;
+      setRigEmotion("concerned", "Confirm");
+      $("statusText").textContent = `Awaiting confirmation for ${intent.target}…`;
+      return true;
+    }
+
+    setRigEmotion("working", "Clicking…");
+    $("statusText").textContent = `Clicking "${intent.target}" on active page…`;
+
+    const res = await chrome.runtime.sendMessage({
+      type: "EXECUTE_ACTION",
+      action: "click",
+      value: intent.target,
+    });
+
+    if (res?.ok) {
+      setRigEmotion("happy", "Clicked!");
+      const clickedName = res.text || intent.target;
+      let outcome = isHindi
+        ? `Maine page par "${clickedName}" click kar diya hai!`
+        : `Successfully clicked "${clickedName}"!`;
+      if (res.stateChange === "navigated") {
+        outcome += isHindi ? ` Page naye URL par navigate ho gaya.` : ` Page navigated.`;
+      } else if (res.stateChange === "modal_opened") {
+        outcome += isHindi ? ` Dialog/popup open ho gaya.` : ` Modal dialog opened.`;
+      }
+      $("statusText").textContent = outcome;
+      appendHistory("buddy", `✅ ${outcome}`);
+      speakResponse(outcome, "happy");
+    } else {
+      setRigEmotion("idle", "Not found");
+      const failMsg = res?.message || (isHindi
+        ? `Active page par "${intent.target}" button nahi mila. Kripya check karein ya page scroll karein.`
+        : `Could not find button "${intent.target}" on this page.`);
+      $("statusText").textContent = failMsg;
+      appendHistory("buddy", `⚠️ ${failMsg}`);
+    }
+    return true;
+  }
+
+  if (intent.type === "FIND") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    // STRICT RULE: NEVER CLICK
+    await executeFind(intent.target);
+    return true;
+  }
+
+  if (intent.type === "FORM_FILL") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    await startSmartFormFill(intent.fields);
+    return true;
+  }
+
+  if (intent.type === "EXTRACT") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    setRigEmotion("working", "Extracting…");
+    $("statusText").textContent = `Extracting ${intent.target} from page…`;
+
     const res = await chrome.runtime.sendMessage({
       type: "EXECUTE_ACTION",
       action: "copy_to_clipboard",
-      value: copyMatch[1],
-      options: { limit: 4 },
+      value: intent.target,
+      options: { limit: 10 },
     });
+
     if (res?.ok) {
-      setRigEmotion("happy", "Copied");
-      const msg = `📋 ${res.message || "Copied to clipboard."}\nItems:\n${(res.copiedItems || []).map((it) => `• ${it}`).join("\n")}`;
+      setRigEmotion("happy", "Extracted");
+      const msg = `📋 ${res.message || "Extracted data to clipboard."}\nItems:\n${(res.copiedItems || []).map((it) => `• ${it}`).join("\n")}`;
       appendHistory("buddy", msg);
       $("statusText").textContent = res.message;
+      speakResponse(isHindi ? `Data extract karke clipboard mein copy kar diya hai.` : `Extracted data to clipboard.`, "happy");
     } else {
       setRigEmotion("idle", "Idle");
-      appendHistory("buddy", res?.message || "Could not find items to copy.");
+      const failMsg = res?.message || "Could not find matching tabular or list items to extract.";
+      appendHistory("buddy", `⚠️ ${failMsg}`);
+      $("statusText").textContent = failMsg;
     }
-    return;
+    return true;
   }
+
+  return false;
+}
+
+async function sendQuery(question, intent) {
+  if (busy || !question || !question.trim()) return;
+
+  // Always dismiss any existing confirmation cards on new user input
+  if ($("confirmCard")) $("confirmCard").hidden = true;
+  pendingAction = null;
+
+  const trimmed = question.trim();
+
+  // 1. Unified Natural Language Browser Action Intent Parser & Dispatcher
+  const parsed = parseActionIntent(trimmed);
+  const handled = await executeNaturalBrowserAction(parsed, trimmed);
+  if (handled) return;
 
   busy = true;
   $("sendBtn").disabled = true;
@@ -1195,12 +1379,13 @@ async function sendQuery(question, intent) {
 
   try {
     const active = getActiveBuddy();
+    const isHindi = active.defaultLanguage !== "english";
     const { preferredModel } = await chrome.storage.local.get("preferredModel");
     const detachPage = $("pageContextToggle") && !$("pageContextToggle").checked;
-    const finalIntent = detachPage ? "general" : intent;
+    const finalIntent = detachPage ? "general" : (intent || "answer");
     const res = await chrome.runtime.sendMessage({
       type: "ASK",
-      question,
+      question: trimmed,
       intent: finalIntent,
       history: historyPayload,
       buddySlug: active.slug,
@@ -1215,15 +1400,36 @@ async function sendQuery(question, intent) {
       const errMsg =
         res.pageReadable === false
           ? "I cannot read the current webpage right now. Please refresh or allow page access."
-          : res.message || "Buddy encountered an issue. Please try again.";
+          : res.message || "I encountered an issue with the page. Please ensure your tab is open and refreshed.";
       $("statusText").textContent = errMsg;
       appendHistory("buddy", errMsg);
       return;
     }
 
-    currentAnswer = res.reply?.answer || "I could not find information on this page.";
+    currentAnswer = res.reply?.answer || "I am grounded on this page and ready to assist you.";
     appendHistory("buddy", currentAnswer);
     recordConversationTurn(trimmed, currentAnswer);
+
+    // If AI planned an action, actually execute it instead of only explaining!
+    if (res.actionType === "click" && (res.targetSelector || res.targetText)) {
+      setRigEmotion("working", "Acting");
+      const clickRes = await chrome.runtime.sendMessage({
+        type: "EXECUTE_ACTION",
+        action: "click",
+        selector: res.targetSelector,
+        value: res.targetText,
+      });
+      if (clickRes?.ok) {
+        setRigEmotion("happy", "Clicked!");
+        const clickedMsg = isHindi
+          ? `Maine page par "${clickRes.text || res.targetText}" click kar diya hai!`
+          : `Clicked "${clickRes.text || res.targetText}"!`;
+        $("statusText").textContent = clickedMsg;
+        appendHistory("buddy", `✅ ${clickedMsg}`);
+      }
+    } else if (res.actionType === "form_fill") {
+      await startSmartFormFill();
+    }
 
     lastHighlightSelector = res.highlightSelector || null;
     lastCallout = { title: res.calloutTitle || null, description: res.calloutDescription || null };
@@ -1239,7 +1445,6 @@ async function sendQuery(question, intent) {
       $("pageCompletenessBanner").hidden = false;
     }
 
-    // Ensure confirmation card is dismissed - Buddy explains and points directly without blocking approval gates
     if ($("confirmCard")) $("confirmCard").hidden = true;
     pendingAction = null;
 
@@ -1906,67 +2111,28 @@ if (promptInputEl) {
     promptInputEl.style.height = "auto";
     promptInputEl.style.height = Math.min(promptInputEl.scrollHeight, 140) + "px";
   });
-}
-
-// Mode Selector Pills
+// Mode Selector & Quick Action Compatibility Hooks
 document.querySelectorAll(".mode-pill").forEach((pill) => {
   pill.onclick = () => {
     document.querySelectorAll(".mode-pill").forEach((p) => p.classList.remove("active"));
     pill.classList.add("active");
     currentActiveMode = pill.getAttribute("data-mode") || "auto";
-    const input = $("promptInput");
-    if (!input) return;
-    const modePlaceholders = {
-      auto: NATURAL_PLACEHOLDERS[0],
-      chat: "Chat with Buddy directly…",
-      browser: "Direct action: Click, fill, inspect or navigate…",
-      research: "Deep Research: Synthesize sources and verify claims…",
-      file: "Files & Sheets: Compare files, find duplicates, edit cells…",
-      workflow: "Workflow: Describe a repeatable multi-step recipe…",
-    };
-    input.placeholder = modePlaceholders[currentActiveMode] || NATURAL_PLACEHOLDERS[0];
-    input.focus();
   };
 });
 
-// Quick Action Cards
 if ($("qaExplainPage")) {
   $("qaExplainPage").onclick = () => {
     sendQuery("Explain what this page is about simply and summarize key points.", "explain_page");
   };
 }
 if ($("qaResearch")) {
-  $("qaResearch").onclick = () => {
-    const pill = document.querySelector('.mode-pill[data-mode="research"]');
-    if (pill) pill.click();
-    const input = $("promptInput");
-    if (input) {
-      input.value = "Research: ";
-      input.focus();
-    }
-  };
+  $("qaResearch").onclick = () => sendQuery("Research: ", "deep_research");
 }
 if ($("qaWorkWithFiles")) {
-  $("qaWorkWithFiles").onclick = () => {
-    const pill = document.querySelector('.mode-pill[data-mode="file"]');
-    if (pill) pill.click();
-    const input = $("promptInput");
-    if (input) {
-      input.value = "Analyze spreadsheet and find duplicates: ";
-      input.focus();
-    }
-  };
+  $("qaWorkWithFiles").onclick = () => sendQuery("Analyze spreadsheet and find duplicates: ", "file_analysis");
 }
 if ($("qaAutomateTask")) {
-  $("qaAutomateTask").onclick = () => {
-    const pill = document.querySelector('.mode-pill[data-mode="workflow"]');
-    if (pill) pill.click();
-    const input = $("promptInput");
-    if (input) {
-      input.value = "Automate task: ";
-      input.focus();
-    }
-  };
+  $("qaAutomateTask").onclick = () => sendQuery("Automate task: ", "workflow");
 }
 
 // File Attachment Button
@@ -2016,7 +2182,7 @@ function updateGreetingContext() {
             if ($("greetingContext")) $("greetingContext").textContent = "Active in browser";
           }
         } else if ($("greetingContext")) {
-          $("greetingContext").textContent = "Workspace ready · Select an action to start";
+          $("greetingContext").textContent = "Workspace ready · Send a command to start";
         }
       });
     }
@@ -2025,48 +2191,20 @@ function updateGreetingContext() {
   }
 }
 
-// Handlers
+// Unified Composer Handlers
 $("sendBtn").onclick = () => {
   const val = $("promptInput").value;
   if (!val.trim()) return;
 
-  // Intercept in-flight task commands
   if (handleInFlightControlCommand(val)) {
     $("promptInput").value = "";
     if (promptInputEl) promptInputEl.style.height = "auto";
     return;
   }
 
-  const lower = val.toLowerCase();
-  if (
-    currentActiveMode === "workflow" ||
-    lower.includes("meesho") ||
-    lower.includes("and then") ||
-    lower.includes("copy their order") ||
-    lower.includes("prepare a list") ||
-    (lower.includes("open") && lower.includes("find")) ||
-    (lower.includes("go to") && lower.includes("click"))
-  ) {
-    $("promptInput").value = "";
-    if (promptInputEl) promptInputEl.style.height = "auto";
-    startMultiActionPlan(val);
-  } else if (currentActiveMode === "research") {
-    $("promptInput").value = "";
-    if (promptInputEl) promptInputEl.style.height = "auto";
-    sendQuery(val, "deep_research");
-  } else if (currentActiveMode === "browser") {
-    $("promptInput").value = "";
-    if (promptInputEl) promptInputEl.style.height = "auto";
-    sendQuery(val, "browser_action");
-  } else if (currentActiveMode === "file") {
-    $("promptInput").value = "";
-    if (promptInputEl) promptInputEl.style.height = "auto";
-    sendQuery(val, "file_analysis");
-  } else {
-    $("promptInput").value = "";
-    if (promptInputEl) promptInputEl.style.height = "auto";
-    sendQuery(val, "answer");
-  }
+  $("promptInput").value = "";
+  if (promptInputEl) promptInputEl.style.height = "auto";
+  sendQuery(val);
 };
 
 $("promptInput").addEventListener("keydown", (e) => {
@@ -2081,35 +2219,9 @@ $("promptInput").addEventListener("keydown", (e) => {
       return;
     }
 
-    const lower = val.toLowerCase();
-    if (
-      currentActiveMode === "workflow" ||
-      lower.includes("meesho") ||
-      lower.includes("and then") ||
-      lower.includes("copy their order") ||
-      lower.includes("prepare a list") ||
-      (lower.includes("open") && lower.includes("find"))
-    ) {
-      $("promptInput").value = "";
-      if (promptInputEl) promptInputEl.style.height = "auto";
-      startMultiActionPlan(val);
-    } else if (currentActiveMode === "research") {
-      $("promptInput").value = "";
-      if (promptInputEl) promptInputEl.style.height = "auto";
-      sendQuery(val, "deep_research");
-    } else if (currentActiveMode === "browser") {
-      $("promptInput").value = "";
-      if (promptInputEl) promptInputEl.style.height = "auto";
-      sendQuery(val, "browser_action");
-    } else if (currentActiveMode === "file") {
-      $("promptInput").value = "";
-      if (promptInputEl) promptInputEl.style.height = "auto";
-      sendQuery(val, "file_analysis");
-    } else {
-      $("promptInput").value = "";
-      if (promptInputEl) promptInputEl.style.height = "auto";
-      sendQuery(val, "answer");
-    }
+    $("promptInput").value = "";
+    if (promptInputEl) promptInputEl.style.height = "auto";
+    sendQuery(val);
   }
 });
 

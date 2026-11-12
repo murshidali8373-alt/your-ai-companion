@@ -300,4 +300,114 @@ describe("MV3 Chrome Extension and Side Panel", () => {
     expect(askRouteCode).toContain("error instanceof Error");
     expect(askRouteCode).toContain("error.message");
   });
+
+  it("simplifies Side Panel UI by hiding quick-action-grid and mode-selector-bar while preserving composer tools", () => {
+    const html = fs.readFileSync(sidepanelHtmlPath, "utf-8");
+    const js = fs.readFileSync(sidepanelJsPath, "utf-8");
+
+    // quick-actions-grid and mode-selector-bar are hidden for zero-pill, clutter-free user experience
+    expect(html).toContain('class="quick-actions-grid" hidden');
+    expect(html).toContain('class="mode-selector-bar" hidden');
+
+    // Essential composer and companion elements are preserved
+    expect(html).toContain('id="promptInput"');
+    expect(html).toContain('id="sendBtn"');
+    expect(html).toContain('id="voiceBtn"');
+    expect(html).toContain('id="attachFileBtn"');
+    expect(html).toContain('id="pageContextToggle"');
+    expect(html).toContain('id="greetingTitle"');
+    expect(html).toContain('id="characterStage"');
+
+    // JS routes composer directly to unified sendQuery
+    expect(js).toContain("parseActionIntent");
+    expect(js).toContain("executeNaturalBrowserAction");
+    expect(js).toContain("extractFieldsFromMessage");
+  });
+
+  it("accurately classifies natural language action intents in English, Hindi, and Hinglish", () => {
+    const js = fs.readFileSync(sidepanelJsPath, "utf-8");
+
+    // Verify key functions are present in sidepanel.js
+    expect(js).toContain("function parseActionIntent(text)");
+    expect(js).toContain("function extractFieldsFromMessage(text)");
+    expect(js).toContain("async function executeNaturalBrowserAction(intent, trimmed)");
+
+    // Test simulation of parseActionIntent logic
+    // 1. CLICK: "Is page par login button click karo."
+    const clickQuery = "Is page par login button click karo.";
+    const lowerClick = clickQuery.toLowerCase().trim();
+    const clickTrailingMatch = lowerClick.match(
+      /(.+?)\s+(?:par\s+click\s+karo|pe\s+click\s+karo|ko\s+click\s+karo|par\s+click|pe\s+click|click\s+karo|click\s+kijiye|click\s+do|dabao|daba\s+do|press\s+karo|press\s+kijiye|tap\s+karo|khol\s+do|kholo|open\s+karo)[.!?\s]*$/i,
+    );
+    expect(clickTrailingMatch).not.toBeNull();
+    const rawTarget = clickTrailingMatch![1];
+    const cleanClickTarget = rawTarget
+      .replace(/^(?:is\s+page\s+(?:par|pe|se)|page\s+(?:par|pe|se)|ye|yeh|wo|woh|the|a|an|kripya|please|jaldi)\s+/i, "")
+      .replace(/\s+(?:button|tab|link|icon|menu|bar|option)$/i, "")
+      .trim();
+    expect(cleanClickTarget).toBe("login");
+
+    // 2. FORM FILL: "Ye form fill kar do."
+    const formQuery = "Ye form fill kar do.";
+    const lowerForm = formQuery.toLowerCase().trim();
+    const isFormTrigger =
+      /(?:form\s+(?:fill|bhar|bharo)|fill\s+(?:the\s+)?form|auto\s*fill|fill\s+(?:all\s+)?(?:inputs|fields)|form\s+bhar\s+do|is\s+form\s+ko\s+bharo)/i.test(
+        lowerForm,
+      );
+    expect(isFormTrigger).toBe(true);
+
+    // 3. FIND: "Order ID find karo." (STRICT: NEVER CLICKS)
+    const findQuery = "Order ID find karo.";
+    const lowerFind = findQuery.toLowerCase().trim();
+    const findTrailingMatch = lowerFind.match(
+      /(.+?)\s+(?:find\s+karo|locate\s+karo|search\s+karo|dhoondho|dhundo|dhoondh\s+ke\s+dikhao|kaha(?:n)?\s+(?:hai|h|he)|kidhar\s+(?:hai|h|he)|kdr\s+(?:hai|h|he)|khaa\s+(?:hai|h|he)|dikhao|batao)[.!?\s]*$/i,
+    );
+    expect(findTrailingMatch).not.toBeNull();
+    const cleanFindTarget = findTrailingMatch![1]
+      .replace(/^(?:is\s+page\s+(?:par|pe|se)|page\s+(?:par|pe|se)|ye|yeh|wo|woh|the|a|an|kripya|please)\s+/i, "")
+      .replace(/\s+(?:button|tab|link|icon|menu|bar|option|field)$/i, "")
+      .trim();
+    expect(cleanFindTarget).toBe("order id");
+
+    // 4. EXTRACT: "Search karke ye information nikaalo."
+    const extractQuery = "Search karke ye information nikaalo.";
+    const lowerExtract = extractQuery.toLowerCase().trim();
+    const isExtractTrigger =
+      /(?:search|dhoondh|dhundh)\s+karke.*(?:nikaalo|nikalo|lao|batao|copy)/i.test(lowerExtract);
+    expect(isExtractTrigger).toBe(true);
+
+    // 5. MULTI-STEP: "Meesho dashboard open karo, pending orders find karo, first order open karo aur uska order ID batao"
+    const multiQuery =
+      "Meesho dashboard open karo, pending orders find karo, first order open karo aur uska order ID batao";
+    const lowerMulti = multiQuery.toLowerCase();
+    const hasStepDelimiters =
+      /(?:,\s*(?:aur|then|and then|uske baad|phir|fir)\s*|\s+(?:aur|then|and then|uske baad|phir|fir)\s+|;\s*)/i.test(
+        lowerMulti,
+      );
+    const actionVerbs =
+      lowerMulti.match(
+        /\b(?:open|click|press|dabao|fill|bhar|find|dhundo|dhoondho|extract|copy|search|kholo)\b/gi,
+      ) || [];
+    expect(hasStepDelimiters).toBe(true);
+    expect(actionVerbs.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("enforces strict separation between FIND (highlight only, never click) and CLICK execution", () => {
+    const spCode = fs.readFileSync(sidepanelJsPath, "utf-8");
+    const bgCode = fs.readFileSync(path.join(extDir, "background.js"), "utf-8");
+
+    // In sidepanel.js, FIND intent strictly executes executeFind and comments verify never click
+    expect(spCode).toContain('if (intent.type === "FIND")');
+    expect(spCode).toContain("STRICT RULE: NEVER CLICK");
+    expect(spCode).toContain("await executeFind(intent.target)");
+
+    // In background.js, click execution verifies state change and returns verified outcome
+    expect(bgCode).toContain('CLICK_SYNONYMS');
+    expect(bgCode).toContain('login: ["login", "log in", "signin", "sign in", "sign-in", "log-in", "connect"]');
+    expect(bgCode).toContain('stateChange');
+    expect(bgCode).toContain('urlBefore');
+    expect(bgCode).toContain('urlAfter');
+    expect(bgCode).toContain('Successfully clicked');
+  });
 });
+

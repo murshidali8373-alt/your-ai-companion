@@ -519,12 +519,77 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
     };
   }
 
-  // Element locating requests (English, Hindi, and Hinglish queries)
+  // Explicit Click / Press Action commands
+  const isClickAction =
+    /(?:click|press|dabao|tap|kholo)\b/i.test(qLower) ||
+    /(?:par\s+click|pe\s+click|click\s+karo|dabao|daba\s+do|press\s+karo)/i.test(qLower);
+
+  if (isClickAction) {
+    const matchEl = findBestMatchingElement(snapshot, question);
+    const elLabel = matchEl?.name || matchEl?.placeholder || matchEl?.text || matchEl?.role || "button";
+    const isHindi = activeBuddy.defaultLanguage !== "english";
+    const answer = isHindi
+      ? `Main page par "${elLabel}" click kar raha hoon!`
+      : `Executing click on "${elLabel}"!`;
+
+    return {
+      taskId: null,
+      reply: {
+        answer,
+        highlight: matchEl?.ref || null,
+        confidence: "high",
+        needs: null,
+        emotion: "working",
+        actionType: "click",
+      },
+      actionType: "click",
+      targetSelector: matchEl?.selector || null,
+      targetText: elLabel,
+      highlightSelector: matchEl?.selector || null,
+      calloutTitle: elLabel,
+      calloutDescription: "Clicking target element",
+      buddyName: activeBuddy.name,
+      permission: "interact",
+      guest: true,
+    };
+  }
+
+  // Form filling commands
+  const isFormFillAction =
+    /(?:form\s+(?:fill|bhar|bharo)|fill\s+(?:the\s+)?form|auto\s*fill|fill\s+(?:all\s+)?(?:inputs|fields))/i.test(
+      qLower,
+    );
+
+  if (isFormFillAction) {
+    const formCount = snapshot?.forms?.length || 0;
+    const isHindi = activeBuddy.defaultLanguage !== "english";
+    const answer = isHindi
+      ? `Main active form fields fill aur verify kar raha hoon.`
+      : `Executing Smart Form Fill on visible input fields.`;
+
+    return {
+      taskId: null,
+      reply: {
+        answer,
+        highlight: snapshot?.forms?.[0]?.ref || null,
+        confidence: "high",
+        needs: null,
+        emotion: "working",
+        actionType: "form_fill",
+      },
+      actionType: "form_fill",
+      highlightSelector: snapshot?.forms?.[0]?.selector || null,
+      buddyName: activeBuddy.name,
+      permission: "interact",
+      guest: true,
+    };
+  }
+
+  // Element locating requests (English, Hindi, and Hinglish queries) — STRICT FIND, NEVER CLICK
   if (
     qLower.includes("find") ||
     qLower.includes("where") ||
     qLower.includes("locate") ||
-    qLower.includes("button") ||
     qLower.includes("search") ||
     qLower.includes("dhoondho") ||
     qLower.includes("dhundo") ||
@@ -553,7 +618,9 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
           confidence: "high",
           needs: null,
           emotion: "pointing",
+          actionType: "find",
         },
+        actionType: "find",
         highlightSelector: matchEl.selector,
         calloutTitle: elLabel,
         calloutDescription: `Type: ${matchEl.tag || matchEl.role}`,
@@ -564,10 +631,9 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
     }
   }
 
-  // Form inspection & filling requests
+  // Form general inspection (if not direct fill command)
   if (
     qLower.includes("form") ||
-    qLower.includes("fill") ||
     qLower.includes("input") ||
     qLower.includes("fields")
   ) {
@@ -580,8 +646,8 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
         .filter(Boolean)
         .join(", ");
       const answer = isHindi
-        ? `Is page par ${formCount} form fields detect hue hain: [${fieldNames}]. Aap Smart Form Fill use karke ek click mein in fields ko bhar sakte hain!`
-        : `I detected ${formCount} form fields on this page: [${fieldNames}]. You can use Smart Form Fill to populate them safely with 1 click!`;
+        ? `Is page par ${formCount} form fields detect hue hain: [${fieldNames}]. Aap 'Ye form fill kar do' bolkar in fields ko bhar sakte hain!`
+        : `I detected ${formCount} form fields on this page: [${fieldNames}]. Say 'Fill this form' to populate them safely!`;
       return {
         taskId: null,
         reply: {
@@ -876,11 +942,24 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
       return ask(question, intent, history, buddySlug, customBuddyId, preferredModel);
     }
     if (res && !res.ok && !body.reply?.answer) {
-      const errMsg =
-        body.message ||
-        body.error ||
-        `Server returned error (${res.status}). Please verify connection.`;
-      return { error: "server", message: errMsg };
+      const autonomousResult = await generateAutonomousCompanionReply({
+        question,
+        intent,
+        snapshot,
+        buddySlug,
+        customBuddyId,
+        userApiKey,
+        history: formattedHistory,
+      });
+      if (autonomousResult) {
+        body = autonomousResult;
+      } else {
+        const errMsg =
+          body.message ||
+          body.error ||
+          `Server returned error (${res.status}). Please verify connection.`;
+        return { error: "server", message: errMsg };
+      }
     }
 
     if (body.reply?.answer) {
@@ -1789,36 +1868,77 @@ async function executeAction(action, selector, value, options = {}) {
 
         // If no selector or element not found, resolve button/link by text content or action
         if (!el && (val || opts?.text || sel)) {
-          const targetText = String(val || opts?.text || sel)
-            .trim()
-            .toLowerCase();
+          const rawTarget = String(val || opts?.text || sel).trim().toLowerCase();
+          const cleanTarget = rawTarget.replace(/^(?:the|a|an|ye|yeh|wo|woh|is|this)\s+/i, "").trim();
+
+          const CLICK_SYNONYMS = {
+            login: ["login", "log in", "signin", "sign in", "sign-in", "log-in", "connect"],
+            signin: ["login", "log in", "signin", "sign in", "sign-in", "log-in"],
+            signup: ["signup", "sign up", "register", "create account", "get started"],
+            register: ["signup", "sign up", "register", "create account"],
+            submit: ["submit", "save", "send", "continue", "proceed", "confirm", "done", "apply", "request"],
+            cart: ["cart", "bag", "basket", "checkout", "shopping cart"],
+            orders: ["orders", "my orders", "order history", "pending orders", "order"],
+            search: ["search", "find", "go", "query"],
+            next: ["next", "continue", "forward", "proceed"],
+            close: ["close", "dismiss", "cancel", "x", "exit"],
+            cancel: ["cancel", "dismiss", "close", "back"],
+          };
+
+          const targetTerms = [cleanTarget, rawTarget];
+          for (const [key, syns] of Object.entries(CLICK_SYNONYMS)) {
+            if (cleanTarget === key || cleanTarget.includes(key) || syns.some((s) => cleanTarget.includes(s))) {
+              targetTerms.push(...syns);
+            }
+          }
+
           const clickables = [
             ...document.querySelectorAll(
-              'button, a, [role="button"], input[type="submit"], input[type="button"], summary, [role="tab"], [role="menuitem"], div[role="button"], span[role="button"]',
+              'button, a, [role="button"], input[type="submit"], input[type="button"], summary, [role="tab"], [role="menuitem"], div[role="button"], span[role="button"], [tabindex="0"]',
             ),
           ];
 
-          // 1. Exact or substring match
-          el = clickables.find((cand) => {
-            const t = normalize(
-              cand.innerText || cand.value || cand.getAttribute("aria-label") || "",
+          const getElementText = (node) =>
+            normalize(
+              node.innerText ||
+                node.value ||
+                node.getAttribute("aria-label") ||
+                node.getAttribute("title") ||
+                node.getAttribute("placeholder") ||
+                node.getAttribute("name") ||
+                node.id ||
+                "",
             ).toLowerCase();
-            return t === targetText || t.includes(targetText) || targetText.includes(t);
-          });
 
-          // 2. Token matching
-          if (!el) {
-            const targetNorm = normalize(targetText);
+          // 1. Direct match on clickables
+          for (const term of targetTerms) {
             el = clickables.find((cand) => {
-              const t = normalize(
-                cand.innerText || cand.value || cand.getAttribute("aria-label") || "",
-              );
-              return t.includes(targetNorm) || targetNorm.includes(t);
+              const t = getElementText(cand);
+              return t === term || t.startsWith(term) || t.includes(term) || term.includes(t);
             });
+            if (el) break;
+          }
+
+          // 2. Deep leaf match: search inside text nodes whose closest ancestor is a button/link
+          if (!el) {
+            const allTextNodes = [
+              ...document.querySelectorAll("span, p, b, strong, div, h1, h2, h3, h4, h5, h6, label"),
+            ];
+            for (const term of targetTerms) {
+              const matchedLeaf = allTextNodes.find((leaf) => {
+                if (leaf.closest("#ai-buddy-arm-overlay")) return false;
+                const t = normalize(leaf.innerText || leaf.textContent || "").toLowerCase();
+                return t === term || (t.includes(term) && t.length < 50);
+              });
+              if (matchedLeaf) {
+                el = matchedLeaf.closest('button, a, [role="button"], [role="tab"], summary') || matchedLeaf;
+                break;
+              }
+            }
           }
 
           // 3. Form submit fallback
-          if (!el && (act === "click_submit" || act === "submit" || targetText.includes("submit"))) {
+          if (!el && (act === "click_submit" || act === "submit" || cleanTarget.includes("submit"))) {
             el = document.querySelector(
               'button[type="submit"], input[type="submit"], form button:not([type="button"])',
             );
@@ -1839,6 +1959,9 @@ async function executeAction(action, selector, value, options = {}) {
             message: `Button "${normalize(el.innerText || el.value)}" is currently disabled.`,
           };
         }
+
+        const urlBefore = window.location.href;
+        const dialogsBefore = document.querySelectorAll('dialog[open], [role="dialog"], .modal.show, .modal-open').length;
 
         el.scrollIntoView({ behavior: "smooth", block: "center" });
 
@@ -1864,15 +1987,37 @@ async function executeAction(action, selector, value, options = {}) {
           }
         }
 
+        const clickedText = normalize(
+          el.innerText || el.value || el.getAttribute("aria-label") || el.tagName,
+        ).slice(0, 50);
+
+        // State change detection
+        let stateChange = "clicked";
+        if (window.location.href !== urlBefore) {
+          stateChange = "navigated";
+        } else {
+          const dialogsAfter = document.querySelectorAll('dialog[open], [role="dialog"], .modal.show, .modal-open').length;
+          if (dialogsAfter > dialogsBefore) {
+            stateChange = "modal_opened";
+          }
+        }
+
+        let outcomeMsg = `Successfully clicked "${clickedText}".`;
+        if (stateChange === "navigated") {
+          outcomeMsg += ` Navigated to ${window.location.pathname}.`;
+        } else if (stateChange === "modal_opened") {
+          outcomeMsg += " Modal dialog appeared.";
+        }
+
         return {
           ok: true,
           action: "click",
           tag: el.tagName.toLowerCase(),
-          text: normalize(el.innerText || el.value || el.getAttribute("aria-label") || "").slice(
-            0,
-            100,
-          ),
-          message: `Successfully clicked "${normalize(el.innerText || el.value || el.tagName).slice(0, 50)}".`,
+          text: clickedText,
+          stateChange,
+          urlBefore,
+          urlAfter: window.location.href,
+          message: outcomeMsg,
         };
       }
 
