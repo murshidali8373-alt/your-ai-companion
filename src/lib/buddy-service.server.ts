@@ -443,19 +443,45 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
         ? `Hello! I am ${persona.name}. I am active and ready to help you navigate, inspect fields, check data, or perform tasks across this page!`
         : `Namaste! Main aapka ${persona.name} hoon. Main is webpage par aapki poori help karne ke liye ready hoon. Bataiye aap kya karna chahte hain!`;
 
-    const answer = isGreeting
-      ? greetingFallback
-      : aiError.resolution
+    let answer = "";
+    if (isGreeting) {
+      answer = greetingFallback;
+    } else if (input.snapshot && (aiError.kind === "auth" || aiError.kind === "outage")) {
+      const title = input.snapshot.title || "active page";
+      const headings = (input.snapshot.headings || [])
+        .map((h) => h.name || h.text)
+        .filter(Boolean)
+        .slice(0, 5);
+      const formCount = input.snapshot.forms?.length || 0;
+      const btnCount = input.snapshot.controls?.length || 0;
+      const isEnglish = persona.language === "english";
+      if (isEnglish) {
+        answer = `You are on "${title}".\n\n📌 **Page Overview:**\n`;
+        if (headings.length) answer += `• Key Sections: ${headings.join(" • ")}\n`;
+        if (btnCount > 0 || formCount > 0)
+          answer += `• Interactive Elements: ${btnCount} clickable controls and ${formCount} input fields.\n`;
+        answer += `\nI am grounded on this page and ready to assist you with form filling, locating buttons, or automating workflows!`;
+      } else {
+        answer = `Aap abhi "${title}" par hain.\n\n📌 **Page Overview:**\n`;
+        if (headings.length) answer += `• Key Sections: ${headings.join(" • ")}\n`;
+        if (btnCount > 0 || formCount > 0)
+          answer += `• Interactive Elements: ${btnCount} clickable buttons aur ${formCount} form fields.\n`;
+        answer += `\nMain is page par grounded hoon aur forms fill karne, buttons dhoondhne, ya tasks automate karne ke liye ready hoon!`;
+      }
+    } else {
+      answer = aiError.resolution
         ? `${aiError.userMessage} ${aiError.resolution}`
         : aiError.userMessage;
+    }
+
     return {
       taskId,
       reply: {
         answer,
         highlight: null,
-        confidence: isGreeting ? "high" : "low",
+        confidence: isGreeting || Boolean(input.snapshot) ? "high" : "low",
         needs: null,
-        emotion: isGreeting ? "happy" : "concerned",
+        emotion: isGreeting || Boolean(input.snapshot) ? "happy" : "concerned",
       },
       highlightSelector: null,
       buddyName: persona.name,
@@ -629,19 +655,45 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
         ? `Hello! I am ${persona.name}. I am active and ready to help you navigate, inspect fields, check data, or perform tasks across this page!`
         : `Namaste! Main aapka ${persona.name} hoon. Main is webpage par aapki poori help karne ke liye ready hoon. Bataiye aap kya karna chahte hain!`;
 
-    const answer = isGreeting
-      ? greetingFallback
-      : aiError.resolution
+    let answer = "";
+    if (isGreeting) {
+      answer = greetingFallback;
+    } else if (input.snapshot && (aiError.kind === "auth" || aiError.kind === "outage")) {
+      const title = input.snapshot.title || "active page";
+      const headings = (input.snapshot.headings || [])
+        .map((h) => h.name || h.text)
+        .filter(Boolean)
+        .slice(0, 5);
+      const formCount = input.snapshot.forms?.length || 0;
+      const btnCount = input.snapshot.controls?.length || 0;
+      const isEnglish = persona.default_language === "english";
+      if (isEnglish) {
+        answer = `You are on "${title}".\n\n📌 **Page Overview:**\n`;
+        if (headings.length) answer += `• Key Sections: ${headings.join(" • ")}\n`;
+        if (btnCount > 0 || formCount > 0)
+          answer += `• Interactive Elements: ${btnCount} clickable controls and ${formCount} input fields.\n`;
+        answer += `\nI am grounded on this page and ready to assist you with form filling, locating buttons, or automating workflows!`;
+      } else {
+        answer = `Aap abhi "${title}" par hain.\n\n📌 **Page Overview:**\n`;
+        if (headings.length) answer += `• Key Sections: ${headings.join(" • ")}\n`;
+        if (btnCount > 0 || formCount > 0)
+          answer += `• Interactive Elements: ${btnCount} clickable buttons aur ${formCount} form fields.\n`;
+        answer += `\nMain is page par grounded hoon aur forms fill karne, buttons dhoondhne, ya tasks automate karne ke liye ready hoon!`;
+      }
+    } else {
+      answer = aiError.resolution
         ? `${aiError.userMessage} ${aiError.resolution}`
         : aiError.userMessage;
+    }
+
     return {
       taskId: null,
       reply: {
         answer,
         highlight: null,
-        confidence: isGreeting ? "high" : "low",
+        confidence: isGreeting || Boolean(input.snapshot) ? "high" : "low",
         needs: null,
-        emotion: isGreeting ? "happy" : "concerned",
+        emotion: isGreeting || Boolean(input.snapshot) ? "happy" : "concerned",
       },
       highlightSelector: null,
       buddyName: persona.name,

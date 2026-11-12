@@ -1216,12 +1216,13 @@
         </div>
 
         <!-- SMART FORM FILLING TOOL -->
-        <div class="section-card">
+        <div id="formFillCard" class="section-card">
           <div class="section-card-title">
             <span>📝 Smart Form Filler</span>
-            <span style="font-size: 10px; color: var(--accent-cyan); font-weight: 600"
-              >Zero Risk</span
-            >
+            <div style="display: flex; align-items: center; gap: 6px">
+              <span style="font-size: 10px; color: var(--accent-cyan); font-weight: 600">Zero Risk</span>
+              <button id="closeFormFillBtn" class="ghost" style="padding: 1px 5px; font-size: 10px; cursor: pointer" title="Dismiss">✕</button>
+            </div>
           </div>
           <p style="font-size: 10px; color: var(--text-muted)">
             Automates form filling using verified profiles & memories. Requires explicit

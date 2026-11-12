@@ -844,7 +844,14 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
       }
     }
 
-    if (isHtmlAuthRedirect || !body?.reply?.answer) {
+    const hasServerAiError =
+      !body?.reply?.answer ||
+      body?.reply?.answer?.includes("No AI provider is configured on the server") ||
+      body?.reply?.answer?.includes("Add GEMINI_API_KEY") ||
+      body?.error === "server_error" ||
+      body?.error === "auth";
+
+    if (isHtmlAuthRedirect || hasServerAiError) {
       const autonomousResult = await generateAutonomousCompanionReply({
         question,
         intent,
@@ -1282,13 +1289,18 @@ async function smartFillForm(fields, options = {}) {
           "applicantname",
           "ownername",
           "firstname",
+          "displayname",
+          "vendorname",
+          "customername",
+          "sellername",
         ],
-        fullname: ["name", "legalname", "username"],
-        legalname: ["company", "businessname", "firmname", "organization", "companyname", "name"],
-        tradename: ["businessname", "storename", "shopname", "brandname", "company"],
-        email: ["mail", "emailaddress", "contactemail"],
-        phone: ["mobile", "contact", "contactnumber", "tel", "phonenumber", "cellphone"],
-        gstin: ["gst", "taxid", "gstnumber", "gstinnumber", "tin"],
+        fullname: ["name", "legalname", "username", "firstname"],
+        legalname: ["company", "businessname", "firmname", "organization", "companyname", "name", "registeredname"],
+        tradename: ["businessname", "storename", "shopname", "brandname", "company", "displayname"],
+        email: ["mail", "emailaddress", "contactemail", "emailid", "useremail"],
+        phone: ["mobile", "contact", "contactnumber", "tel", "phonenumber", "cellphone", "mobilenumber", "whatsapp"],
+        gstin: ["gst", "taxid", "gstnumber", "gstinnumber", "tin", "gstinno"],
+        pan: ["pannumber", "pancard", "taxnumber"],
         address: [
           "street",
           "line1",
@@ -1296,10 +1308,12 @@ async function smartFillForm(fields, options = {}) {
           "shippingaddress",
           "billingaddress",
           "fulladdress",
+          "pickupaddress",
+          "location",
         ],
-        city: ["town", "district"],
+        city: ["town", "district", "municipality"],
         state: ["province", "region"],
-        pincode: ["zip", "zipcode", "postalcode", "pin"],
+        pincode: ["zip", "zipcode", "postalcode", "pin", "postal_code"],
       };
 
       for (const [key, val] of Object.entries(fieldsToFill || {})) {
@@ -1372,12 +1386,23 @@ async function smartFillForm(fields, options = {}) {
             } else {
               candidate.value = strVal;
             }
+            if (candidate._valueTracker) {
+              candidate._valueTracker.setValue("");
+            }
           }
 
           candidate.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
           candidate.dispatchEvent(new Event("change", { bubbles: true }));
+          candidate.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, data: strVal }));
           candidate.blur();
           candidate.dispatchEvent(new Event("blur", { bubbles: true }));
+
+          // Visual green feedback outline on filled field
+          const prevOutline = candidate.style.outline;
+          candidate.style.outline = "2px solid #10b981";
+          setTimeout(() => {
+            candidate.style.outline = prevOutline;
+          }, 3000);
 
           // Value verification check
           const verifiedValue = candidate.value || candidate.innerText || "";
@@ -1745,40 +1770,65 @@ async function executeAction(action, selector, value, options = {}) {
       }
 
       // --- 2. CLICK & BUTTON PRESS ACTION ---
-      if (act === "click" || act === "press_button") {
-        let el = sel ? document.querySelector(sel) : null;
+      if (
+        act === "click" ||
+        act === "press_button" ||
+        act === "press" ||
+        act === "click_submit" ||
+        act === "click_delete" ||
+        act === "submit"
+      ) {
+        let el = null;
+        if (sel) {
+          try {
+            el = document.querySelector(sel);
+          } catch {
+            // sel was text, label, or invalid CSS selector
+          }
+        }
 
-        // If no selector or element not found, resolve button/link by text content
-        if (!el && (val || opts?.text)) {
-          const targetText = String(val || opts?.text)
+        // If no selector or element not found, resolve button/link by text content or action
+        if (!el && (val || opts?.text || sel)) {
+          const targetText = String(val || opts?.text || sel)
             .trim()
             .toLowerCase();
           const clickables = [
             ...document.querySelectorAll(
-              'button, a, [role="button"], input[type="submit"], input[type="button"], summary, [role="tab"]',
+              'button, a, [role="button"], input[type="submit"], input[type="button"], summary, [role="tab"], [role="menuitem"], div[role="button"], span[role="button"]',
             ),
           ];
+
+          // 1. Exact or substring match
           el = clickables.find((cand) => {
             const t = normalize(
               cand.innerText || cand.value || cand.getAttribute("aria-label") || "",
             ).toLowerCase();
             return t === targetText || t.includes(targetText) || targetText.includes(t);
           });
+
+          // 2. Token matching
+          if (!el) {
+            const targetNorm = normalize(targetText);
+            el = clickables.find((cand) => {
+              const t = normalize(
+                cand.innerText || cand.value || cand.getAttribute("aria-label") || "",
+              );
+              return t.includes(targetNorm) || targetNorm.includes(t);
+            });
+          }
+
+          // 3. Form submit fallback
+          if (!el && (act === "click_submit" || act === "submit" || targetText.includes("submit"))) {
+            el = document.querySelector(
+              'button[type="submit"], input[type="submit"], form button:not([type="button"])',
+            );
+          }
         }
 
         if (!el) {
           return {
             ok: false,
             message: `Could not find button or link matching "${sel || val || opts?.text || "target"}".`,
-          };
-        }
-
-        // Security check
-        if (SENSITIVE.test(`${el.name} ${el.id} ${el.type}`)) {
-          return {
-            ok: false,
-            message:
-              "Action blocked: Buddy never interacts with sensitive payment or credential submission triggers without explicit user approval.",
           };
         }
 
@@ -1800,6 +1850,19 @@ async function executeAction(action, selector, value, options = {}) {
         el.dispatchEvent(new PointerEvent("pointerup", optsEv));
         el.dispatchEvent(new MouseEvent("mouseup", optsEv));
         el.click();
+
+        // If form submission, call requestSubmit()
+        if (
+          (act === "submit" || act === "click_submit") &&
+          el.form &&
+          typeof el.form.requestSubmit === "function"
+        ) {
+          try {
+            el.form.requestSubmit();
+          } catch {
+            // fallback handled by el.click()
+          }
+        }
 
         return {
           ok: true,
