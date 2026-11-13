@@ -238,7 +238,10 @@ const BUDDIES_REGISTRY = [
 let allBuddies = [...BUDDIES_REGISTRY];
 let selectedBuddySlug = "friendly";
 let selectedCustomBuddyId = null;
-let currentRenderMode = "rigged"; // "rigged" | "3d"
+let currentRenderMode = "3d"; // "3d" (WebGL GLB) | "rigged" (2D vector fallback) | "artwork" (static webp)
+let buddy3dViewer = null;
+let webglFallbackActive = false;
+let lastEmotionChangedAt = 0;
 let selectedProvider = "gemini";
 let cachedProviderStatuses = {};
 const warnedMissingProviders = new Set();
@@ -339,24 +342,109 @@ function setMouthShape(shape) {
   );
 }
 
+function initBuddy3DStage() {
+  if (buddy3dViewer || webglFallbackActive) return;
+  const wrap = $("buddy3dCanvasWrap");
+  const rt = window.Buddy3DRuntime;
+  if (!wrap || !rt || !rt.isSupported?.()) {
+    webglFallbackActive = true;
+    applyRenderMode("rigged");
+    return;
+  }
+  try {
+    buddy3dViewer = rt.createStageViewer(wrap, {
+      initialVariant: selectedBuddySlug || "general",
+      modelsBaseUrl: "./models",
+      onError: () => {
+        webglFallbackActive = true;
+        buddy3dViewer = null;
+        applyRenderMode("rigged");
+      },
+      onInteract: () => {
+        if (busy || isRecognizing || currentEmotion === "privacy") return;
+        setRigEmotion("happy", "Giggle");
+        setMouthShape("laugh");
+        setTimeout(() => {
+          if (currentEmotion === "happy") setRigEmotion("idle", "Ready");
+        }, 900);
+      },
+    });
+  } catch {
+    webglFallbackActive = true;
+    buddy3dViewer = null;
+    applyRenderMode("rigged");
+  }
+}
+
 function setRigEmotion(emotion, label) {
-  currentEmotion = emotion;
+  const rt = window.Buddy3DRuntime;
+  const canonical = rt?.normalizeCompanionState
+    ? rt.normalizeCompanionState(emotion)
+    : String(emotion || "idle").toLowerCase();
+
+  const now = Date.now();
+  if (
+    rt?.shouldTransitionCompanionState &&
+    currentEmotion === canonical &&
+    now - lastEmotionChangedAt < 120
+  ) {
+    return;
+  }
+  lastEmotionChangedAt = now;
+  currentEmotion = canonical;
+
   const badge = $("buddyEmotionBadge");
   if (badge) {
-    badge.textContent = label || emotion.toUpperCase();
-    badge.className = `status-badge ${emotion}`;
+    badge.textContent = label || canonical.toUpperCase();
+    badge.className = `status-badge ${canonical}`;
+  }
+
+  const avatarWrap = $("buddyAvatar");
+  if (avatarWrap) {
+    avatarWrap.setAttribute("data-emotion", canonical);
+  }
+
+  if (buddy3dViewer) {
+    buddy3dViewer.setEmotion(canonical);
   }
 
   const browLeft = $("rigBrowLeft");
   const browRight = $("rigBrowRight");
   const armLeft = $("rigArmLeft");
   const armRight = $("rigArmRight");
+  const lidLeft = $("rigLidLeft");
+  const lidRight = $("rigLidRight");
+  const pupilLeft = $("rigPupilLeft");
+  const pupilRight = $("rigPupilRight");
+  const svg = $("characterSvg");
 
   if (!browLeft || !browRight) return;
 
-  switch (emotion) {
+  // Toggle privacy eyelid closure in 2D SVG fallback cleanly
+  if (canonical === "privacy") {
+    if (lidLeft) lidLeft.style.display = "block";
+    if (lidRight) lidRight.style.display = "block";
+    if (pupilLeft) pupilLeft.style.display = "none";
+    if (pupilRight) pupilRight.style.display = "none";
+    if (svg) svg.style.transform = "scaleX(-0.92) rotate(5deg)";
+    browLeft.setAttribute("transform", "translate(40, 37) rotate(-4)");
+    browRight.setAttribute("transform", "translate(61, 37) rotate(4)");
+    setMouthShape("rest");
+    if (armLeft) armLeft.removeAttribute("transform");
+    if (armRight) armRight.removeAttribute("transform");
+    return;
+  } else {
+    if (lidLeft) lidLeft.style.display = "none";
+    if (lidRight) lidRight.style.display = "none";
+    if (pupilLeft) pupilLeft.style.display = "block";
+    if (pupilRight) pupilRight.style.display = "block";
+    if (svg) svg.style.transform = "";
+  }
+
+  switch (canonical) {
     case "happy":
     case "excited":
+    case "success":
       browLeft.setAttribute("transform", "translate(40, 36) rotate(-8)");
       browRight.setAttribute("transform", "translate(61, 36) rotate(8)");
       setMouthShape("wide_smile");
@@ -371,7 +459,6 @@ function setRigEmotion(emotion, label) {
       if (armRight) armRight.removeAttribute("transform");
       break;
     case "pointing":
-      // NATURAL MOVABLE CONNECTED ARM: arm articulates organically from shoulder joint (34, 60)
       browLeft.setAttribute("transform", "translate(40, 36) rotate(-5)");
       browRight.setAttribute("transform", "translate(61, 36) rotate(5)");
       setMouthShape("smile");
@@ -392,12 +479,13 @@ function setRigEmotion(emotion, label) {
       if (armLeft) armLeft.removeAttribute("transform");
       if (armRight) armRight.removeAttribute("transform");
       break;
-    case "speaking":
+    case "talking":
       browLeft.setAttribute("transform", "translate(40, 36) rotate(-4)");
       browRight.setAttribute("transform", "translate(61, 36) rotate(4)");
       if (armLeft) armLeft.removeAttribute("transform");
       if (armRight) armRight.removeAttribute("transform");
       break;
+    case "concerned":
     case "error":
       browLeft.setAttribute("transform", "translate(40, 36) rotate(10)");
       browRight.setAttribute("transform", "translate(61, 36) rotate(-10)");
@@ -532,14 +620,17 @@ function switchBuddy(slugOrId) {
   // 4. Update Specialist Prop
   updateSpecialistProp(target.cue, colors[0]);
 
-  // 5. Update Pre-rendered 3D Artwork
+  // 5. Update Pre-rendered 3D Artwork & Real-time 3D GLB Variant
   const img3d = $("buddy3dImg");
   if (img3d) {
     img3d.src = target.image || "./assets/buddy-general-3d.webp";
     img3d.alt = target.name;
   }
+  if (buddy3dViewer) {
+    buddy3dViewer.loadVariant(target.slug);
+  }
 
-  // 6. Natural giggle feedback on switch
+  // 6. Natural greeting feedback on switch
   setRigEmotion("happy", target.name.split(" ")[0]);
   setTimeout(() => {
     if (currentEmotion === "happy") setRigEmotion("idle", "Ready");
@@ -594,18 +685,21 @@ function renderBuddyCarousel() {
   }
 }
 
-// Setup Gaze tracking
+// Setup Gaze tracking across SVG fallback + 3D GLB Buddy
 window.addEventListener("mousemove", (e) => {
   const stage = $("characterStage");
   if (!stage) return;
   const rect = stage.getBoundingClientRect();
-  const dx = ((e.clientX - (rect.left + rect.width / 2)) / (window.innerWidth / 2)) * 1.1;
-  const dy = ((e.clientY - (rect.top + rect.height * 0.4)) / (window.innerHeight / 2)) * 0.8;
+  const nx = (e.clientX - (rect.left + rect.width / 2)) / (window.innerWidth / 2);
+  const ny = (e.clientY - (rect.top + rect.height * 0.4)) / (window.innerHeight / 2);
+  if (buddy3dViewer && currentEmotion !== "privacy") {
+    buddy3dViewer.lookAt(Math.max(-1, Math.min(1, nx)), Math.max(-1, Math.min(1, ny)));
+  }
   const pupilLeft = $("rigPupilLeft");
   const pupilRight = $("rigPupilRight");
   if (pupilLeft && pupilRight) {
-    const clampX = Math.max(-1.1, Math.min(1.1, dx));
-    const clampY = Math.max(-0.8, Math.min(0.8, dy));
+    const clampX = Math.max(-1.1, Math.min(1.1, nx * 1.1));
+    const clampY = Math.max(-0.8, Math.min(0.8, ny * 0.8));
     pupilLeft.setAttribute("transform", `translate(${clampX.toFixed(2)}, ${clampY.toFixed(2)})`);
     pupilRight.setAttribute("transform", `translate(${clampX.toFixed(2)}, ${clampY.toFixed(2)})`);
   }
@@ -655,13 +749,13 @@ function stopSpeechMouthCycle() {
   setMouthShape("smile");
 }
 
-// Tap Buddy to trigger giggle
-$("characterStage").addEventListener("click", () => {
-  if (busy || isRecognizing) return;
+// Tap Buddy fallback SVG to trigger friendly expression
+$("buddyAvatar")?.addEventListener("click", () => {
+  if (busy || isRecognizing || currentEmotion === "privacy") return;
   setRigEmotion("happy", "Giggle");
   setMouthShape("laugh");
   setTimeout(() => {
-    setRigEmotion("idle", "Idle");
+    if (currentEmotion === "happy") setRigEmotion("idle", "Idle");
   }, 900);
 });
 
@@ -932,6 +1026,7 @@ function recordConversationTurn(userQuestion, assistantAnswer) {
 
 function speakResponse(text, finishEmotion = "idle") {
   if (isMuted || !window.speechSynthesis) {
+    buddy3dViewer?.setSpeaking(false);
     setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
     return;
   }
@@ -940,16 +1035,25 @@ function speakResponse(text, finishEmotion = "idle") {
   utterance.lang = /[\u0900-\u097F]/.test(text) ? "hi-IN" : "en-IN";
 
   utterance.onstart = () => {
-    setRigEmotion("speaking", "Speaking");
+    if (currentEmotion !== "privacy") {
+      setRigEmotion("talking", "Talking");
+      buddy3dViewer?.setSpeaking(true);
+    }
     startSpeechMouthCycle();
   };
   utterance.onend = () => {
     stopSpeechMouthCycle();
-    setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
+    buddy3dViewer?.setSpeaking(false);
+    if (currentEmotion !== "privacy") {
+      setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
+    }
   };
   utterance.onerror = () => {
     stopSpeechMouthCycle();
-    setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
+    buddy3dViewer?.setSpeaking(false);
+    if (currentEmotion !== "privacy") {
+      setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
+    }
   };
 
   window.speechSynthesis.speak(utterance);
@@ -1041,9 +1145,11 @@ async function render() {
     })
     .catch(() => {});
 
+  initBuddy3DStage();
   renderBuddyCarousel();
   switchBuddy(selectedBuddySlug);
   applyRenderMode(currentRenderMode);
+  if ($("avatarRenderMode")) $("avatarRenderMode").value = currentRenderMode;
   checkPageForErrors();
   updateGreetingContext();
   startRotatingPlaceholders();
@@ -1059,15 +1165,23 @@ async function render() {
 }
 
 function applyRenderMode(mode) {
-  currentRenderMode = mode;
+  currentRenderMode = mode || "3d";
+  const wrap3d = $("buddy3dCanvasWrap");
   const svg = $("characterSvg");
   const img = $("buddy3dImg");
   if (!svg || !img) return;
 
-  if (mode === "3d") {
+  if (currentRenderMode === "3d" && !webglFallbackActive && buddy3dViewer) {
+    if (wrap3d) wrap3d.hidden = false;
+    svg.style.display = "none";
+    img.hidden = true;
+    buddy3dViewer.resize();
+  } else if (currentRenderMode === "artwork") {
+    if (wrap3d) wrap3d.hidden = true;
     svg.style.display = "none";
     img.hidden = false;
   } else {
+    if (wrap3d) wrap3d.hidden = true;
     svg.style.display = "block";
     img.hidden = true;
   }
@@ -1078,6 +1192,15 @@ async function checkPageForErrors() {
     const res = await chrome.runtime.sendMessage({ type: "GET_PAGE_SNAPSHOT" });
     const snapshot = res?.snapshot;
     if (!snapshot) return;
+
+    const rt = window.Buddy3DRuntime;
+    const focusedPassword = (snapshot.forms || []).some(
+      (f) => f.focused && (f.type === "password" || rt?.detectPrivacyTrigger?.({ activeFieldLabel: f.label || f.name, activeFieldType: f.type })?.isPrivacy),
+    );
+    if (focusedPassword || snapshot.hasFocusedPassword) {
+      setRigEmotion("privacy", "Privacy");
+      return;
+    }
 
     const alerts = snapshot.alerts || [];
     const invalidForms = (snapshot.forms || []).filter((f) => f.invalid);
@@ -1096,7 +1219,7 @@ async function checkPageForErrors() {
       }
       text.textContent = parts.join(" — ");
       banner.hidden = false;
-      setRigEmotion("confused", "Issues Found");
+      setRigEmotion("concerned", "Issues Found");
     } else {
       banner.hidden = true;
     }
@@ -2027,7 +2150,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       return true;
     }
 
-    setRigEmotion("working", "Clicking…");
+    setRigEmotion("pointing", "Clicking…");
     $("statusText").textContent =
       intent.target === "__CURRENT__"
         ? "Clicking highlighted element…"
@@ -2042,7 +2165,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     });
 
     if (res?.ok) {
-      setRigEmotion("happy", "Clicked!");
+      setRigEmotion("success", "Clicked!");
       const clickedName = res.text || intent.target;
       let outcome = isHindi
         ? `Maine page par "${clickedName}" click kar diya hai!`
@@ -2056,9 +2179,9 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       }
       $("statusText").textContent = outcome;
       appendHistory("buddy", `✅ ${outcome}`);
-      speakResponse(outcome, "happy");
+      speakResponse(outcome, "success");
     } else {
-      setRigEmotion("idle", "Not found");
+      setRigEmotion("error", "Not found");
       const failMsg =
         res?.message ||
         (isHindi
@@ -2306,6 +2429,25 @@ async function sendQuery(question, intent) {
 
   const trimmed = question.trim();
 
+  // 0. Automatic Privacy Gesture Trigger (never logs sensitive data, turns head+torso away & closes eyes)
+  const privacyCheck = window.Buddy3DRuntime?.detectPrivacyTrigger?.({ userText: trimmed });
+  if (privacyCheck?.isPrivacy) {
+    setRigEmotion("privacy", "Privacy");
+    if (privacyCheck.reason === "explicit_request") {
+      const active = getActiveBuddy();
+      const isHindi = active.defaultLanguage !== "english";
+      appendHistory("user", trimmed);
+      $("promptInput").value = "";
+      const pMsg = isHindi
+        ? "🙈 Theek hai, maine apna chehra ghuma liya hai aur aankhein band kar li hain (Privacy Mode). Note: Yeh ek expressive companion posture hai; sensitive password/OTP/CVV fields par automated interaction hamesha blocked rehta hai."
+        : "🙈 Got it — I have turned away and closed my eyes in Privacy Mode. Note: This is an expressive companion posture; sensitive password, OTP, and payment fields remain excluded from automated interaction.";
+      $("statusText").textContent = "Privacy Mode active — Buddy turned away.";
+      appendHistory("buddy", pMsg);
+      speakResponse(pMsg, "privacy");
+      return;
+    }
+  }
+
   // 1. Unified Natural Language Browser Action Intent Parser & Dispatcher
   const parsed = parseActionIntent(trimmed);
   const handled = await executeNaturalBrowserAction(parsed, trimmed);
@@ -2450,7 +2592,21 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
   if ($("formFillCard")) $("formFillCard").hidden = false;
   $("statusText").textContent = "Inspecting & filling form fields on active page…";
 
+  const SENSITIVE_FIELD_RE =
+    /pass|otp|\bpin\b|cvv|cvc|secret|token|card|aadhaar|aadhar|\bpan\b|ifsc|account/i;
   const hasExplicit = Boolean(extraOpts?.explicitPairs?.length) || Boolean(sampleData);
+
+  const candidateKeys = [
+    ...Object.keys(sampleData || {}),
+    ...((extraOpts?.explicitPairs || []).map((p) => p.target || "")),
+  ];
+  const hasSensitiveInput = candidateKeys.some((k) => SENSITIVE_FIELD_RE.test(String(k)));
+
+  if (hasSensitiveInput) {
+    setRigEmotion("privacy", "Privacy");
+  } else {
+    setRigEmotion("thinking", "Filling…");
+  }
 
   const dataToFill = sampleData || (extraOpts?.explicitPairs ? null : {
     name: "Murshid Ali",
@@ -2469,10 +2625,9 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
   if (extraOpts?.explicitUserProvided && extraOpts?.explicitPairs) {
     try {
       const { userProfile = {} } = await chrome.storage.local.get("userProfile");
-      const SENSITIVE_KEY = /pass|otp|\bpin\b|cvv|cvc|secret|token|card/i;
       let changed = false;
       for (const p of extraOpts.explicitPairs) {
-        if (p.target && p.target !== "__CURRENT__" && !SENSITIVE_KEY.test(p.target) && p.value) {
+        if (p.target && p.target !== "__CURRENT__" && !SENSITIVE_FIELD_RE.test(p.target) && p.value) {
           userProfile[p.target] = p.value;
           changed = true;
         }
@@ -2499,10 +2654,13 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
   if (res?.ok && res.results) {
     const { filled, preserved, skipped, errors } = res.results;
     const lines = [];
+    const formatFieldDisplay = (f) =>
+      SENSITIVE_FIELD_RE.test(String(f.field || "")) ? `${f.field} = "•••"` : `${f.field} = "${f.value}"`;
+    const filledSensitive = filled.some((f) => SENSITIVE_FIELD_RE.test(String(f.field || "")));
 
     if (filled.length > 0) {
       lines.push(
-        `✅ Filled & verified (${filled.length}): ${filled.map((f) => `${f.field} = "${f.value}"`).join(", ")}`,
+        `✅ Filled & verified (${filled.length}): ${filled.map(formatFieldDisplay).join(", ")}`,
       );
     }
     if (preserved.length > 0) {
@@ -2527,20 +2685,27 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
     }
 
     if (filled.length > 0) {
-      setRigEmotion("happy", "Filled");
+      const targetEmotion = filledSensitive || hasSensitiveInput ? "privacy" : "success";
+      setRigEmotion(targetEmotion, targetEmotion === "privacy" ? "Privacy" : "Filled");
       $("statusText").textContent =
         `Filled ${filled.length} field${filled.length > 1 ? "s" : ""} & verified.`;
       const summaryMsg = isHindi
-        ? `📝 Maine ${filled.map((f) => `"${f.field}" mein "${f.value}"`).join(", ")} fill aur verify kar diya hai!${
+        ? `📝 Maine ${filled
+            .map((f) =>
+              SENSITIVE_FIELD_RE.test(String(f.field || ""))
+                ? `"${f.field}" mein safe value`
+                : `"${f.field}" mein "${f.value}"`,
+            )
+            .join(", ")} fill aur verify kar diya hai!${
             preserved.length > 0
               ? ` (${preserved.length} pehle se bhare fields ko safe rakha gaya hai)`
               : ""
           }`
-        : `📝 Filled & verified ${filled.length} field(s): ${filled.map((f) => `${f.field}="${f.value}"`).join(", ")}.${
+        : `📝 Filled & verified ${filled.length} field(s): ${filled.map(formatFieldDisplay).join(", ")}.${
             preserved.length > 0 ? ` Preserved ${preserved.length} existing field(s).` : ""
           }`;
       appendHistory("buddy", summaryMsg);
-      speakResponse(summaryMsg, "happy");
+      speakResponse(summaryMsg, targetEmotion);
     } else if (preserved.length > 0) {
       setRigEmotion("idle", "Preserved");
       const presMsg = isHindi
@@ -2570,9 +2735,12 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
           : `All ${filled.length} fields filled & verified. Would you like Buddy to submit the form via "${pendingAction.text}"?`;
       }
       if ($("confirmCard")) $("confirmCard").hidden = false;
-      setRigEmotion("thinking", "Confirm");
+      if (!filledSensitive && !hasSensitiveInput) {
+        setRigEmotion("concerned", "Confirm");
+      }
     }
   } else {
+    setRigEmotion("error", "Error");
     const errText = res?.message || "Could not fill form on this page.";
     if (reportEl) reportEl.textContent = errText;
     appendHistory("buddy", `⚠️ ${errText}`);
@@ -4292,82 +4460,7 @@ if ($("testActiveProviderBtn")) {
   };
 }
 
-// Rig Animations & Audio Handlers
-if ($("testArmWaveBtn")) {
-  $("testArmWaveBtn").onclick = () => {
-    setRigEmotion("waving", "Hello!");
-    const arm = $("rigArmRight");
-    if (arm) {
-      arm.style.transform = "rotate(-40deg) translateY(-8px)";
-      setTimeout(() => {
-        arm.style.transform = "rotate(-20deg) translateY(-4px)";
-      }, 300);
-      setTimeout(() => {
-        arm.style.transform = "rotate(-40deg) translateY(-8px)";
-      }, 600);
-      setTimeout(() => {
-        arm.style.transform = "none";
-        setRigEmotion("idle", "Idle");
-      }, 1000);
-    }
-  };
-}
-
-if ($("testMouthTalkBtn")) {
-  $("testMouthTalkBtn").onclick = () => {
-    setRigEmotion("speaking", "Talking");
-    startSpeechMouthAnimation();
-    setTimeout(() => {
-      stopSpeechMouthAnimation();
-      setRigEmotion("idle", "Idle");
-    }, 2500);
-  };
-}
-
-// Manual CSS Emotion Testing Handlers
-if ($("btnEmoCurious")) {
-  $("btnEmoCurious").onclick = () => {
-    setRigEmotion("curious", "Curious");
-    const avatar = $("buddyAvatar");
-    if (avatar) avatar.setAttribute("data-emotion", "curious");
-  };
-}
-if ($("btnEmoConcerned")) {
-  $("btnEmoConcerned").onclick = () => {
-    setRigEmotion("concerned", "Concerned");
-    const avatar = $("buddyAvatar");
-    if (avatar) avatar.setAttribute("data-emotion", "concerned");
-  };
-}
-if ($("btnEmoHappy")) {
-  $("btnEmoHappy").onclick = () => {
-    setRigEmotion("happy", "Happy");
-    const avatar = $("buddyAvatar");
-    if (avatar) avatar.setAttribute("data-emotion", "happy");
-  };
-}
-if ($("btnEmoThinking")) {
-  $("btnEmoThinking").onclick = () => {
-    setRigEmotion("thinking", "Thinking");
-    const avatar = $("buddyAvatar");
-    if (avatar) avatar.setAttribute("data-emotion", "thinking");
-  };
-}
-if ($("btnEmoCelebrate")) {
-  $("btnEmoCelebrate").onclick = () => {
-    setRigEmotion("celebrate", "Celebrate");
-    const avatar = $("buddyAvatar");
-    if (avatar) avatar.setAttribute("data-emotion", "celebrate");
-  };
-}
-if ($("btnEmoIdle")) {
-  $("btnEmoIdle").onclick = () => {
-    setRigEmotion("idle", "Idle");
-    const avatar = $("buddyAvatar");
-    if (avatar) avatar.setAttribute("data-emotion", "idle");
-  };
-}
-
+// Speech / Mute & Display Settings (No manual animation selector in UI)
 if ($("muteToggle")) {
   $("muteToggle").onchange = (e) => {
     isMuted = e.target.checked;
@@ -4386,24 +4479,35 @@ if ($("sizeSelect")) {
   $("sizeSelect").onchange = (e) => {
     const stage = $("characterStage");
     if (!stage) return;
+    const wrap3d = $("buddy3dCanvasWrap");
     if (e.target.value === "hidden") {
       stage.style.display = "none";
     } else if (e.target.value === "compact") {
       stage.style.display = "flex";
+      if (wrap3d) {
+        wrap3d.style.width = "102px";
+        wrap3d.style.height = "102px";
+      }
       $("characterSvg").style.width = "90px";
       $("characterSvg").style.height = "100px";
       if ($("buddy3dImg")) {
         $("buddy3dImg").style.width = "90px";
         $("buddy3dImg").style.height = "90px";
       }
+      buddy3dViewer?.resize();
     } else {
       stage.style.display = "flex";
+      if (wrap3d) {
+        wrap3d.style.width = "132px";
+        wrap3d.style.height = "132px";
+      }
       $("characterSvg").style.width = "120px";
       $("characterSvg").style.height = "120px";
       if ($("buddy3dImg")) {
         $("buddy3dImg").style.width = "110px";
         $("buddy3dImg").style.height = "110px";
       }
+      buddy3dViewer?.resize();
     }
   };
 }

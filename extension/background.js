@@ -1438,13 +1438,9 @@ async function ask(
 }
 
 /**
- * Connected Arm Highlighter:
- * Renders the authentic Buddy companion character anchored in its fixed position
- * on the right side of the page, matching the side panel. From Buddy's shoulder,
- * its anatomically connected arm (matching the selected Buddy's outfit sleeve and
- * pearl hand with extended pointing finger) extends with an organic natural curve
- * towards the target element, illuminates the element with a glowing pulse ring
- * and explanatory callout card, and then retracts back smoothly into the shoulder.
+ * Coordinated Webpage Pointer:
+ * Uses a lightweight pointer beacon at the side-panel edge with an extending pointer beam,
+ * target pulse outline ring, and callout card — NEVER spawning a duplicate Buddy mascot on the page.
  */
 function highlight(selector, title, description, options = {}) {
   const queryDeepSelector = (sel, root = document) => {
@@ -1475,20 +1471,20 @@ function highlight(selector, title, description, options = {}) {
   el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  const outfitColor =
+  const accentColor =
     options?.outfit === "charcoal"
-      ? "#334155"
+      ? "#475569"
       : options?.outfit === "blue"
-        ? "#2563eb"
+        ? "#3b82f6"
         : options?.outfit === "coral"
-          ? "#ea580c"
+          ? "#f97316"
           : options?.outfit === "sage"
-            ? "#4d7c0f"
+            ? "#65a30d"
             : options?.outfit === "burgundy"
-              ? "#831843"
+              ? "#be123c"
               : options?.outfit === "lilac"
-                ? "#9333ea"
-                : "#0d9488"; // default teal
+                ? "#a855f7"
+                : "#14b8a6";
 
   const host = document.createElement("div");
   host.id = ID;
@@ -1499,70 +1495,39 @@ function highlight(selector, title, description, options = {}) {
   root.innerHTML = `
     <style>
       svg.canvas { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-      .arm-sleeve { fill: none; stroke: ${outfitColor}; stroke-width: 14; stroke-linecap: round; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.35)); }
-      .arm-cuff { fill: none; stroke: #ffffff; stroke-width: 3.5; stroke-linecap: round; stroke-dasharray: 3 14; }
+      .pointer-beam-glow { fill: none; stroke: ${accentColor}; stroke-width: 8; stroke-linecap: round; opacity: 0.28; }
+      .pointer-beam { fill: none; stroke: #2dd4bf; stroke-width: 3; stroke-linecap: round; stroke-dasharray: 6 6; }
       .ring { position: absolute; border: 3px solid #14b8a6; border-radius: 10px; box-shadow: 0 0 0 4px rgba(20,184,166,0.25), 0 0 28px rgba(20,184,166,0.6); pointer-events: none; }
       .ring.pulse { animation: pulseAnim 1.4s ease-out infinite; }
       @keyframes pulseAnim { 0% { box-shadow: 0 0 0 0 rgba(20,184,166,0.65); } 100% { box-shadow: 0 0 0 18px rgba(20,184,166,0); } }
       .card { position: absolute; max-width: 290px; padding: 10px 14px; border-radius: 12px; background: #0f172a; color: #f8fafc; font: 500 12px/1.4 system-ui, -apple-system, sans-serif; box-shadow: 0 10px 30px rgba(0,0,0,0.45); border: 1px solid rgba(20,184,166,0.6); opacity: 0; transform: translateY(6px); transition: opacity .3s ease, transform .3s ease; pointer-events: auto; }
       .card.show { opacity: 1; transform: none; }
       .card b { display: block; color: #5eead4; font-size: 13px; margin-bottom: 2px; }
-      .buddy-anchor { position: absolute; right: 12px; width: 72px; height: 86px; filter: drop-shadow(0 8px 18px rgba(0,0,0,0.5)); transition: transform 0.3s ease; }
     </style>
     <svg class="canvas">
       <defs>
-        <filter id="handShadow" x="-30%" y="-30%" width="160%" height="160%">
-          <feDropShadow dx="0" dy="3" stdDeviation="3" flood-opacity="0.4" />
+        <filter id="ptrShadow" x="-30%" y="-30%" width="160%" height="160%">
+          <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-opacity="0.45" />
         </filter>
       </defs>
-      <!-- Connected Arm Path (Sleeve + White Cuff) -->
-      <path class="arm-sleeve" id="armPath" />
-      <path class="arm-cuff" id="cuffPath" />
-      <!-- Sculpted Connected Pearl Hand with Pointing Finger -->
-      <g id="handGroup" filter="url(#handShadow)">
-        <g transform="scale(-1,1)">
-        <!-- Palm -->
-        <circle cx="0" cy="0" r="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="0.8" />
-        <!-- Extended Pointing Index Finger -->
-        <path d="M-4 -3 L-22 -1 Q-24 0 -22 1 L-4 3 Z" fill="#f8fafc" stroke="#94a3b8" stroke-width="0.8" />
-        <!-- Curled Knuckles -->
-        <ellipse cx="2" cy="-4" rx="4" ry="2.5" fill="#f1f5f9" stroke="#94a3b8" stroke-width="0.6" />
-        <ellipse cx="3" cy="0" rx="4" ry="2.5" fill="#f1f5f9" stroke="#94a3b8" stroke-width="0.6" />
-        <ellipse cx="2" cy="4" rx="4" ry="2.5" fill="#f1f5f9" stroke="#94a3b8" stroke-width="0.6" />
-        <!-- Thumb resting inward -->
-        <path d="M-1 -5 Q-4 -8 -6 -5 Q-4 -2 -1 -3 Z" fill="#f8fafc" stroke="#94a3b8" stroke-width="0.6" />
+      <!-- Coordinated Edge Origin Beacon (from Side Panel Companion) -->
+      <g id="pointerOrigin">
+        <circle cx="0" cy="0" r="10" fill="${accentColor}" opacity="0.22" />
+        <circle cx="0" cy="0" r="4.5" fill="#2dd4bf" stroke="#ffffff" stroke-width="1.5" />
       </g>
+      <!-- Lightweight Pointer Beam -->
+      <path class="pointer-beam-glow" id="beamGlowPath" />
+      <path class="pointer-beam" id="beamPath" />
+      <!-- Precision Pointer Reticle & Arrowhead -->
+      <g id="pointerTip" filter="url(#ptrShadow)">
+        <circle cx="0" cy="0" r="9" fill="rgba(20,184,166,0.18)" stroke="#2dd4bf" stroke-width="1.8" />
+        <path d="M-8,-5 L6,0 L-8,5 L-5,0 Z" fill="#f8fafc" stroke="#0f172a" stroke-width="0.9" />
       </g>
     </svg>
-    <!-- Target Element Highlight Pulse Ring -->
+    <!-- Target Element Highlight Pulse Ring (Retained) -->
     <div class="ring" id="ring"></div>
-    <!-- Explanatory Callout Card -->
+    <!-- Explanatory Callout Card (Retained) -->
     <div class="card" id="card"></div>
-    <!-- Fixed Buddy Mascot Anchor on the right side of the screen -->
-    <div class="buddy-anchor" id="buddyAnchor">
-      <svg viewBox="0 0 100 105" width="100%" height="100%">
-        <!-- Subtle shadow -->
-        <ellipse cx="50" cy="95" rx="20" ry="4" fill="#000000" opacity="0.3" />
-        <!-- Feet -->
-        <ellipse cx="40" cy="88" rx="8" ry="4.5" fill="#f8fafc" stroke="#94a3b8" stroke-width="0.7" />
-        <ellipse cx="61" cy="88" rx="8" ry="4.5" fill="#f8fafc" stroke="#94a3b8" stroke-width="0.7" />
-        <!-- Body in active Buddy outfit -->
-        <path d="M29 58Q22 65 25 82Q50 92 75 82Q79 65 70 58Z" fill="${outfitColor}" />
-        <!-- Inner Shirt -->
-        <path d="M43 59h15l-1 27H44Z" fill="#ffffff" />
-        <!-- Pearl Head -->
-        <path d="M64 9C43 5 23 26 23 41c0 14 12 22 27 22s27-8 27-22c0-11-7-20-16-25Z" fill="#f8fafc" stroke="#94a3b8" stroke-width="0.7" />
-        <!-- Charcoal Eyes with gaze looking at element -->
-        <g fill="#1e293b">
-          <ellipse cx="38" cy="42" rx="2.4" ry="3.5" />
-          <ellipse cx="59" cy="42" rx="2.4" ry="3.5" />
-          <circle cx="37" cy="41" r="0.8" fill="#ffffff" />
-          <circle cx="58" cy="41" r="0.8" fill="#ffffff" />
-        </g>
-        <!-- Smile -->
-        <path d="M45 51 Q50 55 55 51" fill="none" stroke="#1e293b" stroke-width="1.2" stroke-linecap="round" />
-      </svg>
-    </div>
   `;
 
   document.documentElement.appendChild(host);
@@ -1570,10 +1535,10 @@ function highlight(selector, title, description, options = {}) {
   const $ = (id) => root.getElementById(id);
   const card = $("card");
   const ring = $("ring");
-  const armPath = $("armPath");
-  const cuffPath = $("cuffPath");
-  const handGroup = $("handGroup");
-  const buddyAnchor = $("buddyAnchor");
+  const pointerOrigin = $("pointerOrigin");
+  const beamGlowPath = $("beamGlowPath");
+  const beamPath = $("beamPath");
+  const pointerTip = $("pointerTip");
 
   const safe = (t) =>
     String(t || "").replace(
@@ -1593,54 +1558,41 @@ function highlight(selector, title, description, options = {}) {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
 
-    // Position ring around target
+    // Position outline ring around target
     ring.style.left = `${Math.max(0, r.left - 6)}px`;
     ring.style.top = `${Math.max(0, r.top - 6)}px`;
     ring.style.width = `${r.width + 12}px`;
     ring.style.height = `${r.height + 12}px`;
 
-    // Anchor Buddy near target vertical level or vertically centered
-    const anchorY = Math.max(30, Math.min(vh - 120, r.top + r.height / 2 - 45));
-    buddyAnchor.style.top = `${anchorY}px`;
+    // Coordinated origin right at the side-panel edge aligned near the target vertical band
+    const originX = vw - 10;
+    const originY = Math.max(40, Math.min(vh - 40, r.top + r.height / 2));
+    pointerOrigin.setAttribute("transform", `translate(${originX}, ${originY.toFixed(1)})`);
 
-    // Origin: Buddy's anatomical left shoulder on the page
-    const shoulderX = vw - 12 - 48; // Left shoulder position within buddy anchor
-    const shoulderY = anchorY + 54;
-
-    // Target: right edge or center of the element with finger touch offset
-    // Fingertip extends 22px past the hand centre; land the tip on the element edge.
-    const edgeX = r.right > vw - 90 ? r.left + r.width / 2 : r.right;
-    const targetX = Math.min(vw - 30, edgeX + 22);
+    const edgeX = r.right > vw - 40 ? r.left + r.width / 2 : r.right + 10;
+    const targetX = Math.min(vw - 24, edgeX);
     const targetY = r.top + r.height / 2;
 
-    // Organic natural curve: elbow bends naturally with slight curvature
-    const midX = shoulderX - (shoulderX - targetX) * 0.5;
-    const midY = Math.min(shoulderY, targetY) - 40;
+    const midX = originX - (originX - targetX) * 0.5;
+    const midY = Math.min(originY, targetY) - 28;
 
-    // Interpolate current hand coordinates based on progress
     const t = isRetracting ? 1 - progress : progress;
     const ease = 1 - Math.pow(1 - t, 3);
 
-    // Quadratic / Cubic curve point computation
     const currentX =
-      (1 - ease) * (1 - ease) * shoulderX + 2 * (1 - ease) * ease * midX + ease * ease * targetX;
+      (1 - ease) * (1 - ease) * originX + 2 * (1 - ease) * ease * midX + ease * ease * targetX;
     const currentY =
-      (1 - ease) * (1 - ease) * shoulderY + 2 * (1 - ease) * ease * midY + ease * ease * targetY;
+      (1 - ease) * (1 - ease) * originY + 2 * (1 - ease) * ease * midY + ease * ease * targetY;
 
-    // Control point for sleeve curve
-    const ctrlX = shoulderX + (midX - shoulderX) * ease;
-    const ctrlY = shoulderY + (midY - shoulderY) * ease;
+    const ctrlX = originX + (midX - originX) * ease;
+    const ctrlY = originY + (midY - originY) * ease;
 
-    const pathData = `M ${shoulderX} ${shoulderY} Q ${ctrlX} ${ctrlY} ${currentX} ${currentY}`;
-    armPath.setAttribute("d", pathData);
-    cuffPath.setAttribute("d", pathData);
+    const pathData = `M ${originX} ${originY.toFixed(1)} Q ${ctrlX.toFixed(1)} ${ctrlY.toFixed(1)} ${currentX.toFixed(1)} ${currentY.toFixed(1)}`;
+    beamGlowPath.setAttribute("d", pathData);
+    beamPath.setAttribute("d", pathData);
 
-    // Calculate tangent angle so the hand and pointing finger angle naturally toward target
-    const angleRad = Math.atan2(currentY - ctrlY, currentX - ctrlX);
-    const angleDeg = (angleRad * 180) / Math.PI;
-
-    // Position sculpted hand and rotate pointing finger toward element
-    handGroup.setAttribute(
+    const angleDeg = (Math.atan2(currentY - ctrlY, currentX - ctrlX) * 180) / Math.PI;
+    pointerTip.setAttribute(
       "transform",
       `translate(${currentX.toFixed(2)}, ${currentY.toFixed(2)}) rotate(${angleDeg.toFixed(1)})`,
     );

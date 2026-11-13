@@ -46,6 +46,11 @@ export function avatarVariant(variant: "auto" | "3d" | "2d", failed: boolean): "
   return failed || variant === "2d" ? "2d" : "3d";
 }
 
+/** Local animated 3D GLB model URL for the given Buddy variant/slug. */
+export function buddyModelUrl(id?: string | null): string {
+  return `/models/buddies/${buddyVisualId(id)}.glb`;
+}
+
 /** Motion is shared by rendered 3D and illustrated 2D avatars; never spins. */
 export function avatarMotionEnabled(animated: boolean, reducedMotion: boolean): boolean {
   return animated && !reducedMotion;

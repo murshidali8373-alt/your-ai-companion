@@ -404,7 +404,7 @@
         color: var(--text-dim);
       }
 
-      /* Character Rig Container */
+      /* Character Rig & 3D Stage Container */
       .character-stage {
         display: flex;
         justify-content: center;
@@ -412,6 +412,17 @@
         padding: 4px 0;
         position: relative;
         cursor: pointer;
+        min-height: 122px;
+      }
+      .character-3d-canvas-wrap {
+        width: 132px;
+        height: 132px;
+        max-width: 100%;
+        position: relative;
+        cursor: grab;
+      }
+      .character-3d-canvas-wrap:active {
+        cursor: grabbing;
       }
       .character-rig-svg {
         max-width: 100px;
@@ -968,8 +979,9 @@
           </div>
         </div>
 
-        <!-- AUTHENTIC BUDDY CHARACTER RIG & 3D ARTWORK -->
-        <div id="characterStage" class="character-stage" title="Tap Buddy to interact">
+        <!-- AUTHENTIC 3D BUDDY STAGE & FALLBACK RIG -->
+        <div id="characterStage" class="character-stage" title="Drag to rotate 3D Buddy or click to interact">
+          <div id="buddy3dCanvasWrap" class="character-3d-canvas-wrap"></div>
           <img
             id="buddy3dImg"
             class="character-3d-artwork"
@@ -984,6 +996,7 @@
               viewBox="0 0 100 105"
               width="100%"
               height="100%"
+              style="display: none"
             >
               <defs>
                 <linearGradient id="bodyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -1698,8 +1711,9 @@
                 font-size: 11px;
               "
             >
-              <option value="rigged">Live Animated Rig (Vector)</option>
-              <option value="3d">Pre-rendered 3D Artwork</option>
+              <option value="3d" selected>Real-time 3D Companion (WebGL)</option>
+              <option value="rigged">2D Vector Rig (Fallback)</option>
+              <option value="artwork">Static 3D Artwork</option>
             </select>
           </div>
           <div style="display: flex; justify-content: space-between; align-items: center">
@@ -1724,76 +1738,9 @@
             <span style="font-size: 11px">Mute Voice Speech:</span>
             <input type="checkbox" id="muteToggle" />
           </div>
-          <div style="display: flex; gap: 4px; margin-top: 4px">
-            <button
-              id="testArmWaveBtn"
-              class="ghost"
-              style="flex: 1; font-size: 10px; padding: 5px"
-            >
-              👋 Wave Arm
-            </button>
-            <button
-              id="testMouthTalkBtn"
-              class="ghost"
-              style="flex: 1; font-size: 10px; padding: 5px"
-            >
-              🗣️ Test Lip-sync
-            </button>
-          </div>
-        </div>
-
-        <!-- Manual Emotion Trigger Control Panel -->
-        <div class="section-card">
-          <div class="section-card-title">
-            <span>🎭 Test CSS Emotion Animations</span>
-          </div>
-          <p style="font-size: 10px; color: var(--text-muted); line-height: 1.3">
-            Manually trigger CSS emotion states to preview head tilt, sway, and facial expressions:
+          <p style="font-size: 10px; color: var(--text-muted); line-height: 1.4; margin-top: 4px">
+            Expressions, pointing, speaking, and privacy awareness are triggered automatically from conversation and page context.
           </p>
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 4px">
-            <button
-              id="btnEmoCurious"
-              class="ghost"
-              style="font-size: 10px; padding: 5px; text-align: left"
-            >
-              🧐 Curious
-            </button>
-            <button
-              id="btnEmoConcerned"
-              class="ghost"
-              style="font-size: 10px; padding: 5px; text-align: left"
-            >
-              😟 Concerned
-            </button>
-            <button
-              id="btnEmoHappy"
-              class="ghost"
-              style="font-size: 10px; padding: 5px; text-align: left"
-            >
-              😄 Happy
-            </button>
-            <button
-              id="btnEmoThinking"
-              class="ghost"
-              style="font-size: 10px; padding: 5px; text-align: left"
-            >
-              🤔 Thinking
-            </button>
-            <button
-              id="btnEmoCelebrate"
-              class="ghost"
-              style="font-size: 10px; padding: 5px; text-align: left"
-            >
-              🎉 Celebrate
-            </button>
-            <button
-              id="btnEmoIdle"
-              class="ghost"
-              style="font-size: 10px; padding: 5px; text-align: left"
-            >
-              🙂 Idle / Reset
-            </button>
-          </div>
         </div>
       </div>
 
@@ -2183,6 +2130,7 @@
         </div>
       </footer>
     </div>
+    <script src="vendor/buddy-3d-runtime.js"></script>
     <script src="sidepanel.js"></script>
   </body>
 </html>
