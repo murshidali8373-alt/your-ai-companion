@@ -2,7 +2,8 @@
 // Values of password / card / OTP-like fields are strictly protected and never read.
 (() => {
   const MAX_ELEMENTS = 100;
-  const SENSITIVE = /pass|otp|pin|cvv|cvc|card|secret|token|ssn|aadhaar/i;
+  const SENSITIVE =
+    /pass(?:word|wd)?|otp|\bpin\b|cvv|cvc|credit.?card|debit.?card|card.?number|secret|token|ssn|aadhaar/i;
   let n = 0;
 
   const visible = (el) => {
@@ -72,15 +73,21 @@
       if (prevText && prevText.length < 80) return prevText;
     }
 
-    // 6. Attributes
-    return (
+    // 6. Attributes & sibling/parent fallback labels
+    const attrLabel =
       el.getAttribute("placeholder") ||
+      el.getAttribute("data-placeholder") ||
       el.getAttribute("name") ||
       el.getAttribute("title") ||
-      el.getAttribute("data-testid") ||
-      el.innerText ||
-      ""
-    );
+      el.getAttribute("data-testid");
+    if (attrLabel) return attrLabel;
+
+    if (el.nextElementSibling) {
+      const nextText = el.nextElementSibling.innerText?.trim();
+      if (nextText && nextText.length < 80) return nextText;
+    }
+
+    return el.innerText || "";
   };
 
   const item = (el, role, extra = {}) => {
@@ -128,7 +135,7 @@
     });
 
   const forms = queryAll(
-    'input,textarea,select,[contenteditable="true"],[role=combobox],[role=textbox],[role=searchbox]',
+    'input,textarea,select,[contenteditable="true"],[contenteditable=""],[contenteditable="plaintext-only"],[role=combobox],[role=textbox],[role=searchbox],[role=checkbox],[role=radio],[role=switch]',
   )
     .filter((el) => el.type !== "hidden" && visible(el))
     .slice(0, MAX_ELEMENTS)
@@ -184,7 +191,7 @@
     });
 
   const controls = queryAll(
-    "button,a[href],[role=button],[role=tab],[role=menuitem],input[type=button],input[type=submit],summary",
+    "button,a[href],[role=button],[role=link],[role=tab],[role=menuitem],[role=option],[role=checkbox],[role=radio],[role=switch],input[type=button],input[type=submit],input[type=reset],input[type=checkbox],input[type=radio],summary",
   )
     .filter(visible)
     .slice(0, MAX_ELEMENTS)

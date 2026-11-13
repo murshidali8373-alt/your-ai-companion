@@ -14,7 +14,10 @@ import { AiError } from "./ai/errors";
 import { generate } from "./ai/orchestrator.server";
 import { buildSystemPrompt, parseBuddyReply, type BuddyReply } from "./ai/prompt";
 import { getBuddyPreset } from "./ai/buddy-personas";
-import { findModel, route, type TaskIntent } from "./ai/registry";
+import { recommendSpecialistBuddy, type BuddyModeRecommendation } from "./ai/mode-recommendations";
+import { PROVIDERS, type ProviderId } from "./ai/model-hub";
+import { isProviderConfigured } from "./ai/provider-keys.server";
+import { MODELS, findModel, route, type ModelEntry, type TaskIntent } from "./ai/registry";
 import {
   buildPageContext,
   estimateTokens,
@@ -36,11 +39,56 @@ export interface AskInput {
   snapshot: PageSnapshot | null;
   source: "extension" | "web";
   history?: Array<{ role: "user" | "assistant"; content: string }> | null;
+  preferredProvider?: string | null;
   preferredModel?: string | null;
   userApiKey?: string | null;
   customBaseUrl?: string | null;
   buddySlug?: string | null;
   customBuddyId?: string | null;
+  screenshotBase64?: string | null;
+  uploadedDocumentSummary?: {
+    fileName: string;
+    documentType: string;
+    availableFields: string[];
+  } | null;
+}
+
+async function callGeminiWithScreenshot(params: {
+  system: string;
+  userText: string;
+  screenshotBase64: string;
+  userApiKey?: string | null;
+}): Promise<{ text: string; model: string } | null> {
+  const { getGeminiKey } = await import("./ai/provider-keys.server");
+  const apiKey = params.userApiKey?.trim() || getGeminiKey();
+  if (!apiKey) return null;
+
+  const { GoogleGenAI } = await import("@google/genai");
+  const ai = new GoogleGenAI({
+    apiKey,
+    httpOptions: { headers: { "User-Agent": "aistudio-build" } },
+  });
+  const cleanData = params.screenshotBase64.replace(/^data:image\/[^;]+;base64,/, "");
+  const models = ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
+  for (const model of models) {
+    try {
+      const res = await ai.models.generateContent({
+        model,
+        contents: {
+          parts: [
+            { inlineData: { mimeType: "image/jpeg", data: cleanData } },
+            { text: params.userText },
+          ],
+        },
+        config: { systemInstruction: params.system },
+      });
+      const text = (res.text ?? "").trim();
+      if (text) return { text, model };
+    } catch {
+      // try next fallback model
+    }
+  }
+  return null;
 }
 
 export interface AskOutput {
@@ -55,9 +103,126 @@ export interface AskOutput {
   buddyName: string;
   permission: PermissionLevel;
   model?: string;
+  activeProvider?: string;
   latencyMs?: number;
   blocked?: boolean;
   fellBack?: boolean;
+  providerWarning?: {
+    requestedProvider: string;
+    requestedProviderName: string;
+    status: "missing_api" | "not_connected";
+    missingKey?: string;
+    fallbackUsed: string;
+    message: string;
+  } | null;
+  recommendedMode?: BuddyModeRecommendation | null;
+}
+
+export function resolveProviderRouting(params: {
+  preferredProvider?: string | null;
+  preferredModel?: string | null;
+  userApiKey?: string | null;
+  defaultCandidates: ModelEntry[];
+  language?: string | null;
+}): {
+  candidates: ModelEntry[];
+  effectiveProvider: string;
+  providerWarning: AskOutput["providerWarning"];
+} {
+  const targetModel =
+    params.preferredModel && params.preferredModel !== "auto"
+      ? findModel(params.preferredModel)
+      : undefined;
+
+  const explicitProvider =
+    params.preferredProvider && params.preferredProvider !== "auto"
+      ? params.preferredProvider.trim().toLowerCase()
+      : undefined;
+
+  const requestedProvider = explicitProvider || targetModel?.provider || "gemini";
+  const provConfig = PROVIDERS[requestedProvider as ProviderId];
+
+  // Extension Settings userApiKey is specifically Google Gemini Direct Key when starting with AIza
+  const trimmedKey = params.userApiKey?.trim();
+  const keyProvider = trimmedKey
+    ? trimmedKey.startsWith("AIza")
+      ? "gemini"
+      : requestedProvider
+    : undefined;
+
+  const isRequestedConfigured = isProviderConfigured(requestedProvider, keyProvider);
+  const geminiModels = [
+    ...params.defaultCandidates.filter((m) => m.provider === "gemini"),
+    ...MODELS.filter(
+      (m) => m.provider === "gemini" && !params.defaultCandidates.some((d) => d.id === m.id),
+    ),
+  ];
+
+  if (requestedProvider !== "gemini" && !isRequestedConfigured) {
+    const provName = provConfig?.name || requestedProvider;
+    const isLocal = Boolean(provConfig?.supportsLocal);
+    const missingKey =
+      provConfig?.envKeyName || (requestedProvider === "ollama" ? "OLLAMA_BASE_URL" : undefined);
+    const isEnglish = params.language === "english";
+    const missingLabel = isLocal
+      ? isEnglish
+        ? "local Ollama server connection (OLLAMA_BASE_URL)"
+        : "local Ollama server (OLLAMA_BASE_URL)"
+      : missingKey || `${provName} API key`;
+
+    const message = isEnglish
+      ? `${provName} is currently not connected (missing ${missingLabel}). Continuing with Google Gemini so your task is not interrupted.`
+      : `${provName} abhi connected nahi hai (${missingLabel} missing hai). Task rukne na dene ke liye maine Google Gemini use kiya hai.`;
+
+    const fallbackCandidates = [
+      ...geminiModels,
+      ...params.defaultCandidates.filter((m) => m.provider !== "gemini"),
+    ];
+
+    return {
+      candidates: fallbackCandidates,
+      effectiveProvider: "gemini",
+      providerWarning: {
+        requestedProvider,
+        requestedProviderName: provName,
+        status: isLocal ? "not_connected" : "missing_api",
+        missingKey,
+        fallbackUsed: "Google Gemini",
+        message,
+      },
+    };
+  }
+
+  let candidates = params.defaultCandidates;
+  if (explicitProvider && explicitProvider !== "gemini") {
+    const providerCandidates = [
+      ...(targetModel && targetModel.provider === explicitProvider ? [targetModel] : []),
+      ...params.defaultCandidates.filter((m) => m.provider === explicitProvider),
+      ...MODELS.filter(
+        (m) =>
+          m.provider === explicitProvider && !params.defaultCandidates.some((d) => d.id === m.id),
+      ),
+    ];
+    const uniqueIds = new Set<string>();
+    const dedupedPrimary = providerCandidates.filter((m) => {
+      if (uniqueIds.has(m.id)) return false;
+      uniqueIds.add(m.id);
+      return true;
+    });
+    candidates = [
+      ...dedupedPrimary,
+      ...geminiModels.filter((m) => !uniqueIds.has(m.id)),
+      ...params.defaultCandidates.filter((m) => !uniqueIds.has(m.id) && m.provider !== "gemini"),
+    ];
+  } else if (targetModel) {
+    candidates = [targetModel, ...params.defaultCandidates.filter((m) => m.id !== targetModel.id)];
+  }
+
+  return {
+    candidates,
+    effectiveProvider: requestedProvider,
+    providerWarning: null,
+  };
 }
 
 interface Persona {
@@ -324,35 +489,76 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
     privacyMode,
     providerDisclosure: "Google Gemini",
   });
+  const docSummaryBlock = input.uploadedDocumentSummary
+    ? `\n\nUPLOADED DOCUMENT IN SESSION:\nFile: ${input.uploadedDocumentSummary.fileName} (Type: ${input.uploadedDocumentSummary.documentType})\nAvailable extracted fields: ${input.uploadedDocumentSummary.availableFields.join(", ") || "none"}`
+    : "";
   const historyBlock = input.history?.length
     ? `\n\nRECENT CONVERSATION:\n${input.history.map((h) => `${h.role === "user" ? "USER" : persona.name}: ${h.content}`).join("\n\n")}`
     : "";
-  const user = `${pageContext}${historyBlock}\n\nUSER (${input.source}): ${question}`;
+  const user = `${pageContext}${docSummaryBlock}${historyBlock}\n\nUSER (${input.source}): ${question}`;
   await event(db, taskId, userId, "understand", `Context ~${estimateTokens(user)} tokens`);
 
-  try {
-    const routingParams = {
-      intent: input.intent,
-      needsVision: false,
-      contextTokens: estimateTokens(system + user) + 1200,
-      latencySensitive: input.intent === "locate_element",
-      costSensitive: false,
-    };
-    const defaultCandidates = route(routingParams);
-    const targetModel = input.preferredModel ? findModel(input.preferredModel) : undefined;
-    const candidates = targetModel
-      ? [targetModel, ...defaultCandidates.filter((m) => m.id !== targetModel.id)]
-      : defaultCandidates;
+  const recommendedMode = recommendSpecialistBuddy({
+    question,
+    activeSlug: persona.slug,
+    language: persona.language,
+  });
 
-    const result = await generate({
-      system,
-      user,
-      routing: routingParams,
-      candidates,
-      userApiKey: input.userApiKey ?? undefined,
-      customBaseUrl: input.customBaseUrl ?? undefined,
-      userProvider: targetModel?.provider,
-    });
+  const routingParams = {
+    intent: input.intent,
+    needsVision: Boolean(input.screenshotBase64),
+    contextTokens: estimateTokens(system + user) + 1200,
+    latencySensitive: input.intent === "locate_element",
+    costSensitive: false,
+  };
+  const defaultCandidates = route(routingParams);
+  const routingDecision = resolveProviderRouting({
+    preferredProvider: input.preferredProvider,
+    preferredModel: input.preferredModel,
+    userApiKey: input.userApiKey,
+    defaultCandidates,
+    language: persona.language,
+  });
+
+  try {
+    const candidates = routingDecision.candidates;
+    const useGeminiScreenshot =
+      Boolean(input.screenshotBase64) && routingDecision.effectiveProvider === "gemini";
+
+    const visionResult =
+      useGeminiScreenshot && input.screenshotBase64
+        ? await callGeminiWithScreenshot({
+            system,
+            userText: user,
+            screenshotBase64: input.screenshotBase64,
+            userApiKey: input.userApiKey,
+          })
+        : null;
+
+    const geminiDirectKey =
+      input.userApiKey &&
+      (routingDecision.effectiveProvider === "gemini" || !input.userApiKey.startsWith("AIza"))
+        ? input.userApiKey
+        : undefined;
+
+    const result = visionResult
+      ? {
+          text: visionResult.text,
+          model: visionResult.model,
+          provider: "gemini",
+          latencyMs: 0,
+          attempts: 1,
+          fellBack: false,
+        }
+      : await generate({
+          system,
+          user,
+          routing: routingParams,
+          candidates,
+          userApiKey: geminiDirectKey,
+          customBaseUrl: input.customBaseUrl ?? undefined,
+          userProvider: routingDecision.effectiveProvider,
+        });
     const reply = parseBuddyReply(result.text);
 
     let highlightSelector: string | null = null;
@@ -418,8 +624,11 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       buddyName: persona.name,
       permission,
       model: result.model,
+      activeProvider: result.provider,
       latencyMs: result.latencyMs,
-      fellBack: result.fellBack,
+      fellBack: result.fellBack || Boolean(routingDecision.providerWarning),
+      providerWarning: routingDecision.providerWarning,
+      recommendedMode,
     };
   } catch (error) {
     const aiError =
@@ -487,6 +696,8 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       buddyName: persona.name,
       permission,
       blocked: aiError.kind === "credits" || aiError.kind === "blocked",
+      providerWarning: routingDecision.providerWarning,
+      recommendedMode,
     };
   }
 }
@@ -580,33 +791,75 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
     privacyMode: true,
     providerDisclosure: "Google Gemini",
   });
+  const docSummaryBlock = input.uploadedDocumentSummary
+    ? `\n\nUPLOADED DOCUMENT IN SESSION:\nFile: ${input.uploadedDocumentSummary.fileName} (Type: ${input.uploadedDocumentSummary.documentType})\nAvailable extracted fields: ${input.uploadedDocumentSummary.availableFields.join(", ") || "none"}`
+    : "";
   const historyBlock = input.history?.length
     ? `\n\nRECENT CONVERSATION:\n${input.history.map((h) => `${h.role === "user" ? "USER" : persona.name}: ${h.content}`).join("\n\n")}`
     : "";
-  const user = `${pageContext}${historyBlock}\n\nUSER (${input.source}): ${question}`;
+  const user = `${pageContext}${docSummaryBlock}${historyBlock}\n\nUSER (${input.source}): ${question}`;
+
+  const recommendedMode = recommendSpecialistBuddy({
+    question,
+    activeSlug: persona.slug,
+    language: persona.default_language,
+  });
+
+  const routingParams = {
+    intent: input.intent,
+    needsVision: Boolean(input.screenshotBase64),
+    contextTokens: estimateTokens(system + user) + 1200,
+    latencySensitive: input.intent === "locate_element",
+    costSensitive: false,
+  };
+  const defaultCandidates = route(routingParams);
+  const routingDecision = resolveProviderRouting({
+    preferredProvider: input.preferredProvider,
+    preferredModel: input.preferredModel,
+    userApiKey: input.userApiKey,
+    defaultCandidates,
+    language: persona.default_language,
+  });
 
   try {
-    const routingParams = {
-      intent: input.intent,
-      needsVision: false,
-      contextTokens: estimateTokens(system + user) + 1200,
-      latencySensitive: input.intent === "locate_element",
-      costSensitive: false,
-    };
-    const defaultCandidates = route(routingParams);
-    const targetModel = input.preferredModel ? findModel(input.preferredModel) : undefined;
-    const candidates = targetModel
-      ? [targetModel, ...defaultCandidates.filter((m) => m.id !== targetModel.id)]
-      : defaultCandidates;
+    const candidates = routingDecision.candidates;
+    const useGeminiScreenshot =
+      Boolean(input.screenshotBase64) && routingDecision.effectiveProvider === "gemini";
 
-    const result = await generate({
-      system,
-      user,
-      routing: routingParams,
-      candidates,
-      userApiKey: input.userApiKey ?? undefined,
-      customBaseUrl: input.customBaseUrl ?? undefined,
-    });
+    const visionResult =
+      useGeminiScreenshot && input.screenshotBase64
+        ? await callGeminiWithScreenshot({
+            system,
+            userText: user,
+            screenshotBase64: input.screenshotBase64,
+            userApiKey: input.userApiKey,
+          })
+        : null;
+
+    const geminiDirectKey =
+      input.userApiKey &&
+      (routingDecision.effectiveProvider === "gemini" || !input.userApiKey.startsWith("AIza"))
+        ? input.userApiKey
+        : undefined;
+
+    const result = visionResult
+      ? {
+          text: visionResult.text,
+          model: visionResult.model,
+          provider: "gemini",
+          latencyMs: 0,
+          attempts: 1,
+          fellBack: false,
+        }
+      : await generate({
+          system,
+          user,
+          routing: routingParams,
+          candidates,
+          userApiKey: geminiDirectKey,
+          customBaseUrl: input.customBaseUrl ?? undefined,
+          userProvider: routingDecision.effectiveProvider,
+        });
 
     const reply = parseBuddyReply(result.text);
     let highlightSelector: string | null = null;
@@ -637,8 +890,11 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
       buddyName: persona.name,
       permission,
       model: result.model,
+      activeProvider: result.provider,
       latencyMs: result.latencyMs,
-      fellBack: result.fellBack,
+      fellBack: result.fellBack || Boolean(routingDecision.providerWarning),
+      providerWarning: routingDecision.providerWarning,
+      recommendedMode,
     };
   } catch (error) {
     const aiError =
@@ -699,6 +955,8 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
       buddyName: persona.name,
       permission,
       blocked: aiError.kind === "credits" || aiError.kind === "blocked",
+      providerWarning: routingDecision.providerWarning,
+      recommendedMode,
     };
   }
 }

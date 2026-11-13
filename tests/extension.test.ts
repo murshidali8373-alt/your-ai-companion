@@ -342,7 +342,10 @@ describe("MV3 Chrome Extension and Side Panel", () => {
     expect(clickTrailingMatch).not.toBeNull();
     const rawTarget = clickTrailingMatch![1];
     const cleanClickTarget = rawTarget
-      .replace(/^(?:is\s+page\s+(?:par|pe|se)|page\s+(?:par|pe|se)|ye|yeh|wo|woh|the|a|an|kripya|please|jaldi)\s+/i, "")
+      .replace(
+        /^(?:is\s+page\s+(?:par|pe|se)|page\s+(?:par|pe|se)|ye|yeh|wo|woh|the|a|an|kripya|please|jaldi)\s+/i,
+        "",
+      )
       .replace(/\s+(?:button|tab|link|icon|menu|bar|option)$/i, "")
       .trim();
     expect(cleanClickTarget).toBe("login");
@@ -364,7 +367,10 @@ describe("MV3 Chrome Extension and Side Panel", () => {
     );
     expect(findTrailingMatch).not.toBeNull();
     const cleanFindTarget = findTrailingMatch![1]
-      .replace(/^(?:is\s+page\s+(?:par|pe|se)|page\s+(?:par|pe|se)|ye|yeh|wo|woh|the|a|an|kripya|please)\s+/i, "")
+      .replace(
+        /^(?:is\s+page\s+(?:par|pe|se)|page\s+(?:par|pe|se)|ye|yeh|wo|woh|the|a|an|kripya|please)\s+/i,
+        "",
+      )
       .replace(/\s+(?:button|tab|link|icon|menu|bar|option|field)$/i, "")
       .trim();
     expect(cleanFindTarget).toBe("order id");
@@ -402,12 +408,13 @@ describe("MV3 Chrome Extension and Side Panel", () => {
     expect(spCode).toContain("await executeFind(intent.target)");
 
     // In background.js, click execution verifies state change and returns verified outcome
-    expect(bgCode).toContain('CLICK_SYNONYMS');
-    expect(bgCode).toContain('login: ["login", "log in", "signin", "sign in", "sign-in", "log-in", "connect"]');
-    expect(bgCode).toContain('stateChange');
-    expect(bgCode).toContain('urlBefore');
-    expect(bgCode).toContain('urlAfter');
-    expect(bgCode).toContain('Successfully clicked');
+    expect(bgCode).toContain("CLICK_SYNONYMS");
+    expect(bgCode).toContain(
+      'login: ["login", "log in", "signin", "sign in", "sign-in", "log-in", "connect"]',
+    );
+    expect(bgCode).toContain("stateChange");
+    expect(bgCode).toContain("urlBefore");
+    expect(bgCode).toContain("urlAfter");
+    expect(bgCode).toContain("Successfully clicked");
   });
 });
-

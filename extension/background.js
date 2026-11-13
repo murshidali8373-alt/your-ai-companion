@@ -79,8 +79,15 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     }
   }
   if (msg.type === "ASK") {
-    // prettier-ignore
+    pendingUploadedDocumentSummary = msg.uploadedDocumentSummary || null;
+    pendingPreferredProvider = msg.preferredProvider || null;
     ask(msg.question, msg.intent, msg.history, msg.buddySlug, msg.customBuddyId, msg.preferredModel).then(reply, (e) => reply({ error: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === "EXTRACT_DOCUMENT") {
+    extractUploadedDocument(msg.document).then(reply, (e) =>
+      reply({ ok: false, error: String(e?.message || e) }),
+    );
     return true;
   }
   if (msg.type === "SIGN_OUT") {
@@ -255,17 +262,71 @@ async function activeTab() {
   return null;
 }
 
+function mergeFrameSnapshots(results) {
+  const valid = (results || []).map((r) => r?.result).filter(Boolean);
+  if (valid.length === 0) return null;
+  const primary = { ...valid[0] };
+  const headings = [...(primary.headings || [])];
+  const forms = [...(primary.forms || [])];
+  const controls = [...(primary.controls || [])];
+  const alerts = [...(primary.alerts || [])];
+  const textParts = primary.text ? [primary.text] : [];
+
+  for (let i = 1; i < valid.length; i++) {
+    const f = valid[i];
+    if (Array.isArray(f.headings)) headings.push(...f.headings);
+    if (Array.isArray(f.forms)) forms.push(...f.forms);
+    if (Array.isArray(f.controls)) controls.push(...f.controls);
+    if (Array.isArray(f.alerts)) alerts.push(...f.alerts);
+    if (f.text && f.text.trim()) textParts.push(f.text.trim());
+  }
+
+  return {
+    ...primary,
+    headings: headings.slice(0, 80),
+    forms: forms.slice(0, 120),
+    controls: controls.slice(0, 120),
+    alerts: alerts.slice(0, 40),
+    text: textParts.join("\n").slice(0, 20000),
+    frameCount: valid.length,
+  };
+}
+
+async function captureTabScreenshot(windowId) {
+  try {
+    if (!chrome.tabs?.captureVisibleTab) return null;
+    const dataUrl = await chrome.tabs.captureVisibleTab(windowId || chrome.windows.WINDOW_ID_CURRENT, {
+      format: "jpeg",
+      quality: 75,
+    });
+    if (typeof dataUrl === "string" && dataUrl.startsWith("data:image/")) {
+      return dataUrl.replace(/^data:image\/[^;]+;base64,/, "");
+    }
+  } catch {
+    // Capture optional; ignore on restricted tabs
+  }
+  return null;
+}
+
 async function getSnapshotForActiveTab() {
   const tab = await activeTab();
   if (!tab?.id || !tab.url || RESTRICTED.test(tab.url)) {
     return { ok: false, snapshot: null, error: "Restricted or inactive page" };
   }
   try {
-    const [res] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ["snapshot.js"],
-    });
-    return { ok: true, snapshot: res?.result ?? null };
+    let results;
+    try {
+      results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        files: ["snapshot.js"],
+      });
+    } catch {
+      results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ["snapshot.js"],
+      });
+    }
+    return { ok: true, snapshot: mergeFrameSnapshots(results) };
   } catch (err) {
     return { ok: false, snapshot: null, error: String(err?.message || err) };
   }
@@ -297,48 +358,66 @@ function recordTurn(userQuestion, assistantAnswer) {
 }
 
 async function getPageSnapshot() {
-  const tab = await activeTab();
-  if (!tab?.id || !tab.url || RESTRICTED.test(tab.url)) {
-    return {
-      ok: false,
-      message: "I cannot read the current webpage right now. Please refresh or allow page access.",
-    };
+  const res = await getSnapshotForActiveTab();
+  if (res.ok && res.snapshot) {
+    return { ok: true, snapshot: res.snapshot };
   }
-  try {
-    const [res] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ["snapshot.js"],
-    });
-    if (res?.result) {
-      return { ok: true, snapshot: res.result };
-    }
-    return {
-      ok: false,
-      message: "I cannot read the current webpage right now. Please refresh or allow page access.",
-    };
-  } catch (err) {
-    return {
-      ok: false,
-      message: "I cannot read the current webpage right now. Please refresh or allow page access.",
-    };
-  }
+  return {
+    ok: false,
+    message: "I cannot read the current webpage right now. Please refresh or allow page access.",
+  };
 }
 
 const BUDDY_PRESETS_MAP = {
   friendly: { name: "Friendly Buddy", defaultLanguage: "hinglish", personality: "Cheerful, warm, encouraging" },
-  developer: { name: "Dev Buddy", defaultLanguage: "english", personality: "Technical, precise, inspects code and DOM" },
-  content: { name: "Content Buddy", defaultLanguage: "english", personality: "Creative, articulate, refines copy" },
-  ca: { name: "CA Buddy", defaultLanguage: "hinglish", personality: "Tax, GST, invoice, and balance-sheet aware" },
+  developer: { name: "Developer Buddy", defaultLanguage: "english", personality: "Direct, analytical, inspects code and DOM" },
+  content: { name: "Content Buddy", defaultLanguage: "hinglish", personality: "Creative, articulate, refines copy" },
+  ca: { name: "CA Buddy", defaultLanguage: "hinglish", personality: "Tax, GST, invoice, and compliance aware" },
   research: { name: "Research Buddy", defaultLanguage: "english", personality: "Fact-checker, synthesizes citations" },
   data: { name: "Data Buddy", defaultLanguage: "english", personality: "Tabular extraction, formulas, spreadsheet logic" },
   design: { name: "Design Buddy", defaultLanguage: "english", personality: "Visual hierarchy, typography, colors" },
-  legal: { name: "Legal Buddy", defaultLanguage: "english", personality: "Compliance, terms of service, clauses" },
-  ecommerce: { name: "Seller Buddy", defaultLanguage: "hinglish", personality: "Meesho, Amazon, Flipkart orders & pricing" },
-  marketing: { name: "Growth Buddy", defaultLanguage: "english", personality: "SEO, conversion rate, analytics" },
-  professor: { name: "Professor Buddy", defaultLanguage: "english", personality: "Patient academic educator" },
-  business: { name: "Strategy Buddy", defaultLanguage: "english", personality: "KPIs, executive summaries, margins" },
-  family: { name: "Family Buddy", defaultLanguage: "hinglish", personality: "Warm, safe, patient guidance for all ages" },
+  legal: { name: "Legal Buddy", defaultLanguage: "english", personality: "Careful, compliance, terms of service, clauses" },
+  ecommerce: { name: "E-commerce Buddy", defaultLanguage: "hinglish", personality: "Meesho, Amazon, Flipkart listings, orders & pricing" },
+  marketing: { name: "Marketing Buddy", defaultLanguage: "hinglish", personality: "SEO, ad copy, conversion rate, campaigns" },
+  operations: { name: "Operations Buddy", defaultLanguage: "hinglish", personality: "Process, SOPs, checklists and automation" },
+  professor: { name: "Professor Buddy", defaultLanguage: "hinglish", personality: "Patient academic educator with step-by-step clarity" },
+  business: { name: "Business Buddy", defaultLanguage: "hinglish", personality: "KPIs, plans, executive summaries, margins" },
+  dadaji: { name: "Dadaji Buddy", defaultLanguage: "hindi", personality: "Old-school wisdom, gentle pace" },
+  detective: { name: "Detective Buddy", defaultLanguage: "english", personality: "Diagnosis, root cause, verification" },
+  family: { name: "Dadaji Buddy", defaultLanguage: "hinglish", personality: "Warm, safe, patient guidance for all ages" },
 };
+
+const PROVIDER_KEY_META = {
+  gemini: { name: "Google Gemini", key: "GEMINI_API_KEY", local: false },
+  groq: { name: "GroqCloud", key: "GROQ_API_KEY", local: false },
+  openrouter: { name: "OpenRouter", key: "OPENROUTER_API_KEY", local: false },
+  openai: { name: "OpenAI", key: "OPENAI_API_KEY", local: false },
+  ollama: { name: "Ollama (Local)", key: "OLLAMA_BASE_URL", local: true },
+  huggingface: { name: "Hugging Face Inference", key: "HUGGINGFACE_API_KEY", local: false },
+  cloudflare: { name: "Cloudflare Workers AI", key: "CLOUDFLARE_API_TOKEN", local: false },
+  github: { name: "GitHub Models", key: "GITHUB_TOKEN", local: false },
+};
+
+function buildMissingProviderWarning(preferredProvider, isHindi, fallbackLabel) {
+  if (!preferredProvider || preferredProvider === "auto" || preferredProvider === "gemini") {
+    return null;
+  }
+  const meta = PROVIDER_KEY_META[preferredProvider] || {
+    name: preferredProvider,
+    key: `${preferredProvider.toUpperCase()}_API_KEY`,
+    local: false,
+  };
+  return {
+    requestedProvider: preferredProvider,
+    requestedProviderName: meta.name,
+    status: meta.local ? "not_connected" : "missing_api",
+    missingKey: meta.key,
+    fallbackUsed: fallbackLabel,
+    message: isHindi
+      ? `${meta.name} abhi connected nahi hai (${meta.key} missing hai). Task rukne na dene ke liye ${fallbackLabel} use kiya gaya hai.`
+      : `${meta.name} is not connected (${meta.key} missing). Continuing with ${fallbackLabel}.`,
+  };
+}
 
 function getBuddyPresetInternal(slug) {
   if (slug && BUDDY_PRESETS_MAP[slug]) return BUDDY_PRESETS_MAP[slug];
@@ -406,13 +485,21 @@ async function generateAutonomousCompanionReply({
   question,
   intent,
   snapshot,
+  screenshotBase64,
   buddySlug = "friendly",
   customBuddyId,
   userApiKey,
+  preferredProvider,
   history = [],
 }) {
   const activeBuddy = getBuddyPresetInternal(buddySlug);
+  const isHindiLang = activeBuddy.defaultLanguage !== "english";
   const qLower = question.toLowerCase().trim();
+  const providerWarning = buildMissingProviderWarning(
+    preferredProvider,
+    isHindiLang,
+    userApiKey ? "Google Gemini" : "Local Grounded Companion",
+  );
 
   // 1. Direct Google Gemini API call if user provided API key
   if (userApiKey) {
@@ -440,6 +527,12 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
       }
       promptText += `\nUSER QUESTION: ${question}`;
 
+      const parts = [];
+      if (screenshotBase64) {
+        parts.push({ inlineData: { mimeType: "image/jpeg", data: screenshotBase64 } });
+      }
+      parts.push({ text: promptText });
+
       const geminiRes = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${encodeURIComponent(userApiKey)}`,
         {
@@ -447,7 +540,7 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: systemInstruction }] },
-            contents: [{ parts: [{ text: promptText }] }],
+            contents: [{ parts }],
             generationConfig: { maxOutputTokens: 1000, temperature: 0.7 },
           }),
         },
@@ -484,6 +577,7 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
             permission: "explain",
             guest: true,
             provider: "gemini_direct",
+            providerWarning,
           };
         }
       }
@@ -519,9 +613,78 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
     };
   }
 
+  // Scroll Action commands
+  const isScrollAction =
+    /\b(?:scroll|neeche\s+(?:jao|le\s+jao)|upar\s+(?:jao|le\s+jao)|page\s+(?:down|up|ke\s+last|ke\s+top)|bottom\s+par\s+jao|top\s+par\s+jao|tak\s+scroll)\b/i.test(
+      qLower,
+    );
+
+  if (isScrollAction) {
+    let dir = "down";
+    if (/\b(?:up|upar)\b/i.test(qLower)) dir = "up";
+    else if (/\b(?:left|baayein|baaye)\b/i.test(qLower)) dir = "left";
+    else if (/\b(?:right|daayein|daaye)\b/i.test(qLower)) dir = "right";
+    else if (/\b(?:top|shuru)\b/i.test(qLower)) dir = "top";
+    else if (/\b(?:bottom|last|aakhir|end)\b/i.test(qLower)) dir = "bottom";
+
+    const isHindi = activeBuddy.defaultLanguage !== "english";
+    return {
+      taskId: null,
+      reply: {
+        answer: isHindi
+          ? `Main page ko ${dir} scroll kar raha hoon!`
+          : `Scrolling page ${dir}!`,
+        highlight: null,
+        confidence: "high",
+        needs: null,
+        emotion: "working",
+        actionType: "scroll",
+      },
+      actionType: "scroll",
+      scrollDirection: dir,
+      buddyName: activeBuddy.name,
+      permission: "interact",
+      guest: true,
+    };
+  }
+
+  // Strict POINT / HIGHLIGHT Action commands (NEVER CLICKS)
+  const isPointAction =
+    /\b(?:point\s+karo|par\s+point|point\s+to|highlight\s+(?:the|this|karo)?)\b/i.test(qLower);
+
+  if (isPointAction) {
+    const matchEl = findBestMatchingElement(snapshot, question);
+    const elLabel = matchEl?.name || matchEl?.placeholder || matchEl?.text || matchEl?.role || "element";
+    const isHindi = activeBuddy.defaultLanguage !== "english";
+    return {
+      taskId: null,
+      reply: {
+        answer: matchEl
+          ? isHindi
+            ? `Maine "${elLabel}" par point aur highlight kar diya hai (bina click kiye).`
+            : `Pointing and highlighting "${elLabel}" without clicking.`
+          : isHindi
+            ? `Page par matching element nahi mila jise point kar sakoon.`
+            : `Could not find a matching element to point to on this page.`,
+        highlight: matchEl?.ref || null,
+        confidence: matchEl ? "high" : "low",
+        needs: null,
+        emotion: matchEl ? "pointing" : "confused",
+        actionType: "point",
+      },
+      actionType: "point",
+      highlightSelector: matchEl?.selector || null,
+      calloutTitle: elLabel,
+      calloutDescription: "Pointing here (not clicking)",
+      buddyName: activeBuddy.name,
+      permission: "explain",
+      guest: true,
+    };
+  }
+
   // Explicit Click / Press Action commands
   const isClickAction =
-    /(?:click|press|dabao|tap|kholo)\b/i.test(qLower) ||
+    /(?:click|press|dabao|tap|kholo|tick|check|uncheck)\b/i.test(qLower) ||
     /(?:par\s+click|pe\s+click|click\s+karo|dabao|daba\s+do|press\s+karo)/i.test(qLower);
 
   if (isClickAction) {
@@ -556,12 +719,11 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
 
   // Form filling commands
   const isFormFillAction =
-    /(?:form\s+(?:fill|bhar|bharo)|fill\s+(?:the\s+)?form|auto\s*fill|fill\s+(?:all\s+)?(?:inputs|fields))/i.test(
+    /(?:form\s+(?:fill|bhar|bharo)|fill\s+(?:the\s+|this\s+)?form|auto\s*fill|fill\s+(?:all\s+)?(?:inputs|fields)|fill\s+kar|likh\s+do|daal\s+do|type\s+kar)/i.test(
       qLower,
     );
 
   if (isFormFillAction) {
-    const formCount = snapshot?.forms?.length || 0;
     const isHindi = activeBuddy.defaultLanguage !== "english";
     const answer = isHindi
       ? `Main active form fields fill aur verify kar raha hoon.`
@@ -715,6 +877,7 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
       buddyName: activeBuddy.name,
       permission: "explain",
       guest: true,
+      providerWarning,
     };
   }
 
@@ -737,17 +900,11 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
     buddyName: activeBuddy.name,
     permission: "explain",
     guest: true,
+    providerWarning,
   };
 }
 
-async function ask(question, intent, history, buddySlug, customBuddyId, preferredModel) {
-  const { session } = await chrome.storage.local.get("session");
-  const { lastBase, userApiKey, customBaseUrl } = await chrome.storage.local.get([
-    "lastBase",
-    "userApiKey",
-    "customBaseUrl",
-  ]);
-
+async function resolveExtensionApiBase(session, lastBase) {
   let apiBase = session?.apiBase || lastBase;
   if (apiBase && (apiBase.includes("5t53lwemhepi") || apiBase.includes("152127168827"))) {
     apiBase = DEFAULT_HOST;
@@ -779,22 +936,271 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
     } catch {}
     if (!apiBase) apiBase = DEFAULT_HOST;
   }
+  return apiBase;
+}
+
+function parseDocumentTextLocallyExt(rawText, fileName = "document") {
+  const text = String(rawText || "").replace(/\r/g, "\n");
+  const compact = text.replace(/[ \t]+/g, " ");
+  const lower = `${fileName} ${compact}`.toLowerCase();
+  const fields = {};
+  const ambiguousFields = [];
+
+  let documentType = "other";
+  if (/aadhaar|aadhar|uidai|unique\s+identification/i.test(lower)) documentType = "aadhaar";
+  else if (/\bpan\b|permanent\s+account\s+number|income\s+tax\s+department/i.test(lower)) documentType = "pan";
+  else if (/shipping\s+label|awb|tracking\s*(?:id|no|number)|ship\s+to|courier/i.test(lower)) documentType = "shipping_label";
+  else if (/invoice|tax\s+invoice|gstin|bill\s+no|total\s+amount/i.test(lower)) documentType = "invoice";
+
+  const aadhaarMatches = [...compact.matchAll(/\b([2-9]\d{3}[\s-]?\d{4}[\s-]?\d{4})\b/g)].map((m) =>
+    m[1].replace(/[\s-]+/g, " ").trim(),
+  );
+  const uniqueAadhaar = [...new Set(aadhaarMatches)];
+  if (uniqueAadhaar.length === 1) {
+    fields.aadhaarNumber = uniqueAadhaar[0];
+    if (documentType === "other") documentType = "aadhaar";
+  } else if (uniqueAadhaar.length > 1) {
+    ambiguousFields.push("aadhaarNumber");
+  }
+
+  const panMatches = [...compact.toUpperCase().matchAll(/\b([A-Z]{5}[0-9]{4}[A-Z])\b/g)].map((m) => m[1]);
+  const uniquePan = [...new Set(panMatches)];
+  if (uniquePan.length === 1) {
+    fields.panNumber = uniquePan[0];
+    if (documentType === "other") documentType = "pan";
+  } else if (uniquePan.length > 1) {
+    ambiguousFields.push("panNumber");
+  }
+
+  const gstMatch = compact.toUpperCase().match(/\b([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z])\b/);
+  if (gstMatch?.[1]) fields.gstin = gstMatch[1];
+
+  const emailMatch = compact.match(/\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/);
+  if (emailMatch?.[1]) fields.email = emailMatch[1];
+
+  const phoneMatch = compact.match(/(?:\+?91[\s-]?)?\b([6-9]\d{9})\b/);
+  if (phoneMatch?.[1]) fields.phone = phoneMatch[1];
+
+  const dobMatch = compact.match(
+    /(?:dob|date\s+of\s+birth|birth\s*date|year\s+of\s+birth)\s*[:\-]?\s*(\d{2}[\/\-]\d{2}[\/\-]\d{4}|\d{4}[\/\-]\d{2}[\/\-]\d{2})/i,
+  );
+  if (dobMatch?.[1]) fields.dob = dobMatch[1];
+
+  const genderMatch = compact.match(/\b(male|female|transgender)\b/i);
+  if (genderMatch?.[1]) fields.gender = genderMatch[1];
+
+  const pinMatch =
+    compact.match(/(?:pin\s*(?:code)?|pincode|zip)\s*[:\-]?\s*(\d{6})\b/i) ||
+    compact.match(/\b([1-9]\d{5})\b/);
+  if (pinMatch?.[1]) fields.pincode = pinMatch[1];
+
+  const labelPatterns = [
+    ["name", /(?:^|\n)\s*(?:full\s+)?name\s*[:\-]\s*([^\n]{2,60})/i],
+    ["fatherName", /(?:^|\n)\s*(?:father(?:'s)?\s*name|s\/o|d\/o|w\/o|c\/o)\s*[:\-]?\s*([^\n,]{2,60})/i],
+    ["address", /(?:^|\n)\s*(?:address|residence|ship\s*to)\s*[:\-]\s*([^\n]{5,180})/i],
+    ["city", /(?:^|\n)\s*(?:city|town|district)\s*[:\-]\s*([^\n,]{2,40})/i],
+    ["state", /(?:^|\n)\s*(?:state|province)\s*[:\-]\s*([^\n,]{2,40})/i],
+    ["invoiceNumber", /(?:invoice\s*(?:no|number|#))\s*[:\-]?\s*([A-Z0-9\-\/]{3,32})/i],
+    ["orderId", /(?:order\s*(?:id|no|number|#))\s*[:\-]?\s*([A-Z0-9\-\_]{3,32})/i],
+    ["trackingNumber", /(?:tracking\s*(?:id|no|number)|awb(?:\s*no)?)\s*[:\-]?\s*([A-Z0-9\-]{5,36})/i],
+    ["company", /(?:^|\n)\s*(?:company|business|seller|vendor|firm)\s*(?:name)?\s*[:\-]\s*([^\n]{2,80})/i],
+  ];
+  for (const [k, re] of labelPatterns) {
+    const m = text.match(re);
+    if (m?.[1] && !fields[k]) fields[k] = m[1].trim();
+  }
+
+  const count = Object.keys(fields).length;
+  return {
+    ok: count > 0,
+    documentType,
+    fileName,
+    confidence: count >= 3 ? "high" : count > 0 ? "medium" : "low",
+    fields,
+    ambiguousFields,
+    provider: "local_ocr_parser",
+  };
+}
+
+async function extractUploadedDocument(doc) {
+  if (!doc || !doc.fileName) {
+    return { ok: false, error: "No document provided." };
+  }
+  const { session, lastBase, userApiKey } = await chrome.storage.local.get([
+    "session",
+    "lastBase",
+    "userApiKey",
+  ]);
+  const apiBase = await resolveExtensionApiBase(session, lastBase);
+  const headers = { "content-type": "application/json" };
+  if (session?.accessToken) headers["authorization"] = `Bearer ${session.accessToken}`;
+
+  const reqBody = JSON.stringify({
+    fileName: doc.fileName,
+    mimeType: doc.mimeType || "application/octet-stream",
+    base64Data: doc.base64Data || undefined,
+    textContent: doc.textContent || undefined,
+    userApiKey: userApiKey || undefined,
+  });
+
+  // 1. Try server endpoint (or proxy via active web tab)
+  try {
+    let res = await fetch(`${apiBase}/api/public/extension/extract-document`, {
+      method: "POST",
+      headers,
+      body: reqBody,
+      credentials: "include",
+    });
+    const ct = res.headers.get("content-type") || "";
+    let data = ct.includes("application/json") ? await res.json().catch(() => null) : null;
+
+    if (!data) {
+      const allTabs = await chrome.tabs.query({});
+      const buddyTab = allTabs.find((t) => t.url && (t.url.includes("run.app") || t.url.includes("localhost")));
+      if (buddyTab?.id && buddyTab.url) {
+        const origin = new URL(buddyTab.url).origin;
+        const proxyRes = await new Promise((resolve) => {
+          chrome.tabs.sendMessage(
+            buddyTab.id,
+            {
+              type: "AI_BUDDY_PAGE_FETCH",
+              url: `${origin}/api/public/extension/extract-document`,
+              method: "POST",
+              headers,
+              body: reqBody,
+            },
+            (resp) => resolve(chrome.runtime.lastError ? null : resp),
+          );
+        });
+        if (proxyRes?.ok && proxyRes.json) data = proxyRes.json;
+      }
+    }
+
+    if (data && (data.ok || Object.keys(data.fields || {}).length > 0)) {
+      return data;
+    }
+  } catch {
+    // Fall back below
+  }
+
+  // 2. Direct user Gemini key multimodal fallback if binary image/PDF
+  if (userApiKey && doc.base64Data) {
+    try {
+      const cleanBase64 = String(doc.base64Data).replace(/^data:[^;]+;base64,/, "");
+      const mimeType = doc.mimeType === "image/jpg" ? "image/jpeg" : (doc.mimeType || "image/png");
+      const geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(userApiKey)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  { inlineData: { mimeType, data: cleanBase64 } },
+                  {
+                    text: `Extract fields from ${doc.fileName} as strict JSON: {"documentType":"aadhaar|pan|invoice|shipping_label|id_card|form|other","confidence":"high|medium|low","fields":{"name":"","fatherName":"","dob":"","gender":"","phone":"","email":"","address":"","city":"","state":"","pincode":"","aadhaarNumber":"","panNumber":"","gstin":"","invoiceNumber":"","orderId":"","trackingNumber":"","company":""},"ambiguousFields":[]}. NEVER invent fields that are not clearly visible.`,
+                  },
+                ],
+              },
+            ],
+            generationConfig: { responseMimeType: "application/json" },
+          }),
+        },
+      );
+      if (geminiRes.ok) {
+        const gj = await geminiRes.json();
+        const raw = gj.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (raw) {
+          const parsedJson = JSON.parse(raw);
+          const cleanFields = {};
+          for (const [k, v] of Object.entries(parsedJson.fields || {})) {
+            if (typeof v === "string" && v.trim() && !/^(n\/a|none|null|unknown)$/i.test(v.trim())) {
+              cleanFields[k] = v.trim();
+            }
+          }
+          return {
+            ok: Object.keys(cleanFields).length > 0,
+            documentType: parsedJson.documentType || "other",
+            fileName: doc.fileName,
+            confidence: parsedJson.confidence || "medium",
+            fields: cleanFields,
+            ambiguousFields: Array.isArray(parsedJson.ambiguousFields) ? parsedJson.ambiguousFields : [],
+            provider: "gemini_direct_vision",
+          };
+        }
+      }
+    } catch {
+      // Fall back to local parser below
+    }
+  }
+
+  // 3. Deterministic offline text parser fallback
+  if (doc.textContent && doc.textContent.trim()) {
+    return parseDocumentTextLocallyExt(doc.textContent, doc.fileName);
+  }
+
+  return {
+    ok: false,
+    documentType: "other",
+    fileName: doc.fileName,
+    confidence: "low",
+    fields: {},
+    ambiguousFields: [],
+    needsVisionKey: Boolean(doc.base64Data),
+    notes:
+      "Uploaded image/PDF could not be read without an active Vision AI key. Configure GEMINI_API_KEY on the server or in Settings → AI Model Hub, or upload a text-selectable document.",
+  };
+}
+
+let pendingUploadedDocumentSummary = null;
+let pendingPreferredProvider = null;
+
+async function ask(
+  question,
+  intent,
+  history,
+  buddySlug,
+  customBuddyId,
+  preferredModel,
+  uploadedDocumentSummary,
+) {
+  const effectiveDocSummary = uploadedDocumentSummary || pendingUploadedDocumentSummary || undefined;
+  pendingUploadedDocumentSummary = null;
+  const requestedPreferredProvider = pendingPreferredProvider || undefined;
+  pendingPreferredProvider = null;
+
+  const { session } = await chrome.storage.local.get("session");
+  const { lastBase, userApiKey, customBaseUrl, selectedProvider } = await chrome.storage.local.get([
+    "lastBase",
+    "userApiKey",
+    "customBaseUrl",
+    "selectedProvider",
+  ]);
+  const effectivePreferredProvider = requestedPreferredProvider || selectedProvider || "gemini";
+
+  let apiBase = await resolveExtensionApiBase(session, lastBase);
 
   const tab = await activeTab();
   let snapshot = null;
   let snapshotError = null;
+  let screenshotBase64 = null;
 
-  if (tab?.id && tab.url && !RESTRICTED.test(tab.url)) {
-    try {
-      const [res] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ["snapshot.js"],
-      });
-      snapshot = res?.result ?? null;
-    } catch (err) {
-      snapshotError = err;
-      snapshot = null;
-    }
+  const snapRes = await getSnapshotForActiveTab();
+  if (snapRes.ok) {
+    snapshot = snapRes.snapshot;
+  } else {
+    snapshotError = snapRes.error;
+  }
+
+  // Visual fallback: capture visible tab screenshot if DOM access failed or yielded sparse content
+  const isDomSparse =
+    !snapshot ||
+    ((snapshot.controls?.length || 0) === 0 &&
+      (snapshot.forms?.length || 0) === 0 &&
+      (snapshot.text || "").trim().length < 80);
+  if ((isDomSparse || intent === "visual_inspect") && tab?.id && tab.url && !RESTRICTED.test(tab.url)) {
+    screenshotBase64 = await captureTabScreenshot(tab.windowId);
   }
 
   const headers = { "content-type": "application/json" };
@@ -808,9 +1214,12 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
     question,
     intent: intent || "answer",
     snapshot,
+    screenshotBase64: screenshotBase64 || undefined,
+    uploadedDocumentSummary: effectiveDocSummary || undefined,
     history: formattedHistory.length > 0 ? formattedHistory : undefined,
     buddySlug: buddySlug || undefined,
     customBuddyId: customBuddyId || undefined,
+    preferredProvider: effectivePreferredProvider || undefined,
     preferredModel: preferredModel || undefined,
     userApiKey: userApiKey || undefined,
     customBaseUrl: customBaseUrl || undefined,
@@ -922,9 +1331,11 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
         question,
         intent,
         snapshot,
+        screenshotBase64,
         buddySlug,
         customBuddyId,
         userApiKey,
+        preferredProvider: effectivePreferredProvider,
         history: formattedHistory,
       });
       if (autonomousResult) {
@@ -939,16 +1350,19 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
 
     if (res?.status === 401 && session) {
       await chrome.storage.local.remove("session");
-      return ask(question, intent, history, buddySlug, customBuddyId, preferredModel);
+      pendingPreferredProvider = effectivePreferredProvider;
+      return ask(question, intent, history, buddySlug, customBuddyId, preferredModel, uploadedDocumentSummary);
     }
     if (res && !res.ok && !body.reply?.answer) {
       const autonomousResult = await generateAutonomousCompanionReply({
         question,
         intent,
         snapshot,
+        screenshotBase64,
         buddySlug,
         customBuddyId,
         userApiKey,
+        preferredProvider: effectivePreferredProvider,
         history: formattedHistory,
       });
       if (autonomousResult) {
@@ -987,9 +1401,11 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
         question,
         intent,
         snapshot,
+        screenshotBase64,
         buddySlug,
         customBuddyId,
         userApiKey,
+        preferredProvider: effectivePreferredProvider,
         history: formattedHistory,
       });
       if (autonomousResult) {
@@ -1031,12 +1447,31 @@ async function ask(question, intent, history, buddySlug, customBuddyId, preferre
  * and explanatory callout card, and then retracts back smoothly into the shoulder.
  */
 function highlight(selector, title, description, options = {}) {
-  const el = document.querySelector(selector);
+  const queryDeepSelector = (sel, root = document) => {
+    if (!sel) return null;
+    try {
+      const direct = root.querySelector(sel);
+      if (direct) return direct;
+    } catch {
+      return null;
+    }
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (node.shadowRoot) {
+        const found = queryDeepSelector(sel, node.shadowRoot);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  const el = queryDeepSelector(selector);
   if (!el) return false;
   const ID = "ai-buddy-arm-overlay";
   document.getElementById(ID)?.remove();
 
-  // Scroll element into view smoothly if not already fully visible
+  // Scroll element into view smoothly if not already fully visible (NEVER clicks or modifies element)
   el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -1240,7 +1675,7 @@ function highlight(selector, title, description, options = {}) {
 
   frame = requestAnimationFrame(tick);
 
-  // Smooth retraction after 7.5 seconds
+  // Smooth retraction after 10 seconds (long enough to identify)
   setTimeout(() => {
     isRetracting = true;
     ring.classList.remove("pulse");
@@ -1249,7 +1684,7 @@ function highlight(selector, title, description, options = {}) {
       cancelAnimationFrame(frame);
       host.remove();
     }, 550);
-  }, 7500);
+  }, 10000);
 
   return true;
 }
@@ -1279,9 +1714,7 @@ async function smartFillForm(fields, options = {}) {
     return { ok: false, message: "Cannot access this browser page for form filling." };
   }
 
-  const [res] = await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: (fieldsToFill, opts) => {
+  const smartFillFrameFunc = async (fieldsToFill, opts) => {
       const results = {
         filled: [],
         preserved: [],
@@ -1290,7 +1723,8 @@ async function smartFillForm(fields, options = {}) {
         pendingSubmission: null,
       };
 
-      const SENSITIVE = /pass(?:word)?|pin|otp|cvv|cvc|secret|token|ssn|aadhaar|card|credit|debit/i;
+      const SENSITIVE =
+        /pass(?:word|wd)?|otp|\bpin\b|cvv|cvc|secret|token|ssn|aadhaar|credit.?card|debit.?card|card.?number/i;
       const SUBMIT_PATTERN =
         /submit|sign\s*in|log\s*in|proceed|confirm|continue|checkout|purchase|pay|place\s*order|delete|send/i;
 
@@ -1299,40 +1733,140 @@ async function smartFillForm(fields, options = {}) {
           .toLowerCase()
           .replace(/[^a-z0-9]/g, "");
 
-      // Collect all candidate form inputs
-      const elements = [
-        ...document.querySelectorAll('input, textarea, select, [contenteditable="true"]'),
-      ];
+      const queryAllDeep = (selector, root = document) => {
+        const out = [...root.querySelectorAll(selector)];
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let node;
+        while ((node = walker.nextNode())) {
+          if (node.shadowRoot) {
+            out.push(...queryAllDeep(selector, node.shadowRoot));
+          }
+        }
+        return out;
+      };
+
+      const queryDeepSelector = (sel, root = document) => {
+        if (!sel) return null;
+        try {
+          const direct = root.querySelector(sel);
+          if (direct) return direct;
+        } catch {
+          return null;
+        }
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let node;
+        while ((node = walker.nextNode())) {
+          if (node.shadowRoot) {
+            const found = queryDeepSelector(sel, node.shadowRoot);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+
+      const isContentEditableEl = (el) => {
+        if (!el) return false;
+        const ce = el.getAttribute?.("contenteditable");
+        return (
+          el.isContentEditable ||
+          ce === "true" ||
+          ce === "" ||
+          ce === "plaintext-only"
+        );
+      };
+
+      const isEditableEl = (el) => {
+        if (!el || el.nodeType !== 1) return false;
+        const tag = el.tagName;
+        return (
+          tag === "INPUT" ||
+          tag === "TEXTAREA" ||
+          tag === "SELECT" ||
+          isContentEditableEl(el) ||
+          ["textbox", "searchbox", "combobox"].includes(el.getAttribute("role"))
+        );
+      };
+
+      const resolveEditableTarget = (el) => {
+        if (!el) return null;
+        if (isEditableEl(el)) return el;
+        // Walk descendants (e.g., wrapper div around textarea/contenteditable like Google AI Studio prompt box)
+        const inner = el.querySelector?.(
+          'textarea, input:not([type="hidden"]), [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], [role="textbox"], [role="searchbox"], [role="combobox"], select',
+        );
+        if (inner) return inner;
+        // Walk parent / sibling placeholder overlays
+        const parentEditable = el.parentElement?.querySelector?.(
+          'textarea, input:not([type="hidden"]), [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], [role="textbox"], [role="searchbox"]',
+        );
+        if (parentEditable) return parentEditable;
+        const containerEditable = el
+          .closest?.("form, [role='group'], .input-group, .field, .prompt-box, .composer")
+          ?.querySelector?.(
+            'textarea, input:not([type="hidden"]), [contenteditable="true"], [contenteditable=""], [role="textbox"]',
+          );
+        return containerEditable || null;
+      };
+
+      // Collect all candidate form inputs (light DOM + open Shadow DOMs)
+      const elements = queryAllDeep(
+        'input, textarea, select, [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], [role="textbox"], [role="searchbox"], [role="combobox"], [role="checkbox"], [role="radio"]',
+      );
 
       const getFieldIdentifiers = (el) => {
-        const identifiers = [
+        const rawIdentifiers = [
           el.name,
           el.id,
           el.placeholder,
-          el.getAttribute("aria-label"),
-          el.getAttribute("data-testid"),
+          el.getAttribute?.("data-placeholder"),
+          el.getAttribute?.("aria-label"),
+          el.getAttribute?.("title"),
+          el.getAttribute?.("data-testid"),
+          el.getAttribute?.("autocomplete"),
         ].filter(Boolean);
+
         if (el.id) {
           try {
             const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-            if (l?.innerText) identifiers.push(l.innerText);
+            if (l?.innerText) rawIdentifiers.push(l.innerText);
           } catch {
             // ignore
           }
         }
-        const wrap = el.closest("label");
-        if (wrap?.innerText) identifiers.push(wrap.innerText);
-        const prev = el.previousElementSibling;
-        if (prev && (prev.tagName === "LABEL" || prev.tagName === "SPAN") && prev.innerText) {
-          identifiers.push(prev.innerText);
+        const wrap = el.closest?.("label");
+        if (wrap?.innerText) rawIdentifiers.push(wrap.innerText);
+
+        let prev = el.previousElementSibling;
+        if (
+          prev &&
+          (prev.tagName === "LABEL" || prev.tagName === "SPAN" || prev.tagName === "P") &&
+          prev.innerText
+        ) {
+          rawIdentifiers.push(prev.innerText);
         }
-        return identifiers.map(normalize);
+        let next = el.nextElementSibling;
+        if (next && (next.tagName === "LABEL" || next.tagName === "SPAN") && next.innerText) {
+          rawIdentifiers.push(next.innerText);
+        }
+        const parentText = el.parentElement?.getAttribute?.("aria-label");
+        if (parentText) rawIdentifiers.push(parentText);
+
+        return rawIdentifiers.map(normalize).filter((s) => s.length > 0);
       };
 
       const validateInteractability = (el) => {
-        if (!el.isConnected) return { ok: false, reason: "Element not attached to DOM." };
+        if (!el || !el.isConnected) return { ok: false, reason: "Element not attached to DOM." };
+        if (el.closest?.("#ai-buddy-arm-overlay")) return { ok: false, reason: "Overlay element." };
         if (el.type === "hidden") return { ok: false, reason: "Hidden input field." };
-        if (SENSITIVE.test(`${el.name} ${el.id} ${el.type}`)) {
+        const fieldDescriptor = `${el.name || ""} ${el.id || ""} ${el.type || ""} ${el.autocomplete || ""} ${el.placeholder || ""}`;
+        const isPasswordOrFinancial =
+          el.type === "password" ||
+          /pass(?:word|wd)?|otp|\bpin\b|cvv|cvc|secret|token|credit.?card|debit.?card|card.?number/i.test(fieldDescriptor);
+        const isSensitive =
+          el.type === "password" ||
+          SENSITIVE.test(fieldDescriptor);
+        const allowedByDoc = opts?.fromUploadedDocument && !isPasswordOrFinancial;
+        if (isSensitive && !opts?.explicitUserProvided && !allowedByDoc) {
           return { ok: false, reason: "Security block: password, OTP, or financial field." };
         }
         const style = window.getComputedStyle(el);
@@ -1350,18 +1884,22 @@ async function smartFillForm(fields, options = {}) {
         if (r.width <= 0 && r.height <= 0) {
           return { ok: false, reason: "Element has zero dimensions." };
         }
-        if (el.disabled) return { ok: false, reason: "Element is disabled." };
+        if (el.disabled || el.getAttribute?.("aria-disabled") === "true") {
+          return { ok: false, reason: "Element is disabled." };
+        }
         if (el.readOnly && el.type !== "checkbox" && el.type !== "radio") {
           return { ok: false, reason: "Element is read-only." };
         }
-        return { ok: true };
+        return { ok: true, isSensitive };
       };
 
       const successfullyFilled = [];
 
       const FIELD_SYNONYMS = {
         name: [
+          "naam",
           "fullname",
+          "yourname",
           "legalname",
           "username",
           "contactname",
@@ -1372,15 +1910,40 @@ async function smartFillForm(fields, options = {}) {
           "vendorname",
           "customername",
           "sellername",
+          "personname",
         ],
-        fullname: ["name", "legalname", "username", "firstname"],
+        naam: ["name", "fullname", "yourname", "firstname", "username", "customername"],
+        fullname: ["name", "naam", "legalname", "username", "firstname"],
         legalname: ["company", "businessname", "firmname", "organization", "companyname", "name", "registeredname"],
         tradename: ["businessname", "storename", "shopname", "brandname", "company", "displayname"],
         email: ["mail", "emailaddress", "contactemail", "emailid", "useremail"],
-        phone: ["mobile", "contact", "contactnumber", "tel", "phonenumber", "cellphone", "mobilenumber", "whatsapp"],
+        phone: [
+          "mobile",
+          "mobilenumber",
+          "phoneno",
+          "mobileno",
+          "contact",
+          "contactnumber",
+          "tel",
+          "phonenumber",
+          "cellphone",
+          "whatsapp",
+        ],
+        mobile: ["phone", "phonenumber", "mobilenumber", "tel", "contactnumber"],
+        mobilenumber: ["phone", "mobile", "phonenumber", "tel", "contactnumber"],
         gstin: ["gst", "taxid", "gstnumber", "gstinnumber", "tin", "gstinno"],
-        pan: ["pannumber", "pancard", "taxnumber"],
+        pan: ["pannumber", "pancard", "taxnumber", "panno"],
+        pannumber: ["pan", "pancard", "taxnumber", "panno"],
+        aadhaarnumber: ["aadhaar", "aadhar", "aadhaarno", "aadharno", "uidai", "uid", "documentnumber", "idnumber"],
+        aadhaar: ["aadhaarnumber", "aadhar", "aadhaarno", "uidai", "uid", "documentnumber", "idnumber"],
+        dob: ["dateofbirth", "birthdate", "birthday", "janamtithi"],
+        fathername: ["father", "fathersname", "guardian", "guardianname", "parentname", "so"],
+        gender: ["sex", "ling"],
+        invoicenumber: ["invoice", "invoiceno", "billno", "billnumber"],
+        orderid: ["order", "orderno", "ordernumber"],
+        trackingnumber: ["tracking", "trackingid", "awb", "awbnumber", "waybill"],
         address: [
+          "pata",
           "street",
           "line1",
           "addressline1",
@@ -1389,71 +1952,255 @@ async function smartFillForm(fields, options = {}) {
           "fulladdress",
           "pickupaddress",
           "location",
+          "permanentaddress",
+          "residentialaddress",
         ],
-        city: ["town", "district", "municipality"],
-        state: ["province", "region"],
-        pincode: ["zip", "zipcode", "postalcode", "pin", "postal_code"],
+        city: ["shehar", "town", "district", "municipality"],
+        state: ["rajya", "province", "region"],
+        country: ["desh", "nation"],
+        pincode: ["zip", "zipcode", "postalcode", "pin", "postal"],
+        search: ["query", "q", "searchbox", "find", "keyword", "searchinput"],
+        describe: ["prompt", "description", "details", "idea", "app", "message", "describeanapp"],
+        message: ["comment", "comments", "note", "notes", "msg", "description", "remarks", "body", "sandesh"],
+        comment: ["message", "note", "notes", "feedback", "review"],
+        subject: ["title", "topic", "heading"],
+        company: ["organization", "org", "firm", "business", "businessname", "legalname"],
+        password: ["pass", "passwd", "pwd"],
       };
 
-      for (const [key, val] of Object.entries(fieldsToFill || {})) {
-        if (val === undefined || val === null) continue;
-        const normKey = normalize(key);
-        const keyCandidates = [normKey, ...(FIELD_SYNONYMS[normKey] || [])];
+      const findCandidateForKey = (key, explicitSelector) => {
+        // 1. Explicit CSS selector override
+        if (explicitSelector) {
+          const selEl = resolveEditableTarget(queryDeepSelector(explicitSelector));
+          if (selEl && validateInteractability(selEl).ok) return selEl;
+        }
 
-        // Find candidate field on the page
-        const candidate = elements.find((el) => {
+        // 2. Current / highlighted / active / primary visible field
+        if (key === "__CURRENT__" || key === "__PRIMARY__") {
+          if (opts?.fallbackSelector) {
+            const hlEl = resolveEditableTarget(queryDeepSelector(opts.fallbackSelector));
+            if (hlEl && validateInteractability(hlEl).ok) return hlEl;
+          }
+          const active = resolveEditableTarget(document.activeElement);
+          if (active && active !== document.body && validateInteractability(active).ok) return active;
+          const visibleInputs = elements.filter((el) => validateInteractability(el).ok);
+          if (visibleInputs.length > 0) return visibleInputs[0];
+          return null;
+        }
+
+        const normKey = normalize(key);
+        if (!normKey) return null;
+        const keyCandidates = [normKey, ...(FIELD_SYNONYMS[normKey] || [])].filter((k) => k.length > 0);
+
+        let bestEl = null;
+        let bestScore = 0;
+
+        for (const el of elements) {
+          const check = validateInteractability(el);
+          if (!check.ok) continue;
+
           const ids = getFieldIdentifiers(el);
-          return ids.some((id) => keyCandidates.some((k) => id.includes(k) || k.includes(id)));
-        });
+          let score = 0;
+          for (const id of ids) {
+            if (!id) continue;
+            if (id === normKey) {
+              score = Math.max(score, 100);
+            } else if (keyCandidates.includes(id)) {
+              score = Math.max(score, 85);
+            } else {
+              for (const k of keyCandidates) {
+                if (id.includes(k) && k.length >= 3) {
+                  score = Math.max(score, k === normKey ? 70 : 55);
+                } else if (k.includes(id) && id.length >= 4) {
+                  score = Math.max(score, 40);
+                }
+              }
+            }
+          }
+          if (score > bestScore) {
+            bestScore = score;
+            bestEl = el;
+          }
+        }
+
+        // Fallback: look for visible text/placeholder overlay element matching the key and resolve to nearby editable
+        if (!bestEl) {
+          const overlays = queryAllDeep("div, span, label, p").filter((node) => {
+            if (node.closest?.("#ai-buddy-arm-overlay")) return false;
+            const txt = normalize(node.innerText || node.getAttribute?.("placeholder") || "");
+            return txt && txt.length < 80 && keyCandidates.some((k) => k.length >= 3 && txt.includes(k));
+          });
+          for (const ov of overlays) {
+            const resolved = resolveEditableTarget(ov);
+            if (resolved && validateInteractability(resolved).ok) {
+              return resolved;
+            }
+          }
+        }
+
+        return bestEl;
+      };
+
+      // Build ordered fill entries from either array (explicitPairs) or object (fieldsToFill)
+      const entries = Array.isArray(opts?.explicitPairs)
+        ? opts.explicitPairs.map((p) => ({
+            key: p.target || p.key || "__CURRENT__",
+            val: p.value,
+            overwrite: p.overwrite ?? opts?.overwrite,
+            selector: p.selector,
+          }))
+        : Object.entries(fieldsToFill || {}).map(([key, val]) => ({
+            key,
+            val,
+            overwrite: opts?.overwrite,
+            selector: opts?.selector,
+          }));
+
+      for (const entry of entries) {
+        const { key, val, overwrite, selector: entrySel } = entry;
+        if (val === undefined || val === null) continue;
+
+        const candidate = findCandidateForKey(key, entrySel);
 
         if (!candidate) {
           results.skipped.push({ key, value: val, reason: "Field not found on active page" });
           continue;
         }
 
-        // 1. Sequential interactability check
         const check = validateInteractability(candidate);
         if (!check.ok) {
           results.skipped.push({ key, value: val, reason: check.reason });
           continue;
         }
 
-        // 2. Preservation rule: if field already has a non-empty value and overwrite is not true, preserve it
-        const currentVal = candidate.value || candidate.innerText || "";
-        if (currentVal.trim() && !opts?.overwrite) {
+        const isCheckbox =
+          candidate.type === "checkbox" || candidate.getAttribute?.("role") === "checkbox" || candidate.getAttribute?.("role") === "switch";
+        const isRadio =
+          candidate.type === "radio" || candidate.getAttribute?.("role") === "radio";
+        const isCe = isContentEditableEl(candidate);
+
+        // Preservation rule: if field already has a non-empty value and overwrite is not true, preserve it
+        const currentVal = isCheckbox
+          ? candidate.checked || candidate.getAttribute?.("aria-checked") === "true"
+            ? "checked"
+            : ""
+          : isCe
+            ? candidate.innerText || candidate.textContent || ""
+            : candidate.value || "";
+
+        if (!isCheckbox && !isRadio && String(currentVal).trim() && !overwrite) {
           results.preserved.push({
             key,
-            field: candidate.name || candidate.id || key,
-            existingValue: currentVal,
+            field: candidate.name || candidate.id || candidate.placeholder || key,
+            existingValue: check.isSensitive ? "••••••" : String(currentVal).slice(0, 60),
             reason: "Preserved existing user input",
           });
           continue;
         }
 
-        // 3. Sequential timed application with prototype setter
         try {
           candidate.scrollIntoView({ behavior: "smooth", block: "center" });
           candidate.focus();
 
           const strVal = String(val);
+
           if (candidate.tagName === "SELECT") {
+            const normVal = normalize(strVal);
             const opt = [...candidate.options].find(
               (o) =>
-                normalize(o.value) === normKey ||
-                normalize(o.text) === normalize(strVal) ||
+                normalize(o.value) === normVal ||
+                normalize(o.text) === normVal ||
                 o.text.toLowerCase().includes(strVal.toLowerCase()),
             );
-            if (opt) {
-              candidate.value = opt.value;
+            const targetVal = opt ? opt.value : strVal;
+            const nativeSelectSetter = Object.getOwnPropertyDescriptor(
+              window.HTMLSelectElement.prototype,
+              "value",
+            )?.set;
+            if (nativeSelectSetter) {
+              nativeSelectSetter.call(candidate, targetVal);
             } else {
-              candidate.value = strVal;
+              candidate.value = targetVal;
             }
-          } else if (candidate.type === "checkbox") {
-            candidate.checked = Boolean(val);
-          } else if (candidate.type === "radio") {
-            candidate.checked = true;
-          } else if (candidate.getAttribute("contenteditable") === "true") {
-            candidate.innerText = strVal;
+            if (candidate._valueTracker) candidate._valueTracker.setValue("");
+            candidate.dispatchEvent(new Event("input", { bubbles: true }));
+            candidate.dispatchEvent(new Event("change", { bubbles: true }));
+          } else if (candidate.getAttribute?.("role") === "combobox" || candidate.getAttribute?.("role") === "listbox") {
+            candidate.click();
+            await new Promise((r) => setTimeout(r, 150));
+            const optionsList = queryAllDeep('[role="option"], [role="menuitem"], li');
+            const normVal = normalize(strVal);
+            const optEl = optionsList.find((o) => {
+              const t = normalize(o.innerText || o.textContent || "");
+              return t === normVal || t.includes(normVal);
+            });
+            if (optEl) {
+              optEl.click();
+            } else {
+              candidate.innerText = strVal;
+              candidate.dispatchEvent(new InputEvent("input", { bubbles: true, data: strVal }));
+            }
+          } else if (isCheckbox) {
+            const desired =
+              typeof val === "boolean"
+                ? val
+                : !/^(false|0|no|uncheck|off|nahi)$/i.test(strVal.trim());
+            const currentlyChecked =
+              candidate.type === "checkbox"
+                ? candidate.checked
+                : candidate.getAttribute?.("aria-checked") === "true";
+            if (currentlyChecked !== desired) {
+              candidate.click();
+            }
+            if (candidate.type === "checkbox" && candidate.checked !== desired) {
+              candidate.checked = desired;
+              candidate.dispatchEvent(new Event("input", { bubbles: true }));
+              candidate.dispatchEvent(new Event("change", { bubbles: true }));
+            }
+          } else if (isRadio) {
+            if (!candidate.checked) {
+              candidate.click();
+            }
+            if (candidate.type === "radio" && !candidate.checked) {
+              candidate.checked = true;
+              candidate.dispatchEvent(new Event("input", { bubbles: true }));
+              candidate.dispatchEvent(new Event("change", { bubbles: true }));
+            }
+          } else if (isCe) {
+            // Contenteditable editors (React, Lexical, ProseMirror, Angular, Google AI Studio)
+            try {
+              const selObj = window.getSelection();
+              const range = document.createRange();
+              range.selectNodeContents(candidate);
+              selObj?.removeAllRanges();
+              selObj?.addRange(range);
+              document.execCommand("selectAll", false, null);
+              const inserted = document.execCommand("insertText", false, strVal);
+              if (!inserted || !(candidate.innerText || candidate.textContent || "").includes(strVal)) {
+                candidate.innerText = strVal;
+              }
+            } catch {
+              candidate.innerText = strVal;
+            }
+            try {
+              candidate.dispatchEvent(
+                new InputEvent("beforeinput", {
+                  bubbles: true,
+                  cancelable: true,
+                  inputType: "insertText",
+                  data: strVal,
+                }),
+              );
+            } catch {}
+            candidate.dispatchEvent(
+              new InputEvent("input", {
+                bubbles: true,
+                cancelable: true,
+                inputType: "insertText",
+                data: strVal,
+              }),
+            );
+            candidate.dispatchEvent(new Event("change", { bubbles: true }));
           } else {
             const proto =
               candidate.tagName === "TEXTAREA"
@@ -1468,13 +2215,20 @@ async function smartFillForm(fields, options = {}) {
             if (candidate._valueTracker) {
               candidate._valueTracker.setValue("");
             }
+            candidate.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+            candidate.dispatchEvent(new Event("change", { bubbles: true }));
+            try {
+              candidate.dispatchEvent(
+                new InputEvent("input", {
+                  bubbles: true,
+                  cancelable: true,
+                  inputType: "insertText",
+                  data: strVal,
+                }),
+              );
+            } catch {}
+            candidate.dispatchEvent(new Event("blur", { bubbles: true }));
           }
-
-          candidate.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
-          candidate.dispatchEvent(new Event("change", { bubbles: true }));
-          candidate.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, data: strVal }));
-          candidate.blur();
-          candidate.dispatchEvent(new Event("blur", { bubbles: true }));
 
           // Visual green feedback outline on filled field
           const prevOutline = candidate.style.outline;
@@ -1483,17 +2237,53 @@ async function smartFillForm(fields, options = {}) {
             candidate.style.outline = prevOutline;
           }, 3000);
 
-          // Value verification check
-          const verifiedValue = candidate.value || candidate.innerText || "";
-          const verified =
-            candidate.type === "checkbox"
-              ? candidate.checked === Boolean(val)
-              : verifiedValue.includes(strVal) || verifiedValue === strVal;
+          // Post-action verification check
+          let verified = false;
+          if (isCheckbox) {
+            const desired =
+              typeof val === "boolean"
+                ? val
+                : !/^(false|0|no|uncheck|off|nahi)$/i.test(strVal.trim());
+            verified =
+              candidate.type === "checkbox"
+                ? candidate.checked === desired
+                : candidate.getAttribute?.("aria-checked") === String(desired);
+          } else if (isRadio) {
+            verified =
+              candidate.type === "radio"
+                ? candidate.checked === true
+                : candidate.getAttribute?.("aria-checked") === "true";
+          } else if (candidate.tagName === "SELECT") {
+            const selText = candidate.options?.[candidate.selectedIndex]?.text || "";
+            verified =
+              normalize(candidate.value) === normalize(strVal) ||
+              normalize(selText).includes(normalize(strVal)) ||
+              candidate.value === strVal;
+          } else {
+            const verifiedValue = isCe
+              ? candidate.innerText || candidate.textContent || ""
+              : candidate.value || "";
+            verified =
+              verifiedValue === strVal ||
+              verifiedValue.includes(strVal) ||
+              normalize(verifiedValue).includes(normalize(strVal));
+          }
+
+          const maskedVal = check.isSensitive
+            ? /aadhaar|aadhar/i.test(`${key} ${candidate.name || ""} ${candidate.id || ""}`) && strVal.replace(/\D/g, "").length >= 4
+              ? `XXXX-XXXX-${strVal.replace(/\D/g, "").slice(-4)}`
+              : "••••••"
+            : strVal;
 
           results.filled.push({
             key,
-            field: candidate.name || candidate.id || key,
-            value: strVal,
+            field:
+              candidate.name ||
+              candidate.id ||
+              candidate.placeholder ||
+              candidate.getAttribute?.("aria-label") ||
+              key,
+            value: maskedVal,
             verified,
           });
           successfullyFilled.push(candidate);
@@ -1505,7 +2295,7 @@ async function smartFillForm(fields, options = {}) {
       // 4. Detect Submit Trigger for explicit confirmation gate
       if (successfullyFilled.length > 0) {
         for (const el of successfullyFilled) {
-          const form = el.closest("form");
+          const form = el.closest?.("form");
           const btn = form
             ? form.querySelector(
                 'button[type="submit"], input[type="submit"], button:not([type="button"])',
@@ -1514,12 +2304,12 @@ async function smartFillForm(fields, options = {}) {
           if (btn) {
             results.pendingSubmission = {
               submitButtonSelector: btn.id
-                ? `#${btn.id}`
+                ? `#${CSS.escape(btn.id)}`
                 : form?.id
-                  ? `#${form.id} button[type="submit"]`
+                  ? `#${CSS.escape(form.id)} button[type="submit"]`
                   : 'button[type="submit"]',
               submitButtonText: btn.innerText || btn.value || "Submit Form",
-              formSelector: form?.id ? `#${form.id}` : undefined,
+              formSelector: form?.id ? `#${CSS.escape(form.id)}` : undefined,
             };
             break;
           }
@@ -1531,7 +2321,7 @@ async function smartFillForm(fields, options = {}) {
             const text = btn.innerText || btn.value || "";
             if (SUBMIT_PATTERN.test(text) || btn.type === "submit") {
               results.pendingSubmission = {
-                submitButtonSelector: btn.id ? `#${btn.id}` : undefined,
+                submitButtonSelector: btn.id ? `#${CSS.escape(btn.id)}` : undefined,
                 submitButtonText: text.trim() || "Submit",
               };
               break;
@@ -1541,11 +2331,41 @@ async function smartFillForm(fields, options = {}) {
       }
 
       return { ok: true, results };
-    },
+  };
+
+  const [res] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: smartFillFrameFunc,
     args: [fields, options],
   });
 
-  return res?.result || { ok: false, message: "Form filling execution failed." };
+  const mainResult = res?.result || { ok: false, message: "Form filling execution failed." };
+
+  // Iframe fallback: if top frame filled/preserved nothing, check subframes
+  if (
+    mainResult.ok &&
+    (mainResult.results?.filled?.length || 0) === 0 &&
+    (mainResult.results?.preserved?.length || 0) === 0
+  ) {
+    try {
+      const frameRuns = await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        func: smartFillFrameFunc,
+        args: [fields, options],
+      });
+      const subMatch = frameRuns.find(
+        (r) =>
+          r.frameId !== 0 &&
+          r.result?.ok &&
+          ((r.result.results?.filled?.length || 0) > 0 || (r.result.results?.preserved?.length || 0) > 0),
+      );
+      if (subMatch?.result) return subMatch.result;
+    } catch {
+      // Ignore inaccessible cross-origin subframes
+    }
+  }
+
+  return mainResult;
 }
 
 async function findContentOnPage(query, options = {}) {
@@ -1554,16 +2374,25 @@ async function findContentOnPage(query, options = {}) {
     return { ok: false, message: "Cannot search content on this browser page." };
   }
 
-  const [res] = await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: (searchQuery, opts) => {
+  const findFrameFunc = (searchQuery, opts) => {
       if (!searchQuery || !searchQuery.trim()) {
         return { ok: false, message: "Empty search query provided." };
       }
       const q = searchQuery.trim().toLowerCase();
       const normalize = (t) => (t || "").replace(/\s+/g, " ").trim();
 
-      // CSS path helper
+      const queryAllDeep = (selector, root = document) => {
+        const out = [...root.querySelectorAll(selector)];
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let node;
+        while ((node = walker.nextNode())) {
+          if (node.shadowRoot) {
+            out.push(...queryAllDeep(selector, node.shadowRoot));
+          }
+        }
+        return out;
+      };
+
       const getSelector = (el) => {
         if (el.id && document.querySelectorAll(`#${CSS.escape(el.id)}`).length === 1) {
           return `#${CSS.escape(el.id)}`;
@@ -1601,26 +2430,49 @@ async function findContentOnPage(query, options = {}) {
         );
       };
 
-      // Search all text-bearing and interactive elements, avoiding scripts, styles, and shadow hosts
-      const STOPWORDS = ["tab", "button", "link", "section", "menu", "option", "icon", "bar", "the", "a", "an", "khaa", "kha", "hai", "hain", "kahan", "kidhar", "kaha"];
+      const getElementSearchText = (el) => {
+        const parts = [
+          el.innerText,
+          el.textContent,
+          el.getAttribute?.("placeholder"),
+          el.getAttribute?.("data-placeholder"),
+          el.getAttribute?.("aria-label"),
+          el.getAttribute?.("title"),
+          el.getAttribute?.("name"),
+          el.value,
+        ];
+        if (el.id) {
+          try {
+            const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+            if (l?.innerText) parts.push(l.innerText);
+          } catch {}
+        }
+        return normalize(parts.filter(Boolean).join(" ")).toLowerCase();
+      };
+
+      const STOPWORDS = [
+        "tab", "button", "link", "section", "menu", "option", "icon", "bar", "field", "box", "input",
+        "the", "a", "an", "this", "that", "par", "pe", "mein", "me", "ko", "ka", "ki", "ke",
+        "khaa", "kha", "hai", "hain", "kahan", "kidhar", "kaha", "buddy", "point", "highlight", "karo",
+      ];
       const rawTokens = q
         .replace(/[^a-z0-9\s]/g, " ")
         .split(/\s+/)
         .filter((t) => t.length > 1 && !STOPWORDS.includes(t));
 
-      const candidates = [
-        ...document.querySelectorAll(
-          "p, span, h1, h2, h3, h4, h5, h6, li, td, th, a, button, [role=button], [role=tab], [role=cell], [role=row], label, div.badge, div.tag, div.chip",
-        ),
-      ].filter((el) => {
+      const effectiveQuery = rawTokens.length > 0 ? rawTokens.join(" ") : q;
+
+      const candidates = queryAllDeep(
+        "input, textarea, select, [contenteditable='true'], [contenteditable=''], [role=textbox], [role=searchbox], [role=combobox], [role=checkbox], [role=radio], button, a, [role=button], [role=tab], [role=link], label, p, span, h1, h2, h3, h4, h5, h6, li, td, th, [role=cell], [role=row], div.badge, div.tag, div.chip, div[aria-label], div[data-placeholder]",
+      ).filter((el) => {
         if (!isVisible(el)) return false;
-        if (el.closest("#ai-buddy-arm-overlay")) return false;
-        const text = normalize(el.innerText || el.textContent).toLowerCase();
+        if (el.closest?.("#ai-buddy-arm-overlay")) return false;
+        const text = getElementSearchText(el);
         if (!text) return false;
-        if (text.includes(q)) return true;
+        if (text.includes(effectiveQuery) || text.includes(q)) return true;
         if (rawTokens.length > 0) {
           return rawTokens.some((tok) => {
-            if (text.includes(tok) || tok.includes(text)) return true;
+            if (text.includes(tok)) return true;
             if (tok.endsWith("s") && text.includes(tok.slice(0, -1))) return true;
             if (!tok.endsWith("s") && text.includes(`${tok}s`)) return true;
             return false;
@@ -1629,32 +2481,49 @@ async function findContentOnPage(query, options = {}) {
         return false;
       });
 
-      // Filter out ancestor containers whose children already matched (keep the most specific leaf node)
+      // Keep specific interactive/form/leaf nodes instead of huge ancestor wrappers
       const leafCandidates = candidates.filter((el) => {
-        const hasMatchingChild = candidates.some((other) => other !== el && el.contains(other));
-        return (
-          !hasMatchingChild ||
-          el.children.length === 0 ||
+        const isFormOrCtrl =
+          el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.tagName === "SELECT" ||
           el.tagName === "BUTTON" ||
           el.tagName === "A" ||
-          el.getAttribute("role") === "tab" ||
-          el.getAttribute("role") === "button"
-        );
+          el.getAttribute?.("role") === "tab" ||
+          el.getAttribute?.("role") === "button" ||
+          el.getAttribute?.("role") === "textbox";
+        if (isFormOrCtrl) return true;
+        const hasMatchingChild = candidates.some((other) => other !== el && el.contains(other));
+        return !hasMatchingChild || el.children.length === 0;
       });
 
-      // Prioritize interactive controls and close keyword matches
-      leafCandidates.sort((a, b) => {
-        const textA = normalize(a.innerText || a.textContent).toLowerCase();
-        const textB = normalize(b.innerText || b.textContent).toLowerCase();
-        const isClickA = a.tagName === "BUTTON" || a.tagName === "A" || a.getAttribute("role") === "tab" || a.getAttribute("role") === "button" ? 1 : 0;
-        const isClickB = b.tagName === "BUTTON" || b.tagName === "A" || b.getAttribute("role") === "tab" || b.getAttribute("role") === "button" ? 1 : 0;
-        if (isClickA !== isClickB) return isClickB - isClickA;
-        return textA.length - textB.length;
-      });
+      // Score and sort candidates
+      const scoreEl = (el) => {
+        const text = getElementSearchText(el);
+        let s = 0;
+        if (text === effectiveQuery || text === q) s += 100;
+        if (text.startsWith(effectiveQuery)) s += 30;
+        for (const tok of rawTokens) {
+          if (text.includes(tok)) s += 15;
+        }
+        if (["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A"].includes(el.tagName)) s += 20;
+        if (["textbox", "button", "tab", "combobox"].includes(el.getAttribute?.("role"))) s += 15;
+        s -= Math.min(40, Math.floor(text.length / 20));
+        return s;
+      };
+
+      leafCandidates.sort((a, b) => scoreEl(b) - scoreEl(a));
 
       const matches = leafCandidates.slice(0, 30).map((el, idx) => {
-        const fullText = normalize(el.innerText || el.textContent || "");
-        let matchIdx = fullText.toLowerCase().indexOf(q);
+        const fullText = normalize(
+          el.innerText ||
+            el.getAttribute?.("placeholder") ||
+            el.getAttribute?.("aria-label") ||
+            el.name ||
+            el.textContent ||
+            "",
+        );
+        let matchIdx = fullText.toLowerCase().indexOf(effectiveQuery);
         if (matchIdx === -1 && rawTokens.length > 0) {
           for (const tok of rawTokens) {
             matchIdx = fullText.toLowerCase().indexOf(tok);
@@ -1663,7 +2532,7 @@ async function findContentOnPage(query, options = {}) {
         }
         if (matchIdx === -1) matchIdx = 0;
         const start = Math.max(0, matchIdx - 30);
-        const end = Math.min(fullText.length, matchIdx + q.length + 30);
+        const end = Math.min(fullText.length, matchIdx + effectiveQuery.length + 30);
         const snippet =
           (start > 0 ? "…" : "") + fullText.slice(start, end) + (end < fullText.length ? "…" : "");
 
@@ -1676,8 +2545,8 @@ async function findContentOnPage(query, options = {}) {
           isClickable:
             el.tagName === "BUTTON" ||
             el.tagName === "A" ||
-            el.getAttribute("role") === "button" ||
-            Boolean(el.closest("button, a")),
+            el.getAttribute?.("role") === "button" ||
+            Boolean(el.closest?.("button, a")),
         };
       });
 
@@ -1691,7 +2560,6 @@ async function findContentOnPage(query, options = {}) {
         };
       }
 
-      // If requested to scroll to first match
       let scrolled = false;
       const targetIndex = typeof opts?.targetIndex === "number" ? opts.targetIndex : 0;
       const targetMatch = matches[targetIndex] || matches[0];
@@ -1699,9 +2567,7 @@ async function findContentOnPage(query, options = {}) {
       if (opts?.scroll !== false && leafCandidates[targetIndex || 0]) {
         const targetEl = leafCandidates[targetIndex || 0];
 
-        // Check if target is inside a scrollable container
         let parent = targetEl.parentElement;
-        let scrolledParent = false;
         while (parent && parent !== document.body && parent !== document.documentElement) {
           const cs = window.getComputedStyle(parent);
           if (cs.overflowY === "auto" || cs.overflowY === "scroll") {
@@ -1712,7 +2578,6 @@ async function findContentOnPage(query, options = {}) {
                 top: elRect.top - pRect.top - parent.clientHeight / 2 + elRect.height / 2,
                 behavior: "smooth",
               });
-              scrolledParent = true;
               break;
             }
           }
@@ -1733,20 +2598,54 @@ async function findContentOnPage(query, options = {}) {
         scrolled,
         message: `Found ${matches.length} match${matches.length > 1 ? "es" : ""} for "${searchQuery}".`,
       };
-    },
+  };
+
+  const [res] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: findFrameFunc,
     args: [query, options],
   });
 
-  const result = res?.result || { ok: false, message: "Search execution failed." };
+  let result = res?.result || { ok: false, message: "Search execution failed." };
+  let targetFrameId = 0;
 
-  // If highlight requested and we found a match, trigger Lamba Haath arm!
+  if (result.ok && result.totalMatches === 0) {
+    try {
+      const frameRuns = await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        func: findFrameFunc,
+        args: [query, options],
+      });
+      const subHit = frameRuns.find((r) => r.frameId !== 0 && r.result?.ok && r.result.totalMatches > 0);
+      if (subHit?.result) {
+        result = subHit.result;
+        targetFrameId = subHit.frameId;
+      }
+    } catch {}
+  }
+
   if (result.ok && result.firstSelector && options?.highlight !== false) {
-    await highlightElement(
-      result.firstSelector,
-      `Match: ${query}`,
-      result.matches?.[0]?.textSnippet || `Found ${result.totalMatches} match(es) for "${query}".`,
-      options?.buddyVisual,
-    );
+    if (targetFrameId === 0) {
+      await highlightElement(
+        result.firstSelector,
+        options?.title || `Pointing: ${query}`,
+        result.matches?.[0]?.textSnippet || `Found ${result.totalMatches} match(es) for "${query}".`,
+        options?.buddyVisual,
+      );
+    } else {
+      await chrome.scripting
+        .executeScript({
+          target: { tabId: tab.id, frameIds: [targetFrameId] },
+          func: highlight,
+          args: [
+            result.firstSelector,
+            options?.title || `Pointing: ${query}`,
+            result.matches?.[0]?.textSnippet || `Found ${result.totalMatches} match(es) for "${query}".`,
+            options?.buddyVisual || {},
+          ],
+        })
+        .catch(() => {});
+    }
   }
 
   return result;
@@ -1758,57 +2657,163 @@ async function executeAction(action, selector, value, options = {}) {
     return { ok: false, message: "Cannot act on this restricted browser page." };
   }
 
-  const [res] = await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: (act, sel, val, opts) => {
+  const executeFrameFunc = async (act, sel, val, opts) => {
       const normalize = (t) => (t || "").replace(/\s+/g, " ").trim();
-      const SENSITIVE = /pass(?:word)?|pin|otp|cvv|cvc|card|secret|token|ssn|aadhaar/i;
+      const SENSITIVE =
+        /pass(?:word|wd)?|otp|\bpin\b|cvv|cvc|secret|token|ssn|aadhaar|credit.?card|debit.?card|card.?number/i;
 
-      // --- 1. SCROLL ACTION ---
-      if (act === "scroll" || act === "scroll_page") {
-        const direction = String(val || opts?.direction || "down").toLowerCase();
+      const queryAllDeep = (selectorStr, root = document) => {
+        const out = [...root.querySelectorAll(selectorStr)];
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let node;
+        while ((node = walker.nextNode())) {
+          if (node.shadowRoot) {
+            out.push(...queryAllDeep(selectorStr, node.shadowRoot));
+          }
+        }
+        return out;
+      };
+
+      const queryDeepSelector = (selectorStr, root = document) => {
+        if (!selectorStr || selectorStr === "window" || selectorStr === "document") return null;
+        try {
+          const direct = root.querySelector(selectorStr);
+          if (direct) return direct;
+        } catch {
+          return null;
+        }
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let node;
+        while ((node = walker.nextNode())) {
+          if (node.shadowRoot) {
+            const found = queryDeepSelector(selectorStr, node.shadowRoot);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+
+      const isVisible = (el) => {
+        if (!el || el.nodeType !== 1) return false;
+        if (el.closest?.("#ai-buddy-arm-overlay")) return false;
+        const r = el.getBoundingClientRect();
+        const s = window.getComputedStyle(el);
+        return (
+          (r.width > 0 || r.height > 0 || el.getClientRects().length > 0) &&
+          s.visibility !== "hidden" &&
+          s.display !== "none" &&
+          parseFloat(s.opacity || "1") > 0
+        );
+      };
+
+      // --- 1. SCROLL ACTION (UP, DOWN, LEFT, RIGHT, TOP, BOTTOM, TO_ELEMENT) ---
+      if (
+        act === "scroll" ||
+        act === "scroll_page" ||
+        act === "scroll_down" ||
+        act === "scroll_up" ||
+        act === "scroll_left" ||
+        act === "scroll_right"
+      ) {
+        let direction = String(val || opts?.direction || "down").toLowerCase();
+        if (act === "scroll_down") direction = "down";
+        else if (act === "scroll_up") direction = "up";
+        else if (act === "scroll_left") direction = "left";
+        else if (act === "scroll_right") direction = "right";
+
         const amount = typeof opts?.amount === "number" ? opts.amount : 450;
-        let targetEl = sel ? document.querySelector(sel) : null;
-        let container = opts?.containerSelector
-          ? document.querySelector(opts.containerSelector)
-          : null;
+        let targetEl = sel && sel !== "window" && sel !== "document" ? queryDeepSelector(sel) : null;
 
-        // Auto-detect container if selector points to inside a scrollable container
-        if (targetEl && !container) {
-          let p = targetEl.parentElement;
-          while (p && p !== document.body && p !== document.documentElement) {
-            const cs = window.getComputedStyle(p);
-            if (cs.overflowY === "auto" || cs.overflowY === "scroll") {
-              if (p.scrollHeight > p.clientHeight + 20) {
-                container = p;
-                break;
-              }
-            }
-            p = p.parentElement;
+        // If direction === "to_element" or opts.targetText given, locate target section/element
+        if (!targetEl && (direction === "to_element" || opts?.targetText)) {
+          const qText = normalize(opts?.targetText || val || "").toLowerCase();
+          if (qText) {
+            const candidates = queryAllDeep(
+              "h1, h2, h3, h4, h5, h6, section, footer, header, nav, main, form, button, a, input, textarea, select, label, p, span, div",
+            ).filter(isVisible);
+            targetEl =
+              candidates.find((c) => {
+                const t = normalize(
+                  c.innerText || c.getAttribute?.("aria-label") || c.getAttribute?.("placeholder") || c.id || "",
+                ).toLowerCase();
+                return t === qText || (t.includes(qText) && t.length < 120);
+              }) || null;
+          }
+          if (!targetEl && direction === "to_element") {
+            return {
+              ok: false,
+              action: "scroll",
+              message: `Could not find "${opts?.targetText || val}" on this page to scroll to.`,
+            };
           }
         }
 
-        // If target element specified, scroll to center it
         if (targetEl) {
+          const beforeTop = targetEl.getBoundingClientRect().top;
           targetEl.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+          await new Promise((r) => setTimeout(r, 320));
+          const afterTop = targetEl.getBoundingClientRect().top;
           return {
             ok: true,
             action: "scroll",
-            message: `Scrolled to target element (${targetEl.tagName.toLowerCase()}) successfully.`,
+            direction: "to_element",
+            movedPx: Math.round(Math.abs(afterTop - beforeTop)),
+            message: `Scrolled to "${normalize(targetEl.innerText || targetEl.tagName).slice(0, 40)}" successfully.`,
           };
         }
 
-        // Scrolling inside container vs window
-        if (container) {
-          if (direction === "top") {
-            container.scrollTo({ top: 0, behavior: "smooth" });
-          } else if (direction === "bottom") {
-            container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
-          } else if (direction === "up") {
-            container.scrollBy({ top: -amount, behavior: "smooth" });
-          } else {
-            container.scrollBy({ top: amount, behavior: "smooth" });
+        let container = opts?.containerSelector ? queryDeepSelector(opts.containerSelector) : null;
+
+        // Auto-detect primary scrollable container in SPAs when window itself is not scrollable
+        if (!container) {
+          const docScrollableY =
+            (document.documentElement.scrollHeight || 0) > window.innerHeight + 20;
+          const docScrollableX =
+            (document.documentElement.scrollWidth || 0) > window.innerWidth + 20;
+          const wantHoriz = direction === "left" || direction === "right";
+
+          if ((wantHoriz && !docScrollableX) || (!wantHoriz && !docScrollableY)) {
+            const scrollCands = queryAllDeep(
+              "main, [role='main'], div, section, ul, table, tbody",
+            ).filter((el) => {
+              if (!isVisible(el)) return false;
+              const cs = window.getComputedStyle(el);
+              if (wantHoriz) {
+                return (
+                  (cs.overflowX === "auto" || cs.overflowX === "scroll") &&
+                  el.scrollWidth > el.clientWidth + 20
+                );
+              }
+              return (
+                (cs.overflowY === "auto" || cs.overflowY === "scroll") &&
+                el.scrollHeight > el.clientHeight + 20
+              );
+            });
+            scrollCands.sort(
+              (a, b) =>
+                b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight,
+            );
+            if (scrollCands[0]) container = scrollCands[0];
           }
+        }
+
+        if (container) {
+          const beforeY = container.scrollTop;
+          const beforeX = container.scrollLeft;
+          if (direction === "top") container.scrollTo({ top: 0, behavior: "smooth" });
+          else if (direction === "bottom") container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+          else if (direction === "up") container.scrollBy({ top: -amount, behavior: "smooth" });
+          else if (direction === "left") container.scrollBy({ left: -amount, behavior: "smooth" });
+          else if (direction === "right") container.scrollBy({ left: amount, behavior: "smooth" });
+          else container.scrollBy({ top: amount, behavior: "smooth" });
+
+          await new Promise((r) => setTimeout(r, 320));
+          const movedPx = Math.round(
+            Math.max(
+              Math.abs(container.scrollTop - beforeY),
+              Math.abs(container.scrollLeft - beforeX),
+            ),
+          );
           const hasMore =
             container.scrollHeight > container.scrollTop + container.clientHeight + 20;
           return {
@@ -1816,35 +2821,46 @@ async function executeAction(action, selector, value, options = {}) {
             action: "scroll",
             container: container.tagName.toLowerCase(),
             direction,
+            movedPx,
             hasMoreBelow: hasMore,
-            message: `Scrolled container (${container.tagName.toLowerCase()}) ${direction}. ${hasMore ? "More items remain below." : "Reached end of container."}`,
+            message: `Scrolled container (${container.tagName.toLowerCase()}) ${direction}${movedPx ? ` (${movedPx}px)` : ""}.`,
           };
         }
 
         // Window scroll
-        if (direction === "top") {
-          window.scrollTo({ top: 0, behavior: "smooth" });
-        } else if (direction === "bottom") {
-          window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
-        } else if (direction === "up") {
-          window.scrollBy({ top: -amount, behavior: "smooth" });
-        } else {
-          window.scrollBy({ top: amount, behavior: "smooth" });
-        }
+        const beforeY = window.scrollY || document.documentElement.scrollTop || 0;
+        const beforeX = window.scrollX || document.documentElement.scrollLeft || 0;
+        if (direction === "top") window.scrollTo({ top: 0, behavior: "smooth" });
+        else if (direction === "bottom") window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+        else if (direction === "up") window.scrollBy({ top: -amount, behavior: "smooth" });
+        else if (direction === "left") window.scrollBy({ left: -amount, behavior: "smooth" });
+        else if (direction === "right") window.scrollBy({ left: amount, behavior: "smooth" });
+        else window.scrollBy({ top: amount, behavior: "smooth" });
+
+        await new Promise((r) => setTimeout(r, 320));
 
         const scrollH = document.documentElement.scrollHeight || document.body.scrollHeight || 0;
         const scrollT = window.scrollY || document.documentElement.scrollTop || 0;
+        const scrollL = window.scrollX || document.documentElement.scrollLeft || 0;
         const clientH = window.innerHeight || document.documentElement.clientHeight || 0;
+        const movedPx = Math.round(Math.max(Math.abs(scrollT - beforeY), Math.abs(scrollL - beforeX)));
         const hasMore = scrollH > scrollT + clientH + 40;
 
         return {
           ok: true,
           action: "scroll",
           direction,
+          movedPx,
           scrollPercent:
             scrollH > clientH ? Math.round((scrollT / (scrollH - clientH)) * 100) : 100,
           hasMoreBelow: hasMore,
-          message: `Scrolled webpage ${direction}. ${hasMore ? "More content exists below." : "Reached bottom of page."}`,
+          message: `Scrolled webpage ${direction}${movedPx > 0 ? ` (${movedPx}px)` : ""}. ${
+            direction === "left" || direction === "right"
+              ? ""
+              : hasMore
+                ? "More content exists below."
+                : "Reached end of scroll range."
+          }`.trim(),
         };
       }
 
@@ -1858,18 +2874,33 @@ async function executeAction(action, selector, value, options = {}) {
         act === "submit"
       ) {
         let el = null;
-        if (sel) {
-          try {
-            el = document.querySelector(sel);
-          } catch {
-            // sel was text, label, or invalid CSS selector
+
+        if ((sel === "__CURRENT__" || val === "__CURRENT__") && opts?.fallbackSelector) {
+          el = queryDeepSelector(opts.fallbackSelector);
+        }
+
+        if (!el && sel && sel !== "__CURRENT__") {
+          el = queryDeepSelector(sel);
+        }
+
+        if (!el && (val === "__CURRENT__" || opts?.text === "__CURRENT__")) {
+          if (opts?.fallbackSelector) {
+            el = queryDeepSelector(opts.fallbackSelector);
+          } else if (
+            document.activeElement &&
+            document.activeElement !== document.body &&
+            isVisible(document.activeElement)
+          ) {
+            el = document.activeElement;
           }
         }
 
-        // If no selector or element not found, resolve button/link by text content or action
-        if (!el && (val || opts?.text || sel)) {
+        if (!el && (val || opts?.text || sel) && val !== "__CURRENT__") {
           const rawTarget = String(val || opts?.text || sel).trim().toLowerCase();
-          const cleanTarget = rawTarget.replace(/^(?:the|a|an|ye|yeh|wo|woh|is|this)\s+/i, "").trim();
+          const cleanTarget = rawTarget
+            .replace(/^(?:the|a|an|ye|yeh|wo|woh|is|this|us|par)\s+/i, "")
+            .replace(/\s+(?:button|btn|tab|link|icon|menu|bar|option|checkbox|radio|switch)$/i, "")
+            .trim();
 
           const CLICK_SYNONYMS = {
             login: ["login", "log in", "signin", "sign in", "sign-in", "log-in", "connect"],
@@ -1881,100 +2912,145 @@ async function executeAction(action, selector, value, options = {}) {
             orders: ["orders", "my orders", "order history", "pending orders", "order"],
             search: ["search", "find", "go", "query"],
             next: ["next", "continue", "forward", "proceed"],
-            close: ["close", "dismiss", "cancel", "x", "exit"],
+            close: ["close", "dismiss", "cancel", "exit"],
             cancel: ["cancel", "dismiss", "close", "back"],
           };
 
-          const targetTerms = [cleanTarget, rawTarget];
+          const targetTerms = [cleanTarget, rawTarget].filter((t) => t && t.length > 0);
           for (const [key, syns] of Object.entries(CLICK_SYNONYMS)) {
-            if (cleanTarget === key || cleanTarget.includes(key) || syns.some((s) => cleanTarget.includes(s))) {
+            if (
+              cleanTarget === key ||
+              cleanTarget.includes(key) ||
+              syns.some((s) => cleanTarget.includes(s))
+            ) {
               targetTerms.push(...syns);
             }
           }
 
-          const clickables = [
-            ...document.querySelectorAll(
-              'button, a, [role="button"], input[type="submit"], input[type="button"], summary, [role="tab"], [role="menuitem"], div[role="button"], span[role="button"], [tabindex="0"]',
-            ),
-          ];
+          const clickables = queryAllDeep(
+            'button, a, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], [role="checkbox"], [role="radio"], [role="switch"], input[type="submit"], input[type="button"], input[type="reset"], input[type="checkbox"], input[type="radio"], select, summary, label, [tabindex]:not([tabindex="-1"])',
+          ).filter(isVisible);
 
-          const getElementText = (node) =>
-            normalize(
+          const getElementText = (node) => {
+            let labelTxt = "";
+            if (node.id) {
+              try {
+                const lbl = document.querySelector(`label[for="${CSS.escape(node.id)}"]`);
+                if (lbl?.innerText) labelTxt = lbl.innerText;
+              } catch {}
+            }
+            if (!labelTxt) {
+              const wrap = node.closest?.("label");
+              if (wrap?.innerText) labelTxt = wrap.innerText;
+            }
+            return normalize(
               node.innerText ||
                 node.value ||
-                node.getAttribute("aria-label") ||
-                node.getAttribute("title") ||
-                node.getAttribute("placeholder") ||
-                node.getAttribute("name") ||
-                node.id ||
+                labelTxt ||
+                node.getAttribute?.("aria-label") ||
+                node.getAttribute?.("title") ||
+                node.getAttribute?.("placeholder") ||
+                node.getAttribute?.("name") ||
                 "",
             ).toLowerCase();
+          };
 
-          // 1. Direct match on clickables
-          for (const term of targetTerms) {
-            el = clickables.find((cand) => {
-              const t = getElementText(cand);
-              return t === term || t.startsWith(term) || t.includes(term) || term.includes(t);
-            });
-            if (el) break;
+          let bestScore = 0;
+          for (const cand of clickables) {
+            const t = getElementText(cand);
+            if (!t) continue; // NEVER match empty elements!
+            let score = 0;
+            for (const term of targetTerms) {
+              if (!term) continue;
+              if (t === term) {
+                score = Math.max(score, 100);
+              } else if (t.startsWith(term)) {
+                score = Math.max(score, 75);
+              } else if (t.includes(term)) {
+                score = Math.max(score, 55);
+              } else if (term.includes(t) && t.length >= 3) {
+                score = Math.max(score, 40);
+              }
+            }
+            if (
+              score > 0 &&
+              ["BUTTON", "A", "INPUT", "SELECT"].includes(cand.tagName)
+            ) {
+              score += 10;
+            }
+            if (score > 0) {
+              score -= Math.min(20, Math.floor(t.length / 25));
+            }
+            if (score > bestScore) {
+              bestScore = score;
+              el = cand;
+            }
           }
 
-          // 2. Deep leaf match: search inside text nodes whose closest ancestor is a button/link
+          // Deep leaf match if still not found
           if (!el) {
-            const allTextNodes = [
-              ...document.querySelectorAll("span, p, b, strong, div, h1, h2, h3, h4, h5, h6, label"),
-            ];
+            const allTextNodes = queryAllDeep("span, p, b, strong, div, h1, h2, h3, h4, h5, h6, label").filter(isVisible);
             for (const term of targetTerms) {
+              if (!term) continue;
               const matchedLeaf = allTextNodes.find((leaf) => {
-                if (leaf.closest("#ai-buddy-arm-overlay")) return false;
                 const t = normalize(leaf.innerText || leaf.textContent || "").toLowerCase();
-                return t === term || (t.includes(term) && t.length < 50);
+                return t && (t === term || (t.includes(term) && t.length < 50));
               });
               if (matchedLeaf) {
-                el = matchedLeaf.closest('button, a, [role="button"], [role="tab"], summary') || matchedLeaf;
+                el =
+                  matchedLeaf.closest?.(
+                    'button, a, [role="button"], [role="tab"], [role="link"], [role="menuitem"], summary, label',
+                  ) || matchedLeaf;
                 break;
               }
             }
           }
 
-          // 3. Form submit fallback
+          // Form submit fallback
           if (!el && (act === "click_submit" || act === "submit" || cleanTarget.includes("submit"))) {
-            el = document.querySelector(
+            el = queryAllDeep(
               'button[type="submit"], input[type="submit"], form button:not([type="button"])',
-            );
+            ).find(isVisible);
           }
         }
 
         if (!el) {
           return {
             ok: false,
-            message: `Could not find button or link matching "${sel || val || opts?.text || "target"}".`,
+            message: `Could not find button or interactive element matching "${sel || val || opts?.text || "target"}".`,
           };
         }
 
-        // Interactability check
-        if (el.disabled || el.getAttribute("aria-disabled") === "true") {
+        if (el.disabled || el.getAttribute?.("aria-disabled") === "true") {
           return {
             ok: false,
-            message: `Button "${normalize(el.innerText || el.value)}" is currently disabled.`,
+            message: `Element "${normalize(el.innerText || el.value)}" is currently disabled.`,
           };
         }
 
         const urlBefore = window.location.href;
-        const dialogsBefore = document.querySelectorAll('dialog[open], [role="dialog"], .modal.show, .modal-open').length;
+        const checkedBefore = el.checked;
+        const ariaCheckedBefore = el.getAttribute?.("aria-checked");
+        const ariaSelectedBefore = el.getAttribute?.("aria-selected");
+        const ariaExpandedBefore = el.getAttribute?.("aria-expanded");
+        const dialogsBefore = document.querySelectorAll(
+          'dialog[open], [role="dialog"], .modal.show, .modal-open',
+        ).length;
 
         el.scrollIntoView({ behavior: "smooth", block: "center" });
 
-        // Dispatch realistic sequence of mouse and pointer events
         const optsEv = { bubbles: true, cancelable: true, view: window };
-        el.dispatchEvent(new PointerEvent("pointerdown", optsEv));
+        try {
+          el.dispatchEvent(new PointerEvent("pointerdown", optsEv));
+        } catch {}
         el.dispatchEvent(new MouseEvent("mousedown", optsEv));
-        el.focus();
-        el.dispatchEvent(new PointerEvent("pointerup", optsEv));
+        el.focus?.();
+        try {
+          el.dispatchEvent(new PointerEvent("pointerup", optsEv));
+        } catch {}
         el.dispatchEvent(new MouseEvent("mouseup", optsEv));
         el.click();
 
-        // If form submission, call requestSubmit()
         if (
           (act === "submit" || act === "click_submit") &&
           el.form &&
@@ -1982,23 +3058,35 @@ async function executeAction(action, selector, value, options = {}) {
         ) {
           try {
             el.form.requestSubmit();
-          } catch {
-            // fallback handled by el.click()
-          }
+          } catch {}
         }
 
-        const clickedText = normalize(
-          el.innerText || el.value || el.getAttribute("aria-label") || el.tagName,
-        ).slice(0, 50);
+        // Wait briefly for SPA state change / navigation / modal
+        await new Promise((r) => setTimeout(r, 250));
 
-        // State change detection
+        const clickedText = normalize(
+          el.innerText || el.value || el.getAttribute?.("aria-label") || el.tagName,
+        ).slice(0, 60);
+
         let stateChange = "clicked";
         if (window.location.href !== urlBefore) {
           stateChange = "navigated";
         } else {
-          const dialogsAfter = document.querySelectorAll('dialog[open], [role="dialog"], .modal.show, .modal-open').length;
+          const dialogsAfter = document.querySelectorAll(
+            'dialog[open], [role="dialog"], .modal.show, .modal-open',
+          ).length;
           if (dialogsAfter > dialogsBefore) {
             stateChange = "modal_opened";
+          } else if (
+            el.checked !== checkedBefore ||
+            el.getAttribute?.("aria-checked") !== ariaCheckedBefore
+          ) {
+            stateChange = "toggled";
+          } else if (
+            el.getAttribute?.("aria-selected") !== ariaSelectedBefore ||
+            el.getAttribute?.("aria-expanded") !== ariaExpandedBefore
+          ) {
+            stateChange = "selected";
           }
         }
 
@@ -2007,6 +3095,10 @@ async function executeAction(action, selector, value, options = {}) {
           outcomeMsg += ` Navigated to ${window.location.pathname}.`;
         } else if (stateChange === "modal_opened") {
           outcomeMsg += " Modal dialog appeared.";
+        } else if (stateChange === "toggled") {
+          outcomeMsg += ` State changed to ${el.checked ? "checked" : "unchecked"}.`;
+        } else if (stateChange === "selected") {
+          outcomeMsg += " Selection updated.";
         }
 
         return {
@@ -2027,13 +3119,13 @@ async function executeAction(action, selector, value, options = {}) {
         let textsToCopy = [];
 
         if (sel) {
-          const els = [...document.querySelectorAll(sel)].slice(0, opts?.limit || 10);
+          const els = queryAllDeep(sel).slice(0, opts?.limit || 10);
           textsToCopy = els
             .map((el) => normalize(el.innerText || el.value || el.textContent))
             .filter(Boolean);
         } else if (query) {
           const q = query.toLowerCase();
-          const cand = [...document.querySelectorAll("td, span, div, li, p")].filter((el) => {
+          const cand = queryAllDeep("td, span, div, li, p").filter((el) => {
             const t = normalize(el.innerText || el.textContent).toLowerCase();
             return t.includes(q) && (!el.children.length || el.children.length < 3);
           });
@@ -2054,9 +3146,7 @@ async function executeAction(action, selector, value, options = {}) {
             navigator.clipboard.writeText(combinedText);
             copied = true;
           }
-        } catch {
-          // fallback textarea
-        }
+        } catch {}
 
         if (!copied) {
           const ta = document.createElement("textarea");
@@ -2082,10 +3172,22 @@ async function executeAction(action, selector, value, options = {}) {
 
       // --- 4. TYPE / FILL ACTION ---
       if (act === "type" || act === "fill_field") {
-        const el = sel ? document.querySelector(sel) : null;
+        let el = sel ? queryDeepSelector(sel) : null;
+        if (el && !["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) && !el.isContentEditable) {
+          el =
+            el.querySelector?.(
+              'textarea, input:not([type="hidden"]), [contenteditable="true"], [contenteditable=""], select',
+            ) || el;
+        }
+        if (!el && opts?.fallbackSelector) {
+          el = queryDeepSelector(opts.fallbackSelector);
+        }
         if (!el) return { ok: false, message: "Target input field was not found on this page." };
 
-        if (SENSITIVE.test(`${el.name} ${el.id} ${el.type}`)) {
+        const isSensitive =
+          el.type === "password" ||
+          SENSITIVE.test(`${el.name || ""} ${el.id || ""} ${el.type || ""}`);
+        if (isSensitive && !opts?.explicitUserProvided) {
           return {
             ok: false,
             message: "Action blocked: Buddy never types into password or financial fields.",
@@ -2096,17 +3198,40 @@ async function executeAction(action, selector, value, options = {}) {
         el.focus();
 
         const strVal = String(val || "");
+        const isCe =
+          el.isContentEditable ||
+          el.getAttribute?.("contenteditable") === "true" ||
+          el.getAttribute?.("contenteditable") === "" ||
+          el.getAttribute?.("contenteditable") === "plaintext-only";
+
         if (el.tagName === "SELECT") {
           const opt = [...el.options].find(
             (o) => o.value === strVal || o.text.toLowerCase().includes(strVal.toLowerCase()),
           );
           el.value = opt ? opt.value : strVal;
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
         } else if (el.type === "checkbox") {
-          el.checked = Boolean(val);
+          const desired = Boolean(val);
+          if (el.checked !== desired) el.click();
         } else if (el.type === "radio") {
-          el.checked = true;
-        } else if (el.getAttribute("contenteditable") === "true") {
-          el.innerText = strVal;
+          if (!el.checked) el.click();
+        } else if (isCe) {
+          try {
+            document.execCommand("selectAll", false, null);
+            const okIns = document.execCommand("insertText", false, strVal);
+            if (!okIns || !(el.innerText || el.textContent || "").includes(strVal)) {
+              el.innerText = strVal;
+            }
+          } catch {
+            el.innerText = strVal;
+          }
+          try {
+            el.dispatchEvent(
+              new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: strVal }),
+            );
+          } catch {}
+          el.dispatchEvent(new Event("change", { bubbles: true }));
         } else {
           const proto =
             el.tagName === "TEXTAREA"
@@ -2118,94 +3243,155 @@ async function executeAction(action, selector, value, options = {}) {
           } else {
             el.value = strVal;
           }
+          if (el._valueTracker) el._valueTracker.setValue("");
+          el.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+          el.dispatchEvent(new Event("blur", { bubbles: true }));
         }
 
-        el.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
-        el.dispatchEvent(new Event("change", { bubbles: true }));
-        el.dispatchEvent(new Event("blur", { bubbles: true }));
-
-        // Post-action verification: re-read value
-        const actualValue = el.value !== undefined ? el.value : el.innerText;
+        const actualValue = isCe ? el.innerText || el.textContent : el.value;
         const verified = Boolean(
-          actualValue && actualValue.toString().includes(strVal.slice(0, 5)),
+          actualValue !== undefined &&
+            actualValue !== null &&
+            actualValue.toString().includes(strVal.slice(0, Math.min(strVal.length, 8))),
         );
 
         return {
           ok: true,
           verified,
           action: "type",
-          field: el.name || el.id || el.tagName.toLowerCase(),
-          message: `Safely filled "${el.name || el.id || "input"}" with requested value.`,
+          field: el.name || el.id || el.placeholder || el.tagName.toLowerCase(),
+          message: `Filled "${el.name || el.id || el.placeholder || "input"}" with requested value.`,
         };
       }
 
       // --- 5. SELECT / DROPDOWN ACTION ---
       if (act === "select") {
-        let el = sel ? document.querySelector(sel) : null;
-        if (!el && (val || opts?.text)) {
-          const target = String(val || opts?.text).toLowerCase();
-          const selects = [...document.querySelectorAll("select, [role=listbox], [role=combobox]")];
+        const strVal = String(val || opts?.text || "");
+        let el = sel ? queryDeepSelector(sel) : null;
+        if (!el && opts?.targetField) {
+          const tf = opts.targetField.toLowerCase();
+          const selects = queryAllDeep("select, [role=listbox], [role=combobox]").filter(isVisible);
           el = selects.find((s) => {
-            const id = (s.id || s.name || "").toLowerCase();
+            const labelTxt =
+              (s.id && document.querySelector(`label[for="${CSS.escape(s.id)}"]`)?.innerText) ||
+              s.closest?.("label")?.innerText ||
+              "";
+            const id = `${s.id || ""} ${s.name || ""} ${s.getAttribute?.("aria-label") || ""} ${labelTxt}`.toLowerCase();
+            return id.includes(tf);
+          });
+        }
+        if (!el && strVal) {
+          const target = strVal.toLowerCase();
+          const selects = queryAllDeep("select, [role=listbox], [role=combobox]").filter(isVisible);
+          el = selects.find((s) => {
+            if (s.tagName === "SELECT") {
+              return [...s.options].some((o) => o.text.toLowerCase().includes(target) || o.value.toLowerCase() === target);
+            }
+            const id = (s.id || s.name || s.getAttribute?.("aria-label") || "").toLowerCase();
             return id.includes(target);
           });
         }
-        if (!el) return { ok: false, message: "Target dropdown was not found on this page." };
+        if (!el) return { ok: false, message: `Target dropdown matching "${opts?.targetField || strVal}" was not found on this page.` };
 
         el.scrollIntoView({ behavior: "smooth", block: "center" });
         el.focus();
 
-        const strVal = String(val || opts?.text || "");
         let verified = false;
+        let selectedLabel = strVal;
 
         if (el.tagName === "SELECT") {
           const opt = [...el.options].find(
-            (o) => o.value === strVal || o.text.toLowerCase().includes(strVal.toLowerCase()),
+            (o) =>
+              o.value.toLowerCase() === strVal.toLowerCase() ||
+              o.text.toLowerCase() === strVal.toLowerCase() ||
+              o.text.toLowerCase().includes(strVal.toLowerCase()),
           );
           if (opt) {
-            el.value = opt.value;
-            verified = true;
-          } else {
-            el.value = strVal;
+            const nativeSelectSetter = Object.getOwnPropertyDescriptor(
+              window.HTMLSelectElement.prototype,
+              "value",
+            )?.set;
+            if (nativeSelectSetter) nativeSelectSetter.call(el, opt.value);
+            else el.value = opt.value;
+            if (el._valueTracker) el._valueTracker.setValue("");
+            selectedLabel = opt.text.trim();
+            verified = el.value === opt.value;
           }
           el.dispatchEvent(new Event("input", { bubbles: true }));
           el.dispatchEvent(new Event("change", { bubbles: true }));
         } else {
           el.click();
-          verified = true;
+          await new Promise((r) => setTimeout(r, 150));
+          const optEl = queryAllDeep('[role="option"], [role="menuitem"], li').find((o) =>
+            normalize(o.innerText || o.textContent || "").toLowerCase().includes(strVal.toLowerCase()),
+          );
+          if (optEl) {
+            optEl.click();
+            verified = true;
+          }
         }
 
         return {
-          ok: true,
+          ok: verified,
           verified,
           action: "select",
-          message: `Selected "${strVal}" in dropdown.`,
+          message: verified
+            ? `Selected "${selectedLabel}" in dropdown.`
+            : `Option "${strVal}" was not found in dropdown.`,
         };
       }
 
       // --- 6. CHECK / UNCHECK ACTION ---
       if (act === "check" || act === "uncheck") {
-        const el = sel ? document.querySelector(sel) : null;
-        if (!el) return { ok: false, message: "Target checkbox was not found on this page." };
+        let el = sel ? queryDeepSelector(sel) : null;
+        if (!el && (val || opts?.text)) {
+          const q = String(val || opts?.text).toLowerCase();
+          const boxes = queryAllDeep('input[type="checkbox"], input[type="radio"], [role="checkbox"], [role="radio"], [role="switch"]').filter(isVisible);
+          el = boxes.find((b) => {
+            const lbl =
+              (b.id && document.querySelector(`label[for="${CSS.escape(b.id)}"]`)?.innerText) ||
+              b.closest?.("label")?.innerText ||
+              "";
+            const txt = `${b.name || ""} ${b.id || ""} ${b.getAttribute?.("aria-label") || ""} ${lbl}`.toLowerCase();
+            return txt.includes(q);
+          });
+        }
+        if (!el) return { ok: false, message: `Target checkbox/radio matching "${val || sel}" was not found on this page.` };
 
         el.scrollIntoView({ behavior: "smooth", block: "center" });
         const shouldCheck = act === "check";
-        el.checked = shouldCheck;
-        el.dispatchEvent(new Event("input", { bubbles: true }));
-        el.dispatchEvent(new Event("change", { bubbles: true }));
+        const currentChecked =
+          el.type === "checkbox" || el.type === "radio"
+            ? el.checked
+            : el.getAttribute?.("aria-checked") === "true";
+
+        if (currentChecked !== shouldCheck) {
+          el.click();
+        }
+        if ((el.type === "checkbox" || el.type === "radio") && el.checked !== shouldCheck) {
+          el.checked = shouldCheck;
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+
+        const nowChecked =
+          el.type === "checkbox" || el.type === "radio"
+            ? el.checked
+            : el.getAttribute?.("aria-checked") === "true";
 
         return {
           ok: true,
-          verified: el.checked === shouldCheck,
+          verified: nowChecked === shouldCheck,
           action: act,
-          message: `${shouldCheck ? "Checked" : "Unchecked"} "${el.name || el.id || "checkbox"}".`,
+          message: `${shouldCheck ? "Checked" : "Unchecked"} "${el.name || el.id || val || "checkbox"}".`,
         };
       }
 
       // --- 7. KEYBOARD ACTION ---
       if (act === "keyboard") {
         const targetKey = String(val || opts?.key || "Enter");
-        const el = sel ? document.querySelector(sel) : document.activeElement || document.body;
+        const el = sel ? queryDeepSelector(sel) : document.activeElement || document.body;
         const keyOpts = { key: targetKey, code: targetKey, bubbles: true, cancelable: true };
         el.dispatchEvent(new KeyboardEvent("keydown", keyOpts));
         el.dispatchEvent(new KeyboardEvent("keypress", keyOpts));
@@ -2220,11 +3406,28 @@ async function executeAction(action, selector, value, options = {}) {
       }
 
       return { ok: false, message: `Unknown browser action: ${act}` };
-    },
+  };
+
+  const [res] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: executeFrameFunc,
     args: [action, selector, value, options],
   });
 
-  return res?.result || { ok: false, message: "Action failed to execute." };
+  const mainResult = res?.result || { ok: false, message: "Action failed to execute." };
+  if (!mainResult.ok) {
+    try {
+      const frameRuns = await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        func: executeFrameFunc,
+        args: [action, selector, value, options],
+      });
+      const subHit = frameRuns.find((r) => r.frameId !== 0 && r.result?.ok);
+      if (subHit?.result) return subHit.result;
+    } catch {}
+  }
+
+  return mainResult;
 }
 
 /**
@@ -2593,7 +3796,116 @@ async function executePlanStepInTab(step, options = {}) {
     return { ok: res.ok, verified: res.ok, result: "Condition verified." };
   }
 
-  // 6. Click, Fill, Select, Scroll, Check
+  // 5b. Fill from uploaded document (Aadhaar / PAN / invoice / ID)
+  if (step.action === "fill_from_document") {
+    const docFields = options?.uploadedDocumentFields || {};
+    const requested = Array.isArray(step.requestedFields) ? step.requestedFields : [];
+    const pairs = [];
+    const missing = [];
+
+    const FIELD_ALIASES = {
+      name: ["name"],
+      naam: ["name"],
+      father: ["fatherName"],
+      fathername: ["fatherName"],
+      dob: ["dob"],
+      birthdate: ["dob"],
+      gender: ["gender"],
+      phone: ["phone"],
+      mobile: ["phone"],
+      email: ["email"],
+      address: ["address"],
+      pata: ["address"],
+      city: ["city"],
+      state: ["state"],
+      pincode: ["pincode"],
+      pin: ["pincode"],
+      aadhaar: ["aadhaarNumber"],
+      aadhar: ["aadhaarNumber"],
+      aadhaarnumber: ["aadhaarNumber"],
+      pan: ["panNumber"],
+      pannumber: ["panNumber"],
+      gstin: ["gstin"],
+      invoice: ["invoiceNumber"],
+      order: ["orderId"],
+      tracking: ["trackingNumber"],
+      company: ["company"],
+    };
+
+    if (requested.length > 0) {
+      for (const reqKey of requested) {
+        const norm = String(reqKey).toLowerCase().replace(/[^a-z]/g, "");
+        const candidates = FIELD_ALIASES[norm] || [reqKey];
+        const matchedDocKey = candidates.find((k) => docFields[k]);
+        if (matchedDocKey && docFields[matchedDocKey]) {
+          pairs.push({ target: matchedDocKey, value: docFields[matchedDocKey], overwrite: Boolean(step.overwrite) });
+        } else {
+          missing.push(reqKey);
+        }
+      }
+    } else {
+      for (const [k, v] of Object.entries(docFields)) {
+        if (v) pairs.push({ target: k, value: v, overwrite: Boolean(step.overwrite) });
+      }
+    }
+
+    if (pairs.length === 0) {
+      return {
+        ok: false,
+        verified: false,
+        error: missing.length
+          ? `Uploaded document does not contain clear values for: ${missing.join(", ")}.`
+          : "No extracted document fields available to fill.",
+      };
+    }
+
+    const fillRes = await smartFillForm(null, {
+      explicitPairs: pairs,
+      explicitUserProvided: true,
+      fromUploadedDocument: true,
+      overwrite: Boolean(step.overwrite),
+    });
+    const filledCount = fillRes?.results?.filled?.length || 0;
+    const preservedCount = fillRes?.results?.preserved?.length || 0;
+    return {
+      ok: fillRes?.ok && (filledCount > 0 || preservedCount > 0),
+      verified: filledCount > 0 || preservedCount > 0,
+      result: `Filled ${filledCount} field(s) from uploaded document${missing.length ? ` (missing in doc: ${missing.join(", ")})` : ""}.`,
+      error: filledCount === 0 && preservedCount === 0 ? "No matching editable fields found on this page." : undefined,
+    };
+  }
+
+  // 5c. Smart single-field fill in multi-step plan (handles dynamically appearing inputs cleanly)
+  if (step.action === "fill_field" && step.value !== undefined) {
+    const fillRes = await smartFillForm(null, {
+      explicitPairs: [
+        {
+          target: step.textTarget || step.selector || "__CURRENT__",
+          value: step.value,
+          selector: step.selector || undefined,
+          overwrite: Boolean(step.overwrite),
+        },
+      ],
+      explicitUserProvided: true,
+      overwrite: Boolean(step.overwrite),
+    });
+    const filled = fillRes?.results?.filled || [];
+    const preserved = fillRes?.results?.preserved || [];
+    const ok = fillRes?.ok && (filled.length > 0 || preserved.length > 0);
+    return {
+      ok,
+      verified: ok,
+      result:
+        filled.length > 0
+          ? `Filled "${filled[0].field}" with "${filled[0].value}".`
+          : preserved.length > 0
+            ? `Preserved existing value in "${preserved[0].field}".`
+            : `Could not locate field "${step.textTarget || step.selector}".`,
+      error: ok ? undefined : `Field "${step.textTarget || step.selector}" not found.`,
+    };
+  }
+
+  // 6. Click, Select, Scroll, Check
   const actRes = await executeAction(step.action, step.selector, step.value, {
     text: step.textTarget,
     ...options,

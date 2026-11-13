@@ -239,6 +239,21 @@ let allBuddies = [...BUDDIES_REGISTRY];
 let selectedBuddySlug = "friendly";
 let selectedCustomBuddyId = null;
 let currentRenderMode = "rigged"; // "rigged" | "3d"
+let selectedProvider = "gemini";
+let cachedProviderStatuses = {};
+const warnedMissingProviders = new Set();
+const recommendedModesShown = new Set();
+
+const DEFAULT_PROVIDER_META = {
+  gemini: { id: "gemini", name: "Google Gemini", status: "connected", statusLabel: "Connected", missingKeyName: "GEMINI_API_KEY", supportsLocal: false },
+  groq: { id: "groq", name: "GroqCloud", status: "missing_api", statusLabel: "Missing API", missingKeyName: "GROQ_API_KEY", supportsLocal: false },
+  openrouter: { id: "openrouter", name: "OpenRouter", status: "missing_api", statusLabel: "Missing API", missingKeyName: "OPENROUTER_API_KEY", supportsLocal: false },
+  openai: { id: "openai", name: "OpenAI", status: "missing_api", statusLabel: "Missing API", missingKeyName: "OPENAI_API_KEY", supportsLocal: false },
+  ollama: { id: "ollama", name: "Ollama (Local)", status: "not_connected", statusLabel: "Not Connected", missingKeyName: "OLLAMA_BASE_URL", supportsLocal: true },
+  huggingface: { id: "huggingface", name: "Hugging Face Inference", status: "missing_api", statusLabel: "Missing API", missingKeyName: "HUGGINGFACE_API_KEY", supportsLocal: false },
+  cloudflare: { id: "cloudflare", name: "Cloudflare Workers AI", status: "missing_api", statusLabel: "Missing API", missingKeyName: "CLOUDFLARE_API_TOKEN", supportsLocal: false },
+  github: { id: "github", name: "GitHub Models", status: "missing_api", statusLabel: "Missing API", missingKeyName: "GITHUB_TOKEN", supportsLocal: false },
+};
 
 let busy = false;
 let currentAnswer = "";
@@ -734,6 +749,131 @@ function appendHistory(role, text) {
   box.scrollTop = box.scrollHeight;
 }
 
+function appendProviderWarningNotice(warning) {
+  if (!warning || !warning.requestedProvider || warnedMissingProviders.has(warning.requestedProvider)) {
+    return;
+  }
+  warnedMissingProviders.add(warning.requestedProvider);
+  const box = $("historyBox");
+  if (!box) return;
+  const notice = document.createElement("div");
+  notice.className = "msg-bubble msg-buddy";
+  notice.style.cssText =
+    "font-size: 10px; border-color: rgba(245, 158, 11, 0.35); background: rgba(245, 158, 11, 0.08); color: #fde68a;";
+  notice.textContent = `ℹ️ ${warning.message}`;
+  box.appendChild(notice);
+  box.scrollTop = box.scrollHeight;
+}
+
+function getLocalModeRecommendation(question, activeSlug, language) {
+  const q = String(question || "").trim();
+  if (
+    q.length < 12 ||
+    /^(?:hi+|hello+|hey+|namaste|pranam|scroll\s+(?:up|down)|neeche\s+scroll|upar\s+scroll|page\s+ko\s+(?:neeche|upar)|click\s+|point\s+)/i.test(
+      q,
+    )
+  ) {
+    return null;
+  }
+  const normalizedActive = String(activeSlug || "friendly")
+    .toLowerCase()
+    .replace(/^custom:/, "");
+  const rules = [
+    {
+      slug: "ecommerce",
+      name: "E-commerce Buddy",
+      reasonHi: "e-commerce analysis, listing aur pricing",
+      reasonEn: "e-commerce listings, catalog, and marketplace pricing",
+      re: /\b(?:meesho|amazon|flipkart|shopify|listing|catalog|sku|marketplace|pricing|seller\s*panel|return\s*rate|product\s*title)\b/i,
+    },
+    {
+      slug: "ca",
+      name: "CA Buddy",
+      reasonHi: "GST, tax aur invoice compliance",
+      reasonEn: "GST, tax rules, and invoice compliance",
+      re: /\b(?:gst|gstr|tds|itr|income\s*tax|hsn|sac|reconcil|balance\s*sheet|tax\s*filing|accounting|invoice\s*audit)\b/i,
+    },
+    {
+      slug: "developer",
+      name: "Developer Buddy",
+      reasonHi: "code debugging aur technical troubleshooting",
+      reasonEn: "code debugging and technical troubleshooting",
+      re: /\b(?:debug|stack\s*trace|typescript|javascript|python|react|api\s*error|console\s*error|regex|sql|refactor|exception|syntax\s*error)\b/i,
+    },
+    {
+      slug: "legal",
+      name: "Legal Buddy",
+      reasonHi: "contract clauses aur legal review",
+      reasonEn: "contract clauses and legal document review",
+      re: /\b(?:contract|nda|legal\s*clause|agreement|indemnity|liability|arbitration|terms\s*(?:of|and)\s*conditions)\b/i,
+    },
+    {
+      slug: "data",
+      name: "Data Buddy",
+      reasonHi: "spreadsheets, formulas aur data patterns",
+      reasonEn: "spreadsheets, formulas, and dataset analysis",
+      re: /\b(?:spreadsheet|excel|csv|pivot\s*table|vlookup|xlookup|duplicate\s*rows|dataset\s*analysis)\b/i,
+    },
+    {
+      slug: "marketing",
+      name: "Marketing Buddy",
+      reasonHi: "ad campaigns, copywriting aur SEO growth",
+      reasonEn: "ad campaigns, copywriting, and SEO growth",
+      re: /\b(?:ad\s*copy|roas|ctr|meta\s*ads|google\s*ads|campaign\s*strategy|funnel|seo\s*keywords|marketing\s*copy)\b/i,
+    },
+  ];
+  for (const r of rules) {
+    if (!r.re.test(q) || normalizedActive === r.slug) continue;
+    const isEnglish = language === "english";
+    const reason = isEnglish ? r.reasonEn : r.reasonHi;
+    return {
+      slug: r.slug,
+      name: r.name,
+      reason,
+      suggestionText: isEnglish
+        ? `I can help with this, though ${r.name} is specialized for ${reason}. Would you like to select it?`
+        : `Main ye kaam kar sakta hoon. Lekin detailed ${reason} ke liye ${r.name} better rahega. Kya aap use select karna chahenge?`,
+    };
+  }
+  return null;
+}
+
+function appendModeRecommendationNotice(rec) {
+  if (!rec || !rec.slug || rec.slug === selectedBuddySlug || recommendedModesShown.has(rec.slug)) {
+    return;
+  }
+  recommendedModesShown.add(rec.slug);
+  const box = $("historyBox");
+  if (!box) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "msg-bubble msg-buddy";
+  wrap.style.cssText =
+    "font-size: 10px; border-color: rgba(6, 182, 212, 0.35); background: rgba(6, 182, 212, 0.08); display: flex; flex-direction: column; gap: 6px;";
+
+  const textEl = document.createElement("span");
+  textEl.textContent = `💡 ${rec.suggestionText}`;
+  wrap.appendChild(textEl);
+
+  const btnRow = document.createElement("div");
+  btnRow.style.cssText = "display: flex; gap: 6px;";
+  const switchBtn = document.createElement("button");
+  switchBtn.className = "ghost";
+  switchBtn.style.cssText =
+    "padding: 3px 8px; font-size: 10px; border-color: rgba(6, 182, 212, 0.45); color: var(--accent-cyan); font-weight: 600;";
+  switchBtn.textContent = `Select ${rec.name}`;
+  switchBtn.onclick = () => {
+    switchBuddy(rec.slug);
+    switchBtn.disabled = true;
+    switchBtn.textContent = `✓ Selected ${rec.name}`;
+  };
+  btnRow.appendChild(switchBtn);
+  wrap.appendChild(btnRow);
+
+  box.appendChild(wrap);
+  box.scrollTop = box.scrollHeight;
+}
+
 function showChatLoadingSpinner(customText) {
   hideChatLoadingSpinner();
   const box = $("historyBox");
@@ -848,16 +988,21 @@ async function render() {
     selectedBuddySlug: savedSlug,
     selectedCustomBuddyId: savedCustomId,
     avatarRenderMode: savedMode,
+    selectedProvider: savedProvider,
   } = await chrome.storage.local.get([
     "session",
     "selectedBuddySlug",
     "selectedCustomBuddyId",
     "avatarRenderMode",
+    "selectedProvider",
   ]);
 
   if (savedSlug) selectedBuddySlug = savedSlug;
   if (savedCustomId) selectedCustomBuddyId = savedCustomId;
   if (savedMode) currentRenderMode = savedMode;
+  if (savedProvider) selectedProvider = savedProvider;
+  if ($("providerSelector")) $("providerSelector").value = selectedProvider;
+  updateProviderNoticeUI(selectedProvider);
 
   const isAuth = Boolean(session);
   $("signoutBtn").hidden = !isAuth;
@@ -902,6 +1047,7 @@ async function render() {
   checkPageForErrors();
   updateGreetingContext();
   startRotatingPlaceholders();
+  loadModelHubStatus();
   chrome.storage.local
     .get("preferredModel")
     .then(({ preferredModel }) => {
@@ -959,27 +1105,49 @@ async function checkPageForErrors() {
   }
 }
 
-async function executeScroll(direction = "down", amount = 450) {
+async function executeScroll(direction = "down", amount = 450, targetText = null, announceInChat = false) {
+  const active = getActiveBuddy();
+  const isHindi = active.defaultLanguage !== "english";
   setRigEmotion("working", "Scrolling");
-  $("statusText").textContent = `Scrolling page ${direction}…`;
+  $("statusText").textContent = targetText
+    ? `Scrolling to "${targetText}"…`
+    : `Scrolling page ${direction}…`;
+
   const res = await chrome.runtime.sendMessage({
     type: "EXECUTE_ACTION",
     action: "scroll",
     value: direction,
-    options: { direction, amount },
+    options: { direction, amount, targetText },
   });
+
   if (res?.ok) {
     $("statusText").textContent = res.message || `Scrolled ${direction}.`;
     if (res.hasMoreBelow !== undefined && $("pageCompletenessBanner")) {
       $("pageCompletenessBanner").hidden = !res.hasMoreBelow;
     }
+    if (announceInChat) {
+      const msg = isHindi
+        ? targetText
+          ? `📜 "${targetText}" tak scroll kar diya hai.`
+          : `📜 Page ${direction} scroll kar diya hai.${res.movedPx ? ` (${res.movedPx}px)` : ""}`
+        : res.message || `Scrolled ${direction}.`;
+      appendHistory("buddy", msg);
+      speakResponse(msg, "happy");
+    }
+  } else if (announceInChat) {
+    const failMsg =
+      res?.message ||
+      (isHindi ? `Page ko "${targetText || direction}" scroll nahi kiya ja saka.` : `Could not scroll ${direction}.`);
+    $("statusText").textContent = failMsg;
+    appendHistory("buddy", `⚠️ ${failMsg}`);
   }
   setTimeout(() => setRigEmotion("idle", "Idle"), 1000);
 }
 
-async function executeFind(query) {
-  setRigEmotion("thinking", "Finding");
-  $("statusText").textContent = `Searching page for "${query}"…`;
+async function executeFind(query, mode = "find") {
+  setRigEmotion("thinking", mode === "point" ? "Pointing" : "Finding");
+  $("statusText").textContent =
+    mode === "point" ? `Pointing to "${query}"…` : `Searching page for "${query}"…`;
   const active = getActiveBuddy();
   const res = await chrome.runtime.sendMessage({
     type: "FIND_CONTENT",
@@ -987,75 +1155,361 @@ async function executeFind(query) {
     options: {
       scroll: true,
       highlight: true,
+      title: mode === "point" ? `Pointing: ${query}` : `Match: ${query}`,
       buddyVisual: {
+        outfit: active.outfit,
         outfitColor: active.outfitColors?.[0] || "#0d9488",
-        name: active.name,
+        buddyName: active.name,
       },
     },
   });
   if (res?.ok && res.totalMatches > 0) {
-    setRigEmotion("pointing", "Found!");
+    setRigEmotion("pointing", mode === "point" ? "Pointing!" : "Found!");
     lastHighlightSelector = res.firstSelector;
-    $("highlightBtn").hidden = false;
+    lastCallout = {
+      title: mode === "point" ? `Pointing: ${query}` : `Match: ${query}`,
+      description: res.targetMatch?.textSnippet || `Located "${query}" (no click performed).`,
+    };
+    if ($("highlightBtn")) $("highlightBtn").hidden = false;
     pointArmAtElement();
     const isHindi = active.defaultLanguage !== "english";
-    const msg = isHindi
-      ? `Maine page par "${query}" (${res.totalMatches} match) dhoondh liya hai! Lamba Haath se point kar raha hoon.`
-      : `Found ${res.totalMatches} match${res.totalMatches > 1 ? "es" : ""} for "${query}". Pointing with Lamba Haath!`;
+    const msg =
+      mode === "point"
+        ? isHindi
+          ? `Maine page par "${query}" par point aur highlight kar diya hai (click nahi kiya hai).`
+          : `Pointing to "${query}" on this page (visual highlight only, not clicked).`
+        : isHindi
+          ? `Maine page par "${query}" (${res.totalMatches} match) dhoondh liya hai! Lamba Haath se point kar raha hoon.`
+          : `Found ${res.totalMatches} match${res.totalMatches > 1 ? "es" : ""} for "${query}". Pointing with Lamba Haath!`;
     $("statusText").textContent = msg;
-    appendHistory("buddy", `🎯 ${msg}\nSnippet: "${res.targetMatch?.textSnippet || ""}"`);
-    speakResponse(isHindi ? `Maine ${query} dhoondh liya hai.` : `I found ${res.totalMatches} match on this page.`, "pointing");
+    appendHistory(
+      "buddy",
+      `🎯 ${msg}${res.targetMatch?.textSnippet ? `\nElement: "${res.targetMatch.textSnippet}"` : ""}`,
+    );
+    speakResponse(
+      isHindi ? `Maine ${query} par point kar diya hai.` : `I am pointing to ${query} on this page.`,
+      "pointing",
+    );
   } else {
     setRigEmotion("idle", "Not found");
     const isHindi = active.defaultLanguage !== "english";
     const msg = isHindi
-      ? `Visible page content mein "${query}" nahi mila. Kripya page par niche scroll karein ya spelling check karein.`
+      ? `Visible page par "${query}" nahi mila. Kripya neeche scroll karein ya sahi naam batayein.`
       : `Could not find "${query}" in visible page content.`;
     $("statusText").textContent = msg;
-    appendHistory("buddy", msg);
+    appendHistory("buddy", `⚠️ ${msg}`);
   }
 }
 
-function extractFieldsFromMessage(text) {
-  const fields = {};
-  const lower = (text || "").toLowerCase();
+// --- ACTIVE UPLOADED DOCUMENT STATE (Aadhaar, PAN, Invoice, Shipping Label, PDF/Image) ---
+let activeUploadedDocument = null;
 
-  // Explicit key: value or key = value
-  const keyValRegex = /\b(name|fullname|legal_name|trade_name|email|phone|mobile|city|state|pincode|pin|gstin|pan|address)\s*[:=]\s*([^,;\n]+)/gi;
-  let m;
-  while ((m = keyValRegex.exec(text)) !== null) {
-    fields[m[1].toLowerCase()] = m[2].trim();
+function maskSensitiveDocValue(key, val) {
+  const s = String(val || "").trim();
+  if (!s) return "";
+  const nk = String(key || "").replace(/[^a-z]/gi, "").toLowerCase();
+  if (nk.includes("aadhaar") || nk.includes("aadhar")) {
+    const digits = s.replace(/\D/g, "");
+    return digits.length >= 4 ? `XXXX-XXXX-${digits.slice(-4)}` : "XXXX-XXXX";
+  }
+  if (nk === "pan" || nk === "pannumber") {
+    return s.length >= 4 ? `${"X".repeat(Math.max(0, s.length - 4))}${s.slice(-4)}` : "XXXXXXXXXX";
+  }
+  return s;
+}
+
+function renderUploadedDocBar() {
+  const bar = $("uploadedDocBar");
+  const lbl = $("uploadedDocLabel");
+  if (!bar || !lbl) return;
+  if (!activeUploadedDocument) {
+    bar.hidden = true;
+    return;
+  }
+  const fieldsCount = Object.keys(activeUploadedDocument.fields || {}).length;
+  const typeLabel =
+    activeUploadedDocument.documentType === "aadhaar"
+      ? "Aadhaar Card"
+      : activeUploadedDocument.documentType === "pan"
+        ? "PAN Card"
+        : activeUploadedDocument.documentType === "invoice"
+          ? "Invoice"
+          : activeUploadedDocument.documentType === "shipping_label"
+            ? "Shipping Label"
+            : "Document";
+  lbl.textContent = `📄 ${typeLabel} (${activeUploadedDocument.fileName}) · ${fieldsCount} field${fieldsCount === 1 ? "" : "s"} ready`;
+  bar.hidden = false;
+}
+
+function setActiveUploadedDocument(docResult) {
+  if (!docResult) {
+    activeUploadedDocument = null;
+    renderUploadedDocBar();
+    try {
+      chrome.storage?.session?.remove?.("ai_buddy_uploaded_doc");
+    } catch {}
+    return;
   }
 
-  // Natural phrasing like "name Rahul, email rahul@gmail.com, city Delhi"
-  if (Object.keys(fields).length === 0) {
-    const patterns = [
-      { key: "name", regex: /\bname\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+email|\s+city|\s+pin|\s+phone|\s+bhar|\s+fill|$)/i },
-      { key: "email", regex: /\b(?:email|mail)\s+(?:as\s+|is\s+|:\s*)?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i },
-      { key: "phone", regex: /\b(?:phone|mobile)\s+(?:as\s+|is\s+|:\s*)?(\d{10})/i },
-      { key: "city", regex: /\bcity\s+(?:as\s+|is\s+|:\s*)?([A-Za-z]+)/i },
-      { key: "state", regex: /\bstate\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+pin|\s+city|$)/i },
-      { key: "pincode", regex: /\b(?:pin|pincode|zip)\s+(?:as\s+|is\s+|:\s*)?(\d{6})/i },
-      { key: "gstin", regex: /\b(?:gstin|gst)\s+(?:as\s+|is\s+|:\s*)?([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})/i },
-    ];
-    for (const p of patterns) {
-      const match = text.match(p.regex);
-      if (match && match[1]) {
-        fields[p.key] = match[1].trim();
+  // Detect conflicts if a previous uploaded document had different values for key identity fields
+  const conflicts = [...(docResult.conflicts || [])];
+  if (activeUploadedDocument?.fields && docResult.fields) {
+    for (const k of ["name", "dob", "aadhaarNumber", "panNumber", "address", "phone"]) {
+      const prevV = activeUploadedDocument.fields[k];
+      const nextV = docResult.fields[k];
+      if (prevV && nextV && prevV.toLowerCase() !== nextV.toLowerCase()) {
+        conflicts.push({
+          field: k,
+          prev: maskSensitiveDocValue(k, prevV),
+          next: maskSensitiveDocValue(k, nextV),
+        });
       }
     }
   }
 
-  return Object.keys(fields).length > 0 ? fields : null;
+  activeUploadedDocument = {
+    ...docResult,
+    fields: docResult.fields || {},
+    ambiguousFields: docResult.ambiguousFields || [],
+    conflicts,
+  };
+  renderUploadedDocBar();
+  try {
+    chrome.storage?.session?.set?.({ ai_buddy_uploaded_doc: activeUploadedDocument });
+  } catch {}
+}
+
+function clearActiveUploadedDocument() {
+  setActiveUploadedDocument(null);
+}
+
+try {
+  chrome.storage?.session?.get?.("ai_buddy_uploaded_doc", (data) => {
+    if (data?.ai_buddy_uploaded_doc) {
+      activeUploadedDocument = data.ai_buddy_uploaded_doc;
+      renderUploadedDocBar();
+    }
+  });
+} catch {}
+
+function extractRequestedDocFieldKeys(text) {
+  const lower = String(text || "").toLowerCase();
+  const keys = [];
+  if (/\b(?:name|naam|full\s*name)\b/i.test(lower)) keys.push("name");
+  if (/\b(?:father|father'?s\s*name|s\/o)\b/i.test(lower)) keys.push("fatherName");
+  if (/\b(?:dob|date\s+of\s+birth|birth\s*date|janam)\b/i.test(lower)) keys.push("dob");
+  if (/\b(?:gender|sex)\b/i.test(lower)) keys.push("gender");
+  if (/\b(?:phone|mobile|contact\s*number)\b/i.test(lower)) keys.push("phone");
+  if (/\b(?:email|mail)\b/i.test(lower)) keys.push("email");
+  if (/\b(?:address|pata)\b/i.test(lower)) keys.push("address");
+  if (/\bcity\b/i.test(lower)) keys.push("city");
+  if (/\bstate\b/i.test(lower)) keys.push("state");
+  if (/\b(?:pincode|pin\s*code|zip)\b/i.test(lower)) keys.push("pincode");
+  if (/\b(?:aadhaar|aadhar)\s*(?:number|no|num|digit|id)\b/i.test(lower)) keys.push("aadhaarNumber");
+  if (/\bpan\s*(?:number|no|num|id)\b/i.test(lower)) keys.push("panNumber");
+  if (/\b(?:gstin|gst)\b/i.test(lower)) keys.push("gstin");
+  if (/\b(?:invoice)(?:\s*number|\s*no)?\b/i.test(lower)) keys.push("invoiceNumber");
+  if (/\b(?:order\s*id|order\s*number)\b/i.test(lower)) keys.push("orderId");
+  if (/\b(?:tracking|awb)\b/i.test(lower)) keys.push("trackingNumber");
+  return [...new Set(keys)];
+}
+
+function stripBuddyPrefix(text) {
+  return String(text || "")
+    .trim()
+    .replace(/^(?:(?:hey|hi|hello|ok|okay|dear|please|kripya|bhai|yaar)\s+)?(?:ai\s+)?buddy\b[,:\s-]*/i, "")
+    .replace(/^(?:please|kripya|plz|pls)\s+/i, "")
+    .replace(/\s+(?:please|kripya|plz|pls)[.!?\s]*$/i, "")
+    .trim();
+}
+
+function normalizeFillTarget(raw) {
+  return String(raw || "")
+    .trim()
+    .replace(/^(?:is\s+page\s+(?:par|pe|mein|me)|page\s+(?:par|pe|mein|me)|is\s+form\s+(?:mein|me)|form\s+(?:mein|me)|ye|yeh|is|the|a|an|my|apna|mera)\s+/i, "")
+    .replace(/\s+(?:field|input|box|textbox|textarea|area|dropdown|select|ki|ka|ke|par|pe|ko)$/i, "")
+    .trim()
+    .toLowerCase();
+}
+
+function extractFillDetails(text) {
+  const cleaned = stripBuddyPrefix(text)
+    .replace(/^(?:is\s+form\s+(?:mein|me|main)|form\s+(?:mein|me|main)|is\s+page\s+(?:mein|me|par|pe))\s+/i, "")
+    .trim();
+  const overwrite = /\b(?:change|update|replace|overwrite|badal|badlo|modify)\b/i.test(cleaned);
+  const fields = {};
+  const explicitPairs = [];
+
+  const hasFillVerbOrAssign =
+    /\b(?:fill|type|likh|likho|daal|daalo|bhar|bharo|enter|set|populate|change|update|replace)\b|[:=]/i.test(
+      cleaned,
+    );
+  if (
+    !hasFillVerbOrAssign &&
+    /\b(?:point|highlight|click|press|tap|dabao|scroll|find|locate|dhoondho|dhundo|kaha|kahan|kidhar|where)\b/i.test(
+      cleaned,
+    )
+  ) {
+    return { fields: null, explicitPairs: null, overwrite, explicitUserProvided: false };
+  }
+
+  // 1. Explicit key: value or key = value
+  const keyValRegex =
+    /\b(name|naam|fullname|legal_name|trade_name|email|phone|mobile|mobilenumber|city|state|country|pincode|pin|zip|gstin|pan|address|pata|search|describe|description|prompt|message|comment|company|subject|title|username|password)\s*[:=]\s*([^,;\n]+)/gi;
+  let m;
+  while ((m = keyValRegex.exec(cleaned)) !== null) {
+    const key = m[1].toLowerCase();
+    const val = m[2].replace(/\s+(?:fill|type|likho|likh\s+do|daalo|daal\s+do|bharo|bhar\s+do|karo|kar\s+do).*$/i, "").trim();
+    if (val) {
+      fields[key] = val;
+      explicitPairs.push({ target: key, value: val, overwrite });
+    }
+  }
+  if (explicitPairs.length > 0) {
+    return { fields, explicitPairs, overwrite, explicitUserProvided: true };
+  }
+
+  // Split multi-field instructions cleanly (e.g. "Pehle naam Murshad fill karo, phir mobile 9876543210 fill karo")
+  const clauses = cleaned
+    .split(/\s*(?:,|;|\bphir\b|\bfir\b|\bthen\b|\band then\b|\buske baad\b)\s*/i)
+    .map((c) => c.replace(/^(?:pehle|first|aur|and|also|next)\s+/i, "").trim())
+    .filter(Boolean);
+
+  const KNOWN_FIELD_ALIASES =
+    "(?:full\\s*name|legal\\s*name|trade\\s*name|first\\s*name|last\\s*name|user\\s*name|mobile\\s*(?:number|no)?|phone\\s*(?:number|no)?|pin\\s*code|zip\\s*code|email\\s*(?:id|address)?|naam|name|mail|email|phone|mobile|address|pata|city|state|country|pincode|pin|zip|gstin|gst|pan|search|describe|description|prompt|message|comment|comments|company|subject|title|username|password)";
+
+  for (const clause of clauses) {
+    // Pattern A: "<field> (box|field|input)? mein/me/main/in/into <value> (fill|type|likh|daal|bhar|enter|set|kar)?"
+    let match = clause.match(
+      /^(.+?)\s+(?:mein|me|main|per|par|in|into)\s+["']?(.+?)["']?\s*(?:fill\s+kar\s*do|fill\s+karo|fill\s+karein|fill|type\s+kar\s*do|type\s+karo|type|likh\s+do|likho|daal\s+do|daalo|bhar\s+do|bharo|enter\s+karo|enter|set\s+karo|kar\s+do|karo)?[.!?\s]*$/i,
+    );
+    if (match) {
+      const rawTarget = match[1].trim();
+      const rawVal = match[2].trim();
+      if (/^(?:is|ye|yeh|isko|is\s*box|this|this\s*box|this\s*field|yahan)$/i.test(rawTarget)) {
+        explicitPairs.push({ target: "__CURRENT__", value: rawVal, overwrite });
+        continue;
+      }
+      const normT = normalizeFillTarget(rawTarget);
+      if (normT && rawVal) {
+        fields[normT] = rawVal;
+        explicitPairs.push({ target: normT, value: rawVal, overwrite });
+        continue;
+      }
+    }
+
+    // Pattern B: "(fill|type|enter|write|likho|daalo|set) <value> in/into/mein <field>"
+    match = clause.match(
+      /^(?:fill|type|enter|write|put|set|likho|likh\s+do|daalo|daal\s+do|bharo)\s+["']?(.+?)["']?\s+(?:in|into|inside|mein|me|main|par)\s+(?:the\s+)?(.+?)[.!?\s]*$/i,
+    );
+    if (match) {
+      const rawVal = match[1].trim();
+      const rawTarget = match[2].trim();
+      if (/^(?:this|this\s*box|this\s*field|it|here|isko|yahan)$/i.test(rawTarget)) {
+        explicitPairs.push({ target: "__CURRENT__", value: rawVal, overwrite });
+        continue;
+      }
+      const normT = normalizeFillTarget(rawTarget);
+      if (normT && rawVal) {
+        fields[normT] = rawVal;
+        explicitPairs.push({ target: normT, value: rawVal, overwrite });
+        continue;
+      }
+    }
+
+    // Pattern C: "isko/this <value> se fill/bhar kar do" or "fill this with <value>"
+    match = clause.match(
+      /^(?:fill|type|populate)\s+(?:this(?:\s+box|\s+field)?|it)\s+(?:with|as)\s+["']?(.+?)["']?[.!?\s]*$/i,
+    ) ||
+      clause.match(
+        /^(?:isko|is\s+box\s+ko|is\s+field\s+ko)\s+["']?(.+?)["']?\s+(?:se\s+)?(?:fill|bhar|type|likh|daal)\s*(?:kar\s*do|karo|do)?[.!?\s]*$/i,
+      );
+    if (match && match[1]) {
+      explicitPairs.push({ target: "__CURRENT__", value: match[1].trim(), overwrite });
+      continue;
+    }
+
+    // Pattern D: "<knownField> (as|is|change karke|update karke|ko)? <value> (fill|type|likh|daal|bhar|kar do)?"
+    const knownFieldValRe = new RegExp(
+      `\\b(${KNOWN_FIELD_ALIASES})\\s+(?:change\\s+karke\\s+|update\\s+karke\\s+|as\\s+|is\\s+|to\\s+|ko\\s+|ka\\s+|:)?["']?(.+?)["']?(?:\\s+(?:fill\\s+kar\\s*do|fill\\s+karo|fill|type\\s+karo|type|likh\\s+do|likho|daal\\s+do|daalo|bhar\\s+do|bharo|kar\\s*do|karo))?[.!?\\s]*$`,
+      "i",
+    );
+    match = clause.match(knownFieldValRe);
+    if (match && match[1] && match[2]) {
+      const rawT = match[1].toLowerCase().replace(/\s+/g, "");
+      const keyMap = {
+        naam: "name",
+        fullname: "name",
+        mobilenumber: "phone",
+        mobileno: "phone",
+        mobile: "phone",
+        phonenumber: "phone",
+        phoneno: "phone",
+        mail: "email",
+        emailid: "email",
+        emailaddress: "email",
+        pata: "address",
+        pincode: "pincode",
+        pin: "pincode",
+        zipcode: "pincode",
+        zip: "pincode",
+      };
+      const mappedKey = keyMap[rawT] || rawT;
+      const cleanVal = match[2]
+        .replace(/\s+(?:fill\s+kar\s*do|fill\s+karo|fill|type\s+karo|type|likh\s+do|likho|daal\s+do|daalo|bhar\s+do|bharo|kar\s*do|karo)$/i, "")
+        .trim();
+      if (
+        cleanVal &&
+        !/^(?:karo|kar\s*do|fill|bharo|bhar\s*do|daalo|daal\s*do|field|input|box)$/i.test(cleanVal)
+      ) {
+        fields[mappedKey] = cleanVal;
+        explicitPairs.push({ target: mappedKey, value: cleanVal, overwrite });
+        continue;
+      }
+    }
+  }
+
+  // Fallback Pattern E: natural comma-separated attributes ("name Rahul, email rahul@gmail.com, city Delhi")
+  if (explicitPairs.length === 0) {
+    const patterns = [
+      { key: "name", regex: /\b(?:name|naam)\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+email|\s+city|\s+pin|\s+phone|\s+mobile|\s+bhar|\s+fill|$)/i },
+      { key: "email", regex: /\b(?:email|mail)\s+(?:as\s+|is\s+|:\s*)?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i },
+      { key: "phone", regex: /\b(?:phone|mobile(?:\s+number)?)\s+(?:as\s+|is\s+|:\s*)?(\+?\d{10,13})/i },
+      { key: "city", regex: /\bcity\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+state|\s+pin|\s+fill|$)/i },
+      { key: "state", regex: /\bstate\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+pin|\s+city|\s+fill|$)/i },
+      { key: "pincode", regex: /\b(?:pin|pincode|zip)\s+(?:as\s+|is\s+|:\s*)?(\d{5,6})/i },
+      { key: "gstin", regex: /\b(?:gstin|gst)\s+(?:as\s+|is\s+|:\s*)?([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})/i },
+    ];
+    for (const p of patterns) {
+      const match = cleaned.match(p.regex);
+      if (match && match[1]) {
+        const val = match[1].trim();
+        fields[p.key] = val;
+        explicitPairs.push({ target: p.key, value: val, overwrite });
+      }
+    }
+  }
+
+  return {
+    fields: Object.keys(fields).length > 0 ? fields : null,
+    explicitPairs: explicitPairs.length > 0 ? explicitPairs : null,
+    overwrite,
+    explicitUserProvided: explicitPairs.length > 0,
+  };
+}
+
+function extractFieldsFromMessage(text) {
+  return extractFillDetails(text).fields;
 }
 
 function parseActionIntent(text) {
   const trimmed = (text || "").trim();
-  const lower = trimmed.toLowerCase();
+  const stripped = stripBuddyPrefix(trimmed);
+  const lower = stripped.toLowerCase();
 
   // 1. GREETING
   if (
-    /^(?:hi+|hello+|hey+|namaste|pranam|hola|kya haal(?:\s+hai)?|ram ram|good\s+(?:morning|afternoon|evening)|kaise ho)(?:\s+(?:buddy|dost|ai buddy|ji))?[.!?\s]*$/i.test(
+    /^(?:hi+|hello+|hey+|namaste|pranam|hola|kya haal(?:\s+hai)?|ram ram|good\s+(?:morning|afternoon|evening)|kaise ho|buddy)[.!?\s]*$/i.test(
       lower,
     )
   ) {
@@ -1071,35 +1525,49 @@ function parseActionIntent(text) {
     return { type: "HELP" };
   }
 
-  // 3. SCROLL
+  // 3. SCROLL (up, down, left, right, top, bottom, or scroll-to-element)
+  const scrollToTargetMatch =
+    lower.match(/^(.+?)\s+(?:tak|par|pe)\s+scroll\s*(?:karo|kar\s*do|karein)?[.!?\s]*$/i) ||
+    lower.match(/^scroll\s+(?:to|until)\s+(?:the\s+)?(.+?)(?:\s+is\s+visible)?[.!?\s]*$/i);
   if (
-    /^(?:scroll\s+(?:down|up|to top|top|to bottom|bottom)|neeche jao|upar jao|page down|page up)$/i.test(
+    scrollToTargetMatch &&
+    !/^(?:top|bottom|up|down|left|right|last|end|neeche|upar)$/i.test(scrollToTargetMatch[1].trim())
+  ) {
+    const cleanScrollTarget = scrollToTargetMatch[1]
+      .replace(/^(?:is\s+page\s+(?:ke|par)|page\s+(?:ke|par)|the)\s+/i, "")
+      .trim();
+    if (cleanScrollTarget) {
+      return { type: "SCROLL", direction: "to_element", target: cleanScrollTarget };
+    }
+  }
+
+  if (
+    /^(?:(?:thoda|thoda\s+aur|aur|please|ab)?\s*)?(?:scroll\s+(?:down|up|left|right|to\s+top|top|to\s+bottom|bottom)|(?:neeche|niche|upar|left|right|baayein|daayein)\s+scroll(?:\s+karo|\s+kar\s*do|\s+karein)?|(?:page\s+ko\s+)?(?:neeche|niche|upar)\s+(?:jao|le\s+jao|karo|kardo)|neeche\s+jao|upar\s+jao|page\s+down|page\s+up|(?:page\s+ke\s+)?(?:last|bottom|end|aakhir)\s+(?:mein|me|par)\s+(?:jao|le\s+jao)|(?:page\s+ke\s+)?(?:top|shuru)\s+(?:mein|me|par)\s+(?:jao|le\s+jao))[.!?\s]*$/i.test(
       lower,
     )
   ) {
     let dir = "down";
-    if (lower.includes("up") || lower.includes("upar")) dir = "up";
-    else if (lower.includes("top")) dir = "top";
-    else if (lower.includes("bottom")) dir = "bottom";
+    if (/\b(?:up|upar)\b/i.test(lower)) dir = "up";
+    else if (/\b(?:left|baayein|baaye)\b/i.test(lower)) dir = "left";
+    else if (/\b(?:right|daayein|daaye)\b/i.test(lower)) dir = "right";
+    else if (/\b(?:top|shuru)\b/i.test(lower)) dir = "top";
+    else if (/\b(?:bottom|last|end|aakhir)\b/i.test(lower)) dir = "bottom";
     return { type: "SCROLL", direction: dir };
   }
 
-  // 4. MULTI-STEP TASK
-  // Matches chained commands like: "Meesho dashboard open karo, pending orders find karo, first order open karo aur uska order ID batao"
-  const hasStepDelimiters =
-    /(?:,\s*(?:aur|then|and then|uske baad|phir|fir)\s*|\s+(?:aur|then|and then|uske baad|phir|fir)\s+|;\s*)/i.test(
+  // 3b. FORM INSPECT ("Yahan kya fill karna hai?", "What information does this form require?")
+  if (
+    /(?:yahan|yaha|is\s+page\s+(?:par|pe)|is\s+form\s+(?:mein|me|main)|form\s+(?:mein|me|main)|here)\s+kya\s+(?:fill|bharna|bhar|daalna|enter|likhna|details|info|information)\s*(?:karna\s+(?:h|hai|he)|h|hai|he|chahiye)?/i.test(
       lower,
-    );
-  const actionVerbs = lower.match(
-    /\b(?:open|click|press|dabao|fill|bhar|find|dhundo|dhoondho|extract|copy|search|kholo)\b/gi,
-  ) || [];
-
-  if (hasStepDelimiters && actionVerbs.length >= 2) {
-    return { type: "MULTI_STEP", instruction: trimmed };
+    ) ||
+    /(?:what\s+(?:information|info|details|fields)\s+(?:does\s+this\s+form\s+require|do\s+i\s+need\s+to\s+fill|should\s+i\s+fill|are\s+required)|which\s+fields\s+(?:are\s+required|to\s+fill)|is\s+form\s+ke\s+liye\s+kya\s+(?:chahiye|details\s+chahiye))/i.test(
+      lower,
+    )
+  ) {
+    return { type: "FORM_INSPECT" };
   }
 
-  // 5. EXTRACT / SEARCH DATA
-  // E.g. "Search karke ye information nikaalo", "Order ID copy karo", "extract orders"
+  // 4. EXTRACT / SEARCH DATA (check early for "search karke ... nikaalo")
   if (
     /(?:search|dhoondh|dhundh)\s+karke.*(?:nikaalo|nikalo|lao|batao|copy)/i.test(lower) ||
     /^(?:extract|copy|nikaalo|nikalo)\s+(?:the\s+)?(?:order(?:\s*id)?s?|table|data|details|info|information)/i.test(
@@ -1109,32 +1577,179 @@ function parseActionIntent(text) {
       lower,
     )
   ) {
-    let target = trimmed
+    let target = stripped
       .replace(/^(?:search\s+karke|extract|copy|dhoondh\s+ke|dhundh\s+ke)\s+/i, "")
       .replace(/\s+(?:nikaalo|nikalo|lao|batao|copy\s+karo|extract\s+karo)$/i, "")
       .trim();
     return { type: "EXTRACT", target: target || "data" };
   }
 
-  // 6. FORM FILL
-  // E.g. "Ye form fill kar do", "Form bhar do", "Auto fill inputs", "Fill this form",
-  // or "name Rahul, email rahul@gmail.com, city Delhi fill kar do"
-  const isFormTrigger =
-    /(?:form\s+(?:fill|bhar|bharo)|fill\s+(?:the\s+)?form|auto\s*fill|fill\s+(?:all\s+)?(?:inputs|fields)|form\s+bhar\s+do|is\s+form\s+ko\s+bharo)/i.test(
+  // 5. DOCUMENT-BACKED OR EXPLICIT FILL DETAILS CHECK
+  const isDocBackedFill =
+    /(?:aadhaar|aadhar|pan\s+card|pan\s+details|uploaded\s+(?:id|document|doc|file|pdf|image)|document\s+(?:se|details|info)|id\s+(?:se|details))/i.test(
+      lower,
+    ) && /\b(?:fill|type|likh|likho|daal|daalo|bhar|bharo|enter|kar\s*do|karo)\b/i.test(lower);
+
+  const isFieldFromDoc =
+    /(?:is\s+field\s+(?:mein|me|main)|isko|this\s+field)\s+.*?(?:aadhaar|aadhar|pan|dob|address|pincode|name)\s*(?:number|no)?\s*(?:daal|daalo|fill|likho|enter)/i.test(
       lower,
     );
-  const hasKeyValueFields =
-    /\b(?:name|email|phone|city|pincode|address|gstin)\s*[:=]\s*[^\s,]+/i.test(lower);
 
-  if (isFormTrigger || hasKeyValueFields) {
-    const fields = extractFieldsFromMessage(trimmed);
-    return { type: "FORM_FILL", fields };
+  if (
+    (isDocBackedFill || isFieldFromDoc) &&
+    !/\b(?:open|click|press|dabao|kholo)\b/i.test(lower)
+  ) {
+    const reqKeys = extractRequestedDocFieldKeys(lower);
+    return {
+      type: "FORM_FILL",
+      useUploadedDocument: true,
+      targetCurrentBox: isFieldFromDoc,
+      requestedDocKeys: reqKeys.length > 0 ? reqKeys : null,
+      overwrite: /\b(?:change|update|replace|overwrite|badal|badlo)\b/i.test(lower),
+      explicitUserProvided: true,
+    };
   }
 
-  // 7. CLICK / PRESS / TAP ACTION
-  // E.g. "Is page par login button click karo", "submit button dabao", "payments tab par click karo", "cart open karo"
+  const fillDetails = extractFillDetails(stripped);
+  const isFormTrigger =
+    /(?:form\s+(?:fill|bhar|bharo)|fill\s+(?:the\s+|this\s+|is\s+page\s+ka\s+)?form|is\s+page\s+ka\s+form\s+(?:fill|bhar)|auto\s*fill|fill\s+(?:all\s+)?(?:inputs|fields)|form\s+bhar\s+do|is\s+form\s+ko\s+bharo|\bisko\s+fill\s+kar\s*(?:do|o)?|\bis\s+(?:box|field|input)\s+ko\s+fill\s+kar\s*(?:do|o)?|fill\s+this\s*(?:box|field|input)?)/i.test(
+      lower,
+    );
+  const hasSingleFillVerb =
+    /\b(?:fill|type|likh|likho|daal|daalo|bhar|bharo|enter)\b/i.test(lower) &&
+    !/\b(?:click|press|dabao|scroll|point|highlight|find|open|kholo)\b/i.test(lower);
+
+  if (fillDetails.explicitPairs && hasSingleFillVerb) {
+    return {
+      type: "FORM_FILL",
+      fields: fillDetails.fields,
+      explicitPairs: fillDetails.explicitPairs,
+      overwrite: fillDetails.overwrite,
+      explicitUserProvided: fillDetails.explicitUserProvided,
+    };
+  }
+
+  // 6. MULTI-STEP TASK
+  // Matches chained commands like:
+  // - "Meesho dashboard open karo, pending orders find karo, first order open karo aur uska order ID batao"
+  // - "Buddy, profile tab open karo, edit button click karo, meri uploaded ID se naam aur address fill karo."
+  // - "Pehle naam fill karo, phir mobile number"
+  const hasStepDelimiters =
+    /(?:,\s*(?:aur|then|and then|uske baad|phir|fir)\s*|\s+(?:aur|then|and then|uske baad|phir|fir)\s+|;\s*|,\s+)/i.test(
+      lower,
+    );
+  const actionVerbs =
+    lower.match(
+      /\b(?:open|click|press|dabao|fill|type|likh|likho|daal|daalo|bhar|bharo|find|point|highlight|dhundo|dhoondho|extract|copy|search|kholo|scroll|select|check|uncheck|tick)\b/gi,
+    ) || [];
+
+  if (
+    (hasStepDelimiters && actionVerbs.length >= 2) ||
+    (/^pehle\b.+\b(?:phir|fir|uske baad|then)\b/i.test(lower) && actionVerbs.length >= 1)
+  ) {
+    // Special case: "Pehle naam fill karo, phir mobile number" (multi-field fill without navigation/clicks)
+    if (
+      /\b(?:fill|type|likh|daal|bhar)\b/i.test(lower) &&
+      !/\b(?:open|click|press|dabao|kholo|scroll|find|point|extract|copy)\b/i.test(lower)
+    ) {
+      if (fillDetails.explicitPairs) {
+        return {
+          type: "FORM_FILL",
+          fields: fillDetails.fields,
+          explicitPairs: fillDetails.explicitPairs,
+          overwrite: fillDetails.overwrite,
+          explicitUserProvided: fillDetails.explicitUserProvided,
+        };
+      }
+      // Extract requested field names with no values provided (so Buddy checks uploaded doc or asks cleanly instead of inventing!)
+      const segs = lower
+        .split(/\s*(?:,|;|\bphir\b|\bfir\b|\bthen\b|\band then\b|\buske baad\b)\s*/i)
+        .map((s) =>
+          s
+            .replace(/^(?:pehle|first|aur|and|next)\s+/i, "")
+            .replace(/\s+(?:fill\s+kar\s*do|fill\s+karo|fill|type\s+karo|bharo|bhar\s+do|likho|daalo)[.!?\s]*$/i, "")
+            .trim(),
+        )
+        .filter((s) => s.length > 0);
+      if (segs.length >= 1) {
+        return { type: "FORM_FILL", fields: null, requestedFieldNames: segs };
+      }
+    }
+    return { type: "MULTI_STEP", instruction: stripped };
+  }
+
+  // 7. FORM FILL (explicit key-value or general form fill trigger)
+  if (isFormTrigger || fillDetails.explicitPairs) {
+    return {
+      type: "FORM_FILL",
+      fields: fillDetails.fields,
+      explicitPairs: fillDetails.explicitPairs,
+      overwrite: fillDetails.overwrite,
+      explicitUserProvided: fillDetails.explicitUserProvided,
+      useUploadedDocument: Boolean(activeUploadedDocument && !fillDetails.explicitPairs),
+    };
+  }
+
+  // 8. SELECT / DROPDOWN COMMAND
+  const selectMatch =
+    lower.match(/^(?:select|choose|chuno)\s+["']?(.+?)["']?\s+(?:in|from|mein|me)\s+(?:the\s+)?(.+?)(?:\s+dropdown|\s+select)?[.!?\s]*$/i) ||
+    lower.match(/^(.+?)\s+(?:dropdown\s+)?(?:mein|me|main)\s+["']?(.+?)["']?\s+(?:select|choose|chuno)\s*(?:karo|kar\s*do)?[.!?\s]*$/i);
+  if (selectMatch) {
+    const isFirstPattern = /^(?:select|choose|chuno)\b/i.test(lower);
+    const val = (isFirstPattern ? selectMatch[1] : selectMatch[2]).trim();
+    const targetField = normalizeFillTarget(isFirstPattern ? selectMatch[2] : selectMatch[1]);
+    if (val) {
+      return { type: "SELECT", targetField, value: val };
+    }
+  }
+  const simpleSelectMatch = lower.match(/^(.+?)\s+(?:select\s+karo|choose\s+karo|chuno)[.!?\s]*$/i);
+  if (simpleSelectMatch && !/\bradio\b/i.test(lower)) {
+    const words = simpleSelectMatch[1].trim().split(/\s+/);
+    if (words.length >= 2) {
+      return {
+        type: "SELECT",
+        targetField: normalizeFillTarget(words[0]),
+        value: words.slice(1).join(" "),
+      };
+    }
+    return { type: "SELECT", targetField: "", value: simpleSelectMatch[1].trim() };
+  }
+
+  // 9. CHECKBOX / RADIO COMMAND
+  const uncheckMatch =
+    lower.match(/^(.+?)\s+(?:checkbox\s+)?(?:uncheck|untick)\s*(?:karo|kar\s*do)?[.!?\s]*$/i) ||
+    lower.match(/^(?:uncheck|untick)\s+(?:the\s+)?(.+?)(?:\s+checkbox)?[.!?\s]*$/i);
+  if (uncheckMatch) {
+    return { type: "CHECK", target: normalizeFillTarget(uncheckMatch[1]), checked: false };
+  }
+  const checkMatch =
+    lower.match(/^(.+?)\s+(?:checkbox\s+)?(?:check|tick)\s*(?:karo|kar\s*do)?[.!?\s]*$/i) ||
+    lower.match(/^(?:check|tick)\s+(?:the\s+)?(.+?)(?:\s+checkbox)?[.!?\s]*$/i);
+  if (checkMatch) {
+    return { type: "CHECK", target: normalizeFillTarget(checkMatch[1]), checked: true };
+  }
+
+  // 10. POINT / HIGHLIGHT ACTION (STRICT: NEVER CLICKS)
+  const pointTrailingMatch = lower.match(
+    /(.+?)\s+(?:par\s+point\s+karo|pe\s+point\s+karo|ko\s+point\s+karo|par\s+point|pe\s+point|point\s+karo|point\s+kar\s*do|point\s+kijiye|highlight\s+karo|highlight\s+kar\s*do)[.!?\s]*$/i,
+  );
+  const pointLeadingMatch = lower.match(
+    /^(?:point\s+(?:to|at|on)|highlight)\s+(?:the\s+)?(.+?)[.!?\s]*$/i,
+  );
+  if (pointTrailingMatch || pointLeadingMatch) {
+    const raw = pointTrailingMatch ? pointTrailingMatch[1] : pointLeadingMatch[1];
+    const clean = raw
+      .replace(/^(?:is\s+page\s+(?:par|pe|se)|page\s+(?:par|pe|se)|ye|yeh|wo|woh|is|this|the|a|an|kripya|please)\s+/i, "")
+      .replace(/\s+(?:button|tab|link|icon|menu|bar|option|field|input|box)$/i, "")
+      .trim();
+    if (clean.length > 0) {
+      return { type: "POINT", target: clean };
+    }
+  }
+
+  // 11. CLICK / PRESS / TAP ACTION
   const clickTrailingMatch = lower.match(
-    /(.+?)\s+(?:par\s+click\s+karo|pe\s+click\s+karo|ko\s+click\s+karo|par\s+click|pe\s+click|click\s+karo|click\s+kijiye|click\s+do|dabao|daba\s+do|press\s+karo|press\s+kijiye|tap\s+karo|khol\s+do|kholo|open\s+karo)[.!?\s]*$/i,
+    /(.+?)\s+(?:par\s+click\s+karo|pe\s+click\s+karo|ko\s+click\s+karo|par\s+click|pe\s+click|click\s+karo|click\s+kar\s*do|click\s+kijiye|click\s+do|dabao|daba\s+do|press\s+karo|press\s+kar\s*do|press\s+kijiye|tap\s+karo|khol\s+do|kholo|open\s+karo|select\s+karo)[.!?\s]*$/i,
   );
   const clickLeadingMatch = lower.match(
     /^(?:click|press|tap|dabao|open|kholo)\s+(?:on\s+)?(?:the\s+)?(.+)[.!?\s]*$/i,
@@ -1149,9 +1764,12 @@ function parseActionIntent(text) {
     !lower.includes("where")
   ) {
     let raw = clickTrailingMatch ? clickTrailingMatch[1] : clickLeadingMatch[1];
+    if (/^(?:yahan|yaha|here|isko|this|is\s+par|is\s+pe|us\s+par)$/i.test(raw.trim())) {
+      return { type: "CLICK", target: "__CURRENT__", isConsequential: false };
+    }
     let clean = raw
       .replace(/^(?:is\s+page\s+(?:par|pe|se)|page\s+(?:par|pe|se)|ye|yeh|wo|woh|the|a|an|kripya|please|jaldi)\s+/i, "")
-      .replace(/\s+(?:button|tab|link|icon|menu|bar|option)$/i, "")
+      .replace(/\s+(?:button|tab|link|icon|menu|bar|option|radio|checkbox)$/i, "")
       .trim();
 
     if (clean.length > 0) {
@@ -1162,10 +1780,9 @@ function parseActionIntent(text) {
     }
   }
 
-  // 8. FIND / LOCATE ACTION (STRICT: NEVER CLICKS)
-  // E.g. "Order ID find karo", "Login button dhundo", "payment tab kahan hai", "where is submit button"
+  // 12. FIND / LOCATE ACTION (STRICT: NEVER CLICKS)
   const findTrailingMatch = lower.match(
-    /(.+?)\s+(?:find\s+karo|locate\s+karo|search\s+karo|dhoondho|dhundo|dhoondh\s+ke\s+dikhao|kaha(?:n)?\s+(?:hai|h|he)|kidhar\s+(?:hai|h|he)|kdr\s+(?:hai|h|he)|khaa\s+(?:hai|h|he)|dikhao|batao)[.!?\s]*$/i,
+    /(.+?)\s+(?:find\s+karo|locate\s+karo|search\s+karo|dhoondho|dhundo|dhoondh\s+ke\s+dikhao|kaha(?:n)?\s+(?:hai|h|he)|kidhar\s+(?:hai|h|he)|kdr\s+(?:hai|h|he)|khaa\s+(?:hai|h|he)|kha\s+(?:hai|h|he|karna\s+h)|dikhao|batao)[.!?\s]*$/i,
   );
   const findLeadingMatch = lower.match(
     /^(?:find|locate|search(?:\s+for)?|where\s+is|where's|wheres|where\s+are|show\s+me|dhoondho|dhundo)\s+(?:the\s+)?(.+)[.!?\s]*$/i,
@@ -1180,7 +1797,7 @@ function parseActionIntent(text) {
     let raw = findTrailingMatch ? findTrailingMatch[1] : findLeadingMatch[1];
     let clean = raw
       .replace(/^(?:is\s+page\s+(?:par|pe|se)|page\s+(?:par|pe|se)|ye|yeh|wo|woh|the|a|an|kripya|please)\s+/i, "")
-      .replace(/\s+(?:button|tab|link|icon|menu|bar|option|field)$/i, "")
+      .replace(/\s+(?:button|tab|link|icon|menu|bar|option|field|box)$/i, "")
       .trim();
 
     if (clean.length > 0) {
@@ -1188,7 +1805,7 @@ function parseActionIntent(text) {
     }
   }
 
-  // 9. EXPLAIN PAGE
+  // 13. EXPLAIN PAGE
   if (
     /^(?:explain\s+(?:this\s+)?page|page\s+explain\s+karo|summarize\s+page|what\s+is\s+this\s+page)[.!?\s]*$/i.test(
       lower,
@@ -1197,7 +1814,7 @@ function parseActionIntent(text) {
     return { type: "EXPLAIN" };
   }
 
-  // 10. Default: GENERAL ASK / QUESTION
+  // 14. Default: GENERAL ASK / QUESTION
   return { type: "ASK" };
 }
 
@@ -1210,8 +1827,8 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     $("promptInput").value = "";
     setRigEmotion("celebrate", "Namaste!");
     const greetingText = isHindi
-      ? `Namaste! Main aapka ${active.name} hoon. Main is page par aapki poori help karne ke liye ready hoon—buttons click karna, forms bharna, data dhoondhna ya workflows automate karna. Bataiye kya karna hai!`
-      : `Hey there! I am ${active.name}. I am active on this page and ready to click buttons, fill forms, locate elements, or automate multi-step workflows! What are we working on?`;
+      ? `Namaste! Main aapka ${active.name} hoon. Main is page par aapke liye buttons click karne, forms fill karne, scroll karne aur elements par point karne ke liye ready hoon. Bataiye kya karna hai!`
+      : `Hey there! I am ${active.name}. I am active on this page and ready to click buttons, fill forms, scroll, point to elements, or automate workflows! What would you like me to do?`;
     appendHistory("buddy", greetingText);
     $("statusText").textContent = `Ready with ${active.name}.`;
     speakResponse(greetingText, "happy");
@@ -1223,8 +1840,8 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     $("promptInput").value = "";
     setRigEmotion("happy", "Ready");
     const helpMsg = isHindi
-      ? `Main aapka ${active.name} hoon! Main aapke browser par ye sab directly perform kar sakta hoon:\n• Page par koi bhi button ya tab click karna ('login button click karo')\n• Forms automatically fill karna aur verify karna ('ye form fill kar do')\n• Specific elements dhoondh kar highlight karna ('Order ID find karo')\n• Tables aur orders extract karna ('Search karke details nikaalo')\n• Multi-step autonomous browser tasks execute karna`
-      : `I am ${active.name}, your browser companion! I directly perform actions across your tabs:\n• Click any button or tab (e.g. 'click login button')\n• Auto-fill form fields safely ('fill this form')\n• Locate & point to elements without clicking ('find order ID')\n• Extract data & copy to clipboard ('search and extract order details')\n• Execute multi-step browser tasks autonomously`;
+      ? `Main aapka ${active.name} hoon! Aap mujhe seedhe chat mein koi bhi action bol sakte hain:\n• Point: "address field par point karo"\n• Click: "submit button click karo"\n• Fill: "is form mein naam Murshad Ali fill kar do"\n• Scroll: "neeche scroll karo" ya "page ke last mein jao"\n• Multi-step: "Meesho dashboard open karo, pending orders find karo..."`
+      : `I am ${active.name}, your browser action companion! Just tell me what to do:\n• Point: "Point to address field" (highlights without clicking)\n• Click: "Click submit button"\n• Fill: "Fill name Murshad Ali in this form"\n• Scroll: "Scroll down" / "Scroll to footer"\n• Multi-step: Chain steps in one message`;
     appendHistory("buddy", helpMsg);
     $("statusText").textContent = `Capabilities of ${active.name}.`;
     speakResponse(helpMsg, "happy");
@@ -1234,14 +1851,147 @@ async function executeNaturalBrowserAction(intent, trimmed) {
   if (intent.type === "SCROLL") {
     appendHistory("user", trimmed);
     $("promptInput").value = "";
-    await executeScroll(intent.direction);
+    await executeScroll(intent.direction, 450, intent.target || null, true);
     return true;
   }
 
   if (intent.type === "MULTI_STEP") {
     appendHistory("user", trimmed);
     $("promptInput").value = "";
-    startMultiActionPlan(trimmed);
+    startMultiActionPlan(intent.instruction || trimmed, true);
+    return true;
+  }
+
+  if (intent.type === "SELECT") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    setRigEmotion("working", "Selecting…");
+    $("statusText").textContent = `Selecting "${intent.value}"…`;
+    const res = await chrome.runtime.sendMessage({
+      type: "EXECUTE_ACTION",
+      action: "select",
+      value: intent.value,
+      options: { targetField: intent.targetField || "", text: intent.value },
+    });
+    if (res?.ok) {
+      setRigEmotion("happy", "Selected!");
+      const msg = isHindi
+        ? `✅ Dropdown mein "${intent.value}" select kar diya hai.`
+        : `✅ ${res.message}`;
+      $("statusText").textContent = msg;
+      appendHistory("buddy", msg);
+      speakResponse(msg, "happy");
+    } else {
+      setRigEmotion("idle", "Notice");
+      const failMsg = res?.message || `Could not select "${intent.value}" on this page.`;
+      $("statusText").textContent = failMsg;
+      appendHistory("buddy", `⚠️ ${failMsg}`);
+    }
+    return true;
+  }
+
+  if (intent.type === "CHECK") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    setRigEmotion("working", intent.checked ? "Checking…" : "Unchecking…");
+    const res = await chrome.runtime.sendMessage({
+      type: "EXECUTE_ACTION",
+      action: intent.checked ? "check" : "uncheck",
+      value: intent.target,
+      options: { text: intent.target },
+    });
+    if (res?.ok) {
+      setRigEmotion("happy", "Updated!");
+      const msg = isHindi
+        ? `✅ "${intent.target}" ko ${intent.checked ? "check" : "uncheck"} kar diya hai.`
+        : `✅ ${res.message}`;
+      $("statusText").textContent = msg;
+      appendHistory("buddy", msg);
+      speakResponse(msg, "happy");
+    } else {
+      setRigEmotion("idle", "Notice");
+      const failMsg = res?.message || `Could not find checkbox "${intent.target}".`;
+      $("statusText").textContent = failMsg;
+      appendHistory("buddy", `⚠️ ${failMsg}`);
+    }
+    return true;
+  }
+
+  if (intent.type === "FORM_INSPECT") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    setRigEmotion("thinking", "Inspecting…");
+    $("statusText").textContent = "Inspecting visible form fields on active page…";
+
+    const snapRes = await chrome.runtime.sendMessage({ type: "GET_PAGE_SNAPSHOT" });
+    const forms = snapRes?.snapshot?.forms || [];
+    if (!snapRes?.ok || forms.length === 0) {
+      setRigEmotion("confused", "No forms");
+      const noFormMsg = isHindi
+        ? "Is page par koi visible form input field detect nahi hua. Agar form neeche hai to scroll karein ya page check karein."
+        : "No visible form fields were detected on this page. Try scrolling if the form is further down.";
+      $("statusText").textContent = noFormMsg;
+      appendHistory("buddy", noFormMsg);
+      speakResponse(noFormMsg, "confused");
+      return true;
+    }
+
+    const reqFields = [];
+    const optFields = [];
+    const filledFields = [];
+    for (const f of forms) {
+      const label = f.name || f.placeholder || f.role || f.tag || "Input field";
+      const hasVal = Boolean(f.value && String(f.value).trim());
+      if (hasVal) filledFields.push(label);
+      else if (f.required || f.invalid) reqFields.push(label + (f.invalid ? " (invalid)" : ""));
+      else optFields.push(label);
+    }
+
+    const docFields = activeUploadedDocument?.fields || {};
+    const docMatches = [];
+    if (Object.keys(docFields).length > 0) {
+      for (const f of forms) {
+        const fname = String(f.name || f.placeholder || "").toLowerCase();
+        for (const dk of Object.keys(docFields)) {
+          if (
+            fname.includes(dk.toLowerCase()) ||
+            (dk === "aadhaarNumber" && /aadhaar|aadhar|uid/i.test(fname)) ||
+            (dk === "panNumber" && /\bpan\b/i.test(fname)) ||
+            (dk === "phone" && /phone|mobile|contact/i.test(fname)) ||
+            (dk === "pincode" && /pin|zip|postal/i.test(fname))
+          ) {
+            docMatches.push(f.name || f.placeholder || dk);
+            break;
+          }
+        }
+      }
+    }
+
+    const parts = [];
+    if (isHindi) {
+      parts.push(`📋 Is page ("${snapRes.snapshot.title || "Current Page"}") par ${forms.length} form fields hain:`);
+      if (reqFields.length) parts.push(`• Required / Empty: ${reqFields.join(", ")}`);
+      if (optFields.length) parts.push(`• Other Empty Fields: ${optFields.join(", ")}`);
+      if (filledFields.length) parts.push(`• Already Filled: ${filledFields.join(", ")}`);
+      if (docMatches.length > 0) {
+        parts.push(`• ✅ Aapke uploaded ${activeUploadedDocument.documentType} se auto-fill ho sakte hain: ${[...new Set(docMatches)].join(", ")}. ("Is page ka form fill kar do" bolein)`);
+      } else if (reqFields.length + optFields.length > 0) {
+        parts.push(`• 💡 Aap apna Aadhaar/PAN/document 📎 Attach kar sakte hain ya chat mein details likh kar fill karwa sakte hain.`);
+      }
+    } else {
+      parts.push(`📋 This form requires ${forms.length} field(s) on "${snapRes.snapshot.title || "Current Page"}":`);
+      if (reqFields.length) parts.push(`• Required / Empty: ${reqFields.join(", ")}`);
+      if (optFields.length) parts.push(`• Other Empty Fields: ${optFields.join(", ")}`);
+      if (filledFields.length) parts.push(`• Already Filled: ${filledFields.join(", ")}`);
+      if (docMatches.length > 0) {
+        parts.push(`• ✅ Ready to auto-fill from uploaded ${activeUploadedDocument.documentType}: ${[...new Set(docMatches)].join(", ")}.`);
+      }
+    }
+    const inspectMsg = parts.join("\n");
+    setRigEmotion("happy", "Inspected");
+    $("statusText").textContent = `Inspected ${forms.length} form field(s).`;
+    appendHistory("buddy", inspectMsg);
+    speakResponse(inspectMsg, "happy");
     return true;
   }
 
@@ -1249,8 +1999,18 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     appendHistory("user", trimmed);
     $("promptInput").value = "";
 
-    // Consequential actions approval gate (payment, purchase, deletion)
-    if (intent.isConsequential) {
+    // Consequential actions approval gate (payment, purchase, deletion, government form submission)
+    let needsConfirm = Boolean(intent.isConsequential);
+    try {
+      const [activeT] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      const activeUrl = (activeT?.url || "").toLowerCase();
+      const isGovSite = /\.gov(?:\.in)?|uidai|incometax|gst\.gov|parivahan|passportindia/i.test(activeUrl);
+      if (isGovSite && /submit|final|apply|file\s+return|confirm|proceed/i.test(intent.target)) {
+        needsConfirm = true;
+      }
+    } catch {}
+
+    if (needsConfirm) {
       pendingAction = {
         type: "click",
         value: intent.target,
@@ -1268,12 +2028,17 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     }
 
     setRigEmotion("working", "Clicking…");
-    $("statusText").textContent = `Clicking "${intent.target}" on active page…`;
+    $("statusText").textContent =
+      intent.target === "__CURRENT__"
+        ? "Clicking highlighted element…"
+        : `Clicking "${intent.target}" on active page…`;
 
     const res = await chrome.runtime.sendMessage({
       type: "EXECUTE_ACTION",
       action: "click",
+      selector: intent.target === "__CURRENT__" ? lastHighlightSelector || undefined : undefined,
       value: intent.target,
+      options: { fallbackSelector: lastHighlightSelector || undefined },
     });
 
     if (res?.ok) {
@@ -1286,18 +2051,30 @@ async function executeNaturalBrowserAction(intent, trimmed) {
         outcome += isHindi ? ` Page naye URL par navigate ho gaya.` : ` Page navigated.`;
       } else if (res.stateChange === "modal_opened") {
         outcome += isHindi ? ` Dialog/popup open ho gaya.` : ` Modal dialog opened.`;
+      } else if (res.stateChange === "toggled" || res.stateChange === "selected") {
+        outcome += ` (${res.stateChange})`;
       }
       $("statusText").textContent = outcome;
       appendHistory("buddy", `✅ ${outcome}`);
       speakResponse(outcome, "happy");
     } else {
       setRigEmotion("idle", "Not found");
-      const failMsg = res?.message || (isHindi
-        ? `Active page par "${intent.target}" button nahi mila. Kripya check karein ya page scroll karein.`
-        : `Could not find button "${intent.target}" on this page.`);
+      const failMsg =
+        res?.message ||
+        (isHindi
+          ? `Active page par "${intent.target}" button nahi mila. Kripya check karein ya page scroll karein.`
+          : `Could not find button "${intent.target}" on this page.`);
       $("statusText").textContent = failMsg;
       appendHistory("buddy", `⚠️ ${failMsg}`);
     }
+    return true;
+  }
+
+  if (intent.type === "POINT") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    // STRICT RULE: NEVER CLICK
+    await executeFind(intent.target, "point");
     return true;
   }
 
@@ -1312,7 +2089,177 @@ async function executeNaturalBrowserAction(intent, trimmed) {
   if (intent.type === "FORM_FILL") {
     appendHistory("user", trimmed);
     $("promptInput").value = "";
-    await startSmartFormFill(intent.fields);
+
+    // 1. Uploaded document auto-fill ("Aadhaar details fill kar do", "is page ka form fill kar do", "Is field mein Aadhaar number daalo")
+    if (intent.useUploadedDocument) {
+      if (!activeUploadedDocument || Object.keys(activeUploadedDocument.fields || {}).length === 0) {
+        setRigEmotion("confused", "Need Doc");
+        const askDocMsg = isHindi
+          ? "📄 Abhi koi readable document upload nahi hai. Kripya neeche 📎 Attach button se apna Aadhaar, PAN, invoice ya PDF/image upload karein—main kabhi bhi fake details nahi banata."
+          : "📄 No readable document is uploaded yet. Please attach your Aadhaar, PAN, invoice, or ID image/PDF using 📎 Attach so I can fill verified details without guessing.";
+        $("statusText").textContent = "Please upload a document to auto-fill.";
+        appendHistory("buddy", askDocMsg);
+        speakResponse(askDocMsg, "confused");
+        return true;
+      }
+
+      if (activeUploadedDocument.conflicts?.length > 0) {
+        setRigEmotion("concerned", "Clarify");
+        const conflictSummary = activeUploadedDocument.conflicts
+          .map((c) => `${c.field} ("${c.prev}" vs "${c.next}")`)
+          .join(", ");
+        const askConflictMsg = isHindi
+          ? `⚠️ Uploaded documents mein in fields ki alag-alag values hain: ${conflictSummary}. Kripya confirm karein ki kaunsi value fill karni hai.`
+          : `⚠️ Conflicting values detected across uploaded documents for: ${conflictSummary}. Please clarify which value you want me to enter.`;
+        $("statusText").textContent = "Clarification needed for conflicting document data.";
+        appendHistory("buddy", askConflictMsg);
+        speakResponse(askConflictMsg, "concerned");
+        return true;
+      }
+
+      const docFields = activeUploadedDocument.fields;
+      let explicitPairs = [];
+
+      if (intent.targetCurrentBox && intent.requestedDocKeys?.length) {
+        const docKey = intent.requestedDocKeys[0];
+        const val = docFields[docKey];
+        if (!val) {
+          const missMsg = isHindi
+            ? `⚠️ Uploaded document mein "${docKey}" clear nahi mila. Kripya ise manually enter karein.`
+            : `⚠️ Uploaded document did not contain a clear value for "${docKey}". Please enter it directly.`;
+          appendHistory("buddy", missMsg);
+          return true;
+        }
+        explicitPairs.push({
+          target: "__CURRENT__",
+          value: val,
+          overwrite: Boolean(intent.overwrite),
+        });
+      } else if (intent.requestedDocKeys?.length) {
+        const missingReq = [];
+        for (const k of intent.requestedDocKeys) {
+          if (docFields[k]) {
+            explicitPairs.push({ target: k, value: docFields[k], overwrite: Boolean(intent.overwrite) });
+          } else {
+            missingReq.push(k);
+          }
+        }
+        if (missingReq.length > 0 && explicitPairs.length === 0) {
+          const missMsg = isHindi
+            ? `⚠️ Uploaded document mein yeh requested fields clear nahi mile: ${missingReq.join(", ")}.`
+            : `⚠️ Could not find clear values in uploaded document for: ${missingReq.join(", ")}.`;
+          appendHistory("buddy", missMsg);
+          return true;
+        }
+      } else {
+        explicitPairs = Object.entries(docFields)
+          .filter(([, v]) => Boolean(v))
+          .map(([k, v]) => ({ target: k, value: v, overwrite: Boolean(intent.overwrite) }));
+      }
+
+      await startSmartFormFill(null, {
+        explicitPairs,
+        overwrite: Boolean(intent.overwrite),
+        explicitUserProvided: true,
+        fromUploadedDocument: true,
+      });
+
+      if (activeUploadedDocument.ambiguousFields?.length > 0) {
+        const ambMsg = isHindi
+          ? `ℹ️ Note: Document mein yeh fields unclear/blurry the aur auto-fill nahi kiye gaye: ${activeUploadedDocument.ambiguousFields.join(", ")}.`
+          : `ℹ️ Note: These fields were unclear in the document and were not guessed: ${activeUploadedDocument.ambiguousFields.join(", ")}.`;
+        appendHistory("buddy", ambMsg);
+      }
+      return true;
+    }
+
+    // 2. User named specific fields (e.g. "Pehle naam fill karo, phir mobile number") without values:
+    // Check uploaded document first, then non-sensitive userProfile; otherwise ask cleanly!
+    if (intent.requestedFieldNames && intent.requestedFieldNames.length > 0 && !intent.explicitPairs) {
+      const { userProfile } = await chrome.storage.local.get("userProfile").catch(() => ({}));
+      const docFields = activeUploadedDocument?.fields || {};
+      const matchedPairs = [];
+      const missingFields = [];
+      for (const fname of intent.requestedFieldNames) {
+        const normF = fname.toLowerCase();
+        const docVal =
+          (normF.includes("naam") || normF.includes("name") ? docFields.name : undefined) ||
+          (normF.includes("mobile") || normF.includes("phone") ? docFields.phone : undefined) ||
+          (normF.includes("email") ? docFields.email : undefined) ||
+          (normF.includes("address") || normF.includes("pata") ? docFields.address : undefined) ||
+          (normF.includes("aadhaar") || normF.includes("aadhar") ? docFields.aadhaarNumber : undefined) ||
+          (normF.includes("pan") ? docFields.panNumber : undefined) ||
+          (normF.includes("dob") ? docFields.dob : undefined) ||
+          (normF.includes("pin") ? docFields.pincode : undefined);
+        const savedVal =
+          docVal ||
+          userProfile?.[normF] ||
+          (normF.includes("naam") || normF.includes("name") ? userProfile?.name : undefined) ||
+          (normF.includes("mobile") || normF.includes("phone") ? userProfile?.phone : undefined) ||
+          (normF.includes("email") ? userProfile?.email : undefined);
+        if (savedVal) {
+          matchedPairs.push({ target: normF, value: savedVal, overwrite: false });
+        } else {
+          missingFields.push(fname);
+        }
+      }
+      if (matchedPairs.length > 0) {
+        await startSmartFormFill(null, {
+          explicitPairs: matchedPairs,
+          explicitUserProvided: true,
+          fromUploadedDocument: Boolean(activeUploadedDocument),
+        });
+      }
+      if (missingFields.length > 0) {
+        const askMsg = isHindi
+          ? `Main in fields ko fill karne ke liye ready hoon: ${missingFields.join(", ")}. Kripya inki values likhein ya document 📎 Attach karein taaki main bina guess kiye sahi details bhar sakoon!`
+          : `I am ready to fill: ${missingFields.join(", ")}. Please share the exact values or attach a document so I never invent your personal info.`;
+        appendHistory("buddy", askMsg);
+        $("statusText").textContent = "Waiting for field values…";
+        speakResponse(askMsg, "curious");
+      }
+      return true;
+    }
+
+    // 3. Explicit key-value pairs OR generic "form fill kar do" without document
+    if (!intent.explicitPairs && !intent.fields) {
+      // Check saved userProfile (excluding sensitive fields) before asking user
+      const { userProfile } = await chrome.storage.local.get("userProfile").catch(() => ({}));
+      const profilePairs = userProfile
+        ? Object.entries(userProfile)
+            .filter(([, v]) => typeof v === "string" && v.trim())
+            .map(([k, v]) => ({ target: k, value: v, overwrite: false }))
+        : [];
+      if (profilePairs.length > 0) {
+        await startSmartFormFill(null, {
+          explicitPairs: profilePairs,
+          overwrite: Boolean(intent.overwrite),
+          explicitUserProvided: true,
+        });
+        return true;
+      }
+
+      // Inspect form first & ask cleanly without inventing missing personal info!
+      setRigEmotion("curious", "Need Details");
+      const snapRes = await chrome.runtime.sendMessage({ type: "GET_PAGE_SNAPSHOT" });
+      const fieldNames = (snapRes?.snapshot?.forms || [])
+        .map((f) => f.name || f.placeholder || f.role)
+        .filter(Boolean)
+        .slice(0, 8);
+      const askDetailsMsg = isHindi
+        ? `📋 Is page par yeh fields hain${fieldNames.length ? ` (${fieldNames.join(", ")})` : ""}. Main bina aapki jankari ke fake details nahi bharunga! Kripya 📎 Attach se apna Aadhaar/PAN/document upload karein ya chat mein details likhein (jaise: "naam ..., phone ..., city ...").`
+        : `📋 Detected form fields${fieldNames.length ? ` (${fieldNames.join(", ")})` : ""}. I never invent personal details—please attach an ID/document with 📎 Attach or type the values you want filled.`;
+      $("statusText").textContent = "Awaiting document or field details.";
+      appendHistory("buddy", askDetailsMsg);
+      speakResponse(askDetailsMsg, "curious");
+      return true;
+    }
+
+    await startSmartFormFill(intent.fields, {
+      explicitPairs: intent.explicitPairs,
+      overwrite: Boolean(intent.overwrite),
+      explicitUserProvided: Boolean(intent.explicitUserProvided),
+    });
     return true;
   }
 
@@ -1334,7 +2281,10 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       const msg = `📋 ${res.message || "Extracted data to clipboard."}\nItems:\n${(res.copiedItems || []).map((it) => `• ${it}`).join("\n")}`;
       appendHistory("buddy", msg);
       $("statusText").textContent = res.message;
-      speakResponse(isHindi ? `Data extract karke clipboard mein copy kar diya hai.` : `Extracted data to clipboard.`, "happy");
+      speakResponse(
+        isHindi ? `Data extract karke clipboard mein copy kar diya hai.` : `Extracted data to clipboard.`,
+        "happy",
+      );
     } else {
       setRigEmotion("idle", "Idle");
       const failMsg = res?.message || "Could not find matching tabular or list items to extract.";
@@ -1380,16 +2330,29 @@ async function sendQuery(question, intent) {
   try {
     const active = getActiveBuddy();
     const isHindi = active.defaultLanguage !== "english";
-    const { preferredModel } = await chrome.storage.local.get("preferredModel");
+    const { preferredModel, selectedProvider: storedProvider } = await chrome.storage.local.get([
+      "preferredModel",
+      "selectedProvider",
+    ]);
+    const activeProv = selectedProvider || storedProvider || "gemini";
     const detachPage = $("pageContextToggle") && !$("pageContextToggle").checked;
-    const finalIntent = detachPage ? "general" : (intent || "answer");
+    const finalIntent = detachPage ? "general" : intent || "answer";
+    const uploadedDocumentSummary = activeUploadedDocument
+      ? {
+          fileName: activeUploadedDocument.fileName,
+          documentType: activeUploadedDocument.documentType || "other",
+          availableFields: Object.keys(activeUploadedDocument.fields || {}),
+        }
+      : undefined;
     const res = await chrome.runtime.sendMessage({
       type: "ASK",
       question: trimmed,
       intent: finalIntent,
       history: historyPayload,
+      uploadedDocumentSummary,
       buddySlug: active.slug,
       customBuddyId: active.isCustom ? active.id || active.slug.replace("custom:", "") : undefined,
+      preferredProvider: activeProv,
       preferredModel: preferredModel && preferredModel !== "auto" ? preferredModel : undefined,
     });
 
@@ -1410,6 +2373,16 @@ async function sendQuery(question, intent) {
     appendHistory("buddy", currentAnswer);
     recordConversationTurn(trimmed, currentAnswer);
 
+    if (res.providerWarning) {
+      appendProviderWarningNotice(res.providerWarning);
+    }
+
+    const modeRec =
+      res.recommendedMode || getLocalModeRecommendation(trimmed, active.slug, active.defaultLanguage);
+    if (modeRec) {
+      appendModeRecommendationNotice(modeRec);
+    }
+
     // If AI planned an action, actually execute it instead of only explaining!
     if (res.actionType === "click" && (res.targetSelector || res.targetText)) {
       setRigEmotion("working", "Acting");
@@ -1429,6 +2402,8 @@ async function sendQuery(question, intent) {
       }
     } else if (res.actionType === "form_fill") {
       await startSmartFormFill();
+    } else if (res.actionType === "scroll") {
+      await executeScroll(res.scrollDirection || "down", 450, res.scrollTarget || null, true);
     }
 
     lastHighlightSelector = res.highlightSelector || null;
@@ -1469,11 +2444,15 @@ async function sendQuery(question, intent) {
 }
 
 // --- SMART FORM FILLING WORKFLOW ---
-async function startSmartFormFill(sampleData = null) {
+async function startSmartFormFill(sampleData = null, extraOpts = {}) {
+  const active = getActiveBuddy();
+  const isHindi = active.defaultLanguage !== "english";
   if ($("formFillCard")) $("formFillCard").hidden = false;
-  $("statusText").textContent = "Inspecting form fields on active page…";
+  $("statusText").textContent = "Inspecting & filling form fields on active page…";
 
-  const dataToFill = sampleData || {
+  const hasExplicit = Boolean(extraOpts?.explicitPairs?.length) || Boolean(sampleData);
+
+  const dataToFill = sampleData || (extraOpts?.explicitPairs ? null : {
     name: "Murshid Ali",
     legal_name: "Ali Enterprises Pvt Ltd",
     trade_name: "Ali Retail & Co",
@@ -1484,17 +2463,38 @@ async function startSmartFormFill(sampleData = null) {
     city: "Mumbai",
     state: "Maharashtra",
     pincode: "400001",
-  };
+  });
+
+  // Save explicitly provided non-sensitive user preferences to local userProfile for future sequential convenience
+  if (extraOpts?.explicitUserProvided && extraOpts?.explicitPairs) {
+    try {
+      const { userProfile = {} } = await chrome.storage.local.get("userProfile");
+      const SENSITIVE_KEY = /pass|otp|\bpin\b|cvv|cvc|secret|token|card/i;
+      let changed = false;
+      for (const p of extraOpts.explicitPairs) {
+        if (p.target && p.target !== "__CURRENT__" && !SENSITIVE_KEY.test(p.target) && p.value) {
+          userProfile[p.target] = p.value;
+          changed = true;
+        }
+      }
+      if (changed) await chrome.storage.local.set({ userProfile });
+    } catch {}
+  }
 
   const res = await chrome.runtime.sendMessage({
     type: "SMART_FILL_FORM",
     fields: dataToFill,
-    options: { overwrite: false }, // Preserves existing user data!
+    options: {
+      overwrite: Boolean(extraOpts?.overwrite),
+      explicitPairs: extraOpts?.explicitPairs || undefined,
+      explicitUserProvided: Boolean(extraOpts?.explicitUserProvided),
+      fromUploadedDocument: Boolean(extraOpts?.fromUploadedDocument),
+      fallbackSelector: lastHighlightSelector || undefined,
+    },
   });
 
   const reportEl = $("formFillReport");
-  if (!reportEl) return;
-  reportEl.hidden = false;
+  if (reportEl) reportEl.hidden = false;
 
   if (res?.ok && res.results) {
     const { filled, preserved, skipped, errors } = res.results;
@@ -1502,7 +2502,7 @@ async function startSmartFormFill(sampleData = null) {
 
     if (filled.length > 0) {
       lines.push(
-        `✅ Filled & verified (${filled.length}): ${filled.map((f) => f.field).join(", ")}`,
+        `✅ Filled & verified (${filled.length}): ${filled.map((f) => `${f.field} = "${f.value}"`).join(", ")}`,
       );
     }
     if (preserved.length > 0) {
@@ -1510,46 +2510,72 @@ async function startSmartFormFill(sampleData = null) {
         `🔒 Preserved existing values (${preserved.length}): ${preserved.map((p) => p.field).join(", ")}`,
       );
     }
-    if (skipped.length > 0) {
+    if (skipped.length > 0 && (hasExplicit || filled.length === 0)) {
       lines.push(
-        `🛡️ Skipped (${skipped.length}): ${skipped.map((s) => s.key || s.field).join(", ")}`,
+        `🛡️ Skipped (${skipped.length}): ${skipped.map((s) => `${s.key === "__CURRENT__" ? "target box" : s.key} (${s.reason})`).join(", ")}`,
       );
     }
     if (errors.length > 0) {
       lines.push(`⚠️ Issues: ${errors.map((e) => e.key).join(", ")}`);
     }
 
-    if (lines.length === 0) {
-      reportEl.textContent =
-        "No matching inputs found on this page. Navigate to a form page to fill.";
-    } else {
-      reportEl.innerHTML = lines.join("<br>");
+    if (reportEl) {
+      reportEl.innerHTML =
+        lines.length === 0
+          ? "No matching inputs found on this page. Navigate to a form page to fill."
+          : lines.join("<br>");
     }
 
-    setRigEmotion("happy", "Filled");
-    $("statusText").textContent =
-      `Form filled: ${filled.length} verified, ${preserved.length} preserved.`;
-    appendHistory(
-      "buddy",
-      `📝 Smart Form Fill complete: ${filled.length} fields filled & verified, ${preserved.length} preserved.`,
-    );
+    if (filled.length > 0) {
+      setRigEmotion("happy", "Filled");
+      $("statusText").textContent =
+        `Filled ${filled.length} field${filled.length > 1 ? "s" : ""} & verified.`;
+      const summaryMsg = isHindi
+        ? `📝 Maine ${filled.map((f) => `"${f.field}" mein "${f.value}"`).join(", ")} fill aur verify kar diya hai!${
+            preserved.length > 0
+              ? ` (${preserved.length} pehle se bhare fields ko safe rakha gaya hai)`
+              : ""
+          }`
+        : `📝 Filled & verified ${filled.length} field(s): ${filled.map((f) => `${f.field}="${f.value}"`).join(", ")}.${
+            preserved.length > 0 ? ` Preserved ${preserved.length} existing field(s).` : ""
+          }`;
+      appendHistory("buddy", summaryMsg);
+      speakResponse(summaryMsg, "happy");
+    } else if (preserved.length > 0) {
+      setRigEmotion("idle", "Preserved");
+      const presMsg = isHindi
+        ? `🔒 Field "${preserved.map((p) => p.field).join(", ")}" mein pehle se data bhara hua hai. Agar aap badalna chahte hain to "change karke <nayi value> kar do" bolein.`
+        : `🔒 Existing data in "${preserved.map((p) => p.field).join(", ")}" was preserved. Say "change <field> to <value>" if you want to overwrite it.`;
+      $("statusText").textContent = "Existing field values preserved.";
+      appendHistory("buddy", presMsg);
+    } else {
+      setRigEmotion("confused", "Not found");
+      const notFoundMsg = isHindi
+        ? `⚠️ Is page par matching editable input field nahi mila. Kripya pehle field par point karein ya page scroll karein.`
+        : `⚠️ Could not find matching editable input field on this page.`;
+      $("statusText").textContent = notFoundMsg;
+      appendHistory("buddy", notFoundMsg);
+    }
 
-    // Explicit User-Confirmation Gate before submission
-    if (res.results.pendingSubmission) {
+    // Explicit User-Confirmation Gate before submission (only when user filled multiple form fields, not a quick search box)
+    if (res.results.pendingSubmission && filled.length >= 2) {
       pendingAction = {
         type: "click_submit",
         selector: res.results.pendingSubmission.submitButtonSelector || 'button[type="submit"]',
         text: res.results.pendingSubmission.submitButtonText || "Submit Form",
       };
       if ($("confirmDesc")) {
-        $("confirmDesc").textContent =
-          `All ${filled.length} fields filled & verified. Would you like Buddy to submit the form via "${pendingAction.text}"?`;
+        $("confirmDesc").textContent = isHindi
+          ? `${filled.length} fields fill aur verify ho gaye hain. Kya Buddy "${pendingAction.text}" se form submit kare?`
+          : `All ${filled.length} fields filled & verified. Would you like Buddy to submit the form via "${pendingAction.text}"?`;
       }
       if ($("confirmCard")) $("confirmCard").hidden = false;
       setRigEmotion("thinking", "Confirm");
     }
   } else {
-    reportEl.textContent = res?.message || "Could not fill form on this page.";
+    const errText = res?.message || "Could not fill form on this page.";
+    if (reportEl) reportEl.textContent = errText;
+    appendHistory("buddy", `⚠️ ${errText}`);
   }
 }
 
@@ -1640,23 +2666,23 @@ function buildMultiActionPlan(instruction) {
       status: "pending",
     });
   } else {
-    // General parser: split on conjunctions, semicolons, and commas
+    // General parser: split on English & Hinglish conjunctions, semicolons, and commas
     const segments = trimmed
       .split(
-        /(?:\r?\n|\s*(?:then|and then|after that|next|finally)\s*|[;]\s*|,\s*(?:and\s+)?|\s+and\s+(?=(?:go|open|click|press|select|find|copy|type|fill|submit|search|verify|extract|purchase|delete|confirm)\b)|\s*\d+[\.\)]\s+)/i,
+        /(?:\r?\n|\s*(?:then|and then|after that|next|finally|phir|fir|uske baad)\s*|[;]\s*|,\s*(?:aur\s+|and\s+)?|\s+(?:aur|and)\s+(?=(?:go|open|click|press|select|find|point|highlight|copy|type|fill|submit|search|verify|extract|purchase|delete|confirm|scroll|likho|daalo|bharo|dabao|kholo)\b)|\s*\d+[\.\)]\s+)/i,
       )
       .map((s) =>
         s
           .trim()
           .replace(/^[\d+\.\-\*\)]\s*/, "")
-          .replace(/^and\s+/i, ""),
+          .replace(/^(?:and|aur|pehle|first)\s+/i, ""),
       )
       .filter((s) => s.length > 2);
 
     let idx = 1;
     for (const seg of segments) {
       const segLower = seg.toLowerCase();
-      const isConsequential = /purchase|buy|pay|delete|submit|confirm/i.test(segLower);
+      const isConsequential = /purchase|buy|pay|delete|confirm payment/i.test(segLower);
       let act = "click";
       let val = undefined;
       let textTarget = undefined;
@@ -1664,7 +2690,11 @@ function buildMultiActionPlan(instruction) {
       if (
         segLower.startsWith("open ") ||
         segLower.startsWith("go to ") ||
-        segLower.startsWith("navigate ")
+        segLower.startsWith("navigate ") ||
+        segLower.includes("kholo") ||
+        segLower.includes("khol do") ||
+        segLower.includes("open karo") ||
+        segLower.includes("open kar do")
       ) {
         if (segLower.includes("http") || segLower.includes(".com") || segLower.includes(".in")) {
           act = "navigate";
@@ -1672,20 +2702,52 @@ function buildMultiActionPlan(instruction) {
           val = m ? m[0] : undefined;
         } else {
           act = "click";
-          textTarget = seg.replace(/^(?:open|go to|navigate to)\s+/i, "").trim();
+          textTarget = seg
+            .replace(/^(?:open|go to|navigate to)\s+/i, "")
+            .replace(/\s+(?:kholo|khol\s*do|open\s*karo|open\s*kar\s*do)$/i, "")
+            .replace(/\s+(?:tab|button|link)$/i, "")
+            .trim();
         }
       } else if (
         segLower.includes("copy") ||
         segLower.includes("extract") ||
-        segLower.includes("prepare a list")
+        segLower.includes("prepare a list") ||
+        segLower.includes("nikaalo")
       ) {
         act = "extract";
         val = "order_id";
-      } else if (segLower.includes("scroll")) {
+      } else if (segLower.includes("scroll") || segLower.includes("neeche jao") || segLower.includes("upar jao")) {
         act = "scroll";
-        val = segLower.includes("up") ? "up" : "down";
-      } else if (segLower.startsWith("type ") || segLower.startsWith("fill ")) {
-        act = "fill_field";
+        val = segLower.includes("up") || segLower.includes("upar")
+          ? "up"
+          : segLower.includes("left")
+            ? "left"
+            : segLower.includes("right")
+              ? "right"
+              : segLower.includes("top")
+                ? "top"
+                : segLower.includes("bottom") || segLower.includes("last")
+                  ? "bottom"
+                  : "down";
+      } else if (/\b(?:fill|type|likho|likh|daalo|daal|bharo|bhar)\b/i.test(segLower)) {
+        const isDocSeg =
+          /(?:uploaded\s+(?:id|document|doc|file)|document\s+se|id\s+se|aadhaar|aadhar|pan)/i.test(
+            segLower,
+          );
+        if (isDocSeg) {
+          act = "fill_from_document";
+          const reqKeys = extractRequestedDocFieldKeys(segLower);
+          textTarget = reqKeys.length > 0 ? reqKeys.join(",") : "all";
+        } else {
+          const subFill = extractFillDetails(seg);
+          if (subFill.explicitPairs?.[0]) {
+            act = "fill_field";
+            textTarget = subFill.explicitPairs[0].target;
+            val = subFill.explicitPairs[0].value;
+          } else {
+            act = "fill_field";
+          }
+        }
       } else if (segLower.includes("delete")) {
         act = "click_delete";
       } else if (
@@ -1696,12 +2758,17 @@ function buildMultiActionPlan(instruction) {
         act = "purchase";
       } else if (segLower.includes("submit") || segLower.includes("confirm")) {
         act = "click_submit";
+        textTarget = "submit";
       } else {
         act = "click";
-        textTarget = seg.replace(/^(?:click|press|tap)\s+/i, "").trim();
+        textTarget = seg
+          .replace(/^(?:click|press|tap|dabao)\s+/i, "")
+          .replace(/\s+(?:par click karo|click karo|dabao|press karo)$/i, "")
+          .replace(/\s+(?:tab|button|link)$/i, "")
+          .trim();
       }
 
-      steps.push({
+      const stepObj = {
         id: `${planId}_${idx}`,
         stepNumber: idx,
         title: seg.charAt(0).toUpperCase() + seg.slice(1),
@@ -1714,7 +2781,12 @@ function buildMultiActionPlan(instruction) {
         approvalPrompt: isConsequential
           ? `Please confirm: Buddy is about to execute "${seg}". Proceed?`
           : undefined,
-      });
+      };
+      if (act === "fill_from_document") {
+        stepObj.requestedFields =
+          textTarget && textTarget !== "all" ? textTarget.split(",").filter(Boolean) : [];
+      }
+      steps.push(stepObj);
       idx++;
     }
   }
@@ -1885,6 +2957,7 @@ async function runPlanLoop() {
       step: currentStep,
       options: {
         extractedDataStore: activePlan.extractedData,
+        uploadedDocumentFields: activeUploadedDocument?.fields || {},
       },
     });
 
@@ -2111,6 +3184,7 @@ if (promptInputEl) {
     promptInputEl.style.height = "auto";
     promptInputEl.style.height = Math.min(promptInputEl.scrollHeight, 140) + "px";
   });
+}
 // Mode Selector & Quick Action Compatibility Hooks
 document.querySelectorAll(".mode-pill").forEach((pill) => {
   pill.onclick = () => {
@@ -2135,19 +3209,115 @@ if ($("qaAutomateTask")) {
   $("qaAutomateTask").onclick = () => sendQuery("Automate task: ", "workflow");
 }
 
-// File Attachment Button
+// File / Document Attachment & OCR Understanding (Aadhaar, PAN, Invoices, PDFs, Images, CSV)
+async function handleUploadedDocumentFile(file) {
+  if (!file) return;
+  const active = getActiveBuddy();
+  const isHindi = active.defaultLanguage !== "english";
+  const isImage = file.type.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(file.name);
+  const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+  const isTextLike = /\.(txt|csv|json)$/i.test(file.name);
+
+  if (!isImage && !isPdf && !isTextLike) {
+    const tag = `[Attached: ${file.name} (${Math.round(file.size / 1024)} KB)] `;
+    if ($("promptInput") && !$("promptInput").value.includes(file.name)) {
+      $("promptInput").value = tag + $("promptInput").value;
+    }
+    $("promptInput")?.focus();
+    return;
+  }
+
+  $("statusText").textContent = `📄 Reading uploaded document (${file.name})…`;
+  setRigEmotion("thinking", "Reading Doc…");
+
+  try {
+    let base64Data = undefined;
+    let textContent = undefined;
+
+    if (isTextLike) {
+      textContent = await file.text();
+    } else {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Could not read file."));
+        reader.readAsDataURL(file);
+      });
+      base64Data = dataUrl;
+      // For PDFs, also extract any plain ASCII text snippets as offline fallback
+      if (isPdf) {
+        try {
+          const buf = await file.arrayBuffer();
+          const decoded = new TextDecoder("latin1").decode(buf);
+          const textChunks = [...decoded.matchAll(/\(([^()]{3,120})\)/g)].map((m) => m[1]);
+          if (textChunks.length > 0) {
+            textContent = textChunks.join("\n");
+          }
+        } catch {}
+      }
+    }
+
+    const extractRes = await chrome.runtime.sendMessage({
+      type: "EXTRACT_DOCUMENT",
+      document: {
+        fileName: file.name,
+        mimeType: file.type || (isPdf ? "application/pdf" : "image/png"),
+        base64Data,
+        textContent,
+      },
+    });
+
+    if (extractRes?.ok && Object.keys(extractRes.fields || {}).length > 0) {
+      setActiveUploadedDocument(extractRes);
+      const maskedKeys = Object.entries(extractRes.fields).map(
+        ([k, v]) => `${k}: ${maskSensitiveDocValue(k, v)}`,
+      );
+      setRigEmotion("happy", "Doc Ready");
+      $("statusText").textContent = `Document "${file.name}" read (${maskedKeys.length} fields).`;
+      const msg = isHindi
+        ? `📄 Document (${extractRes.documentType?.toUpperCase() || "ID"}) read kar liya gaya hai! Extracted fields: ${Object.keys(extractRes.fields).join(", ")}.\nAb aap bol sakte hain: "Buddy, is page ka form fill kar do."`
+        : `📄 Read "${file.name}" (${extractRes.documentType || "document"}). Extracted fields: ${Object.keys(extractRes.fields).join(", ")}.\nSay "Buddy, fill this form" whenever you're ready!`;
+      appendHistory("buddy", msg);
+      speakResponse(msg, "happy");
+    } else {
+      setActiveUploadedDocument({
+        fileName: file.name,
+        documentType: extractRes?.documentType || "other",
+        fields: extractRes?.fields || {},
+        ambiguousFields: extractRes?.ambiguousFields || [],
+      });
+      setRigEmotion("concerned", "Unclear");
+      const failNote =
+        extractRes?.notes ||
+        (isHindi
+          ? `⚠️ "${file.name}" se fields clear read nahi ho paye. Kripya clear image upload karein ya chat mein details share karein.`
+          : `⚠️ Could not clearly read fields from "${file.name}". Please upload a clearer image/PDF or provide details manually.`);
+      $("statusText").textContent = "Document attached (needs clearer scan or Vision AI key).";
+      appendHistory("buddy", failNote);
+    }
+  } catch (err) {
+    setRigEmotion("error", "Error");
+    $("statusText").textContent = `Could not read "${file.name}".`;
+    appendHistory("buddy", `⚠️ Could not read "${file.name}": ${err?.message || err}`);
+  }
+}
+
+if ($("clearUploadedDocBtn")) {
+  $("clearUploadedDocBtn").onclick = () => {
+    clearActiveUploadedDocument();
+    $("statusText").textContent = "Uploaded document cleared.";
+  };
+}
+
 if ($("attachFileBtn") && $("composerFileInput")) {
   $("attachFileBtn").onclick = () => {
     $("composerFileInput").click();
   };
-  $("composerFileInput").onchange = (e) => {
+  $("composerFileInput").onchange = async (e) => {
     const file = e.target.files?.[0];
     if (file) {
-      const tag = `[Attached: ${file.name} (${Math.round(file.size / 1024)} KB)] `;
-      if (!$("promptInput").value.includes(file.name)) {
-        $("promptInput").value = tag + $("promptInput").value;
-      }
-      $("promptInput").focus();
+      await handleUploadedDocumentFile(file);
+      e.target.value = "";
     }
   };
 }
@@ -2331,7 +3501,21 @@ if ($("scrollUpChip")) $("scrollUpChip").onclick = () => executeScroll("up");
 if ($("scrollDownBannerBtn")) $("scrollDownBannerBtn").onclick = () => executeScroll("down");
 
 if ($("openFormAssistantChip")) $("openFormAssistantChip").onclick = () => startSmartFormFill();
-if ($("autoFillSampleBtn")) $("autoFillSampleBtn").onclick = () => startSmartFormFill();
+if ($("autoFillSampleBtn")) {
+  $("autoFillSampleBtn").onclick = () =>
+    startSmartFormFill({
+      name: "Murshid Ali",
+      legal_name: "Ali Enterprises Pvt Ltd",
+      trade_name: "Ali Retail & Co",
+      gstin: "27AABCU9603R1ZM",
+      email: "contact@alienterprises.com",
+      phone: "9876543210",
+      address: "Shop 12, Commercial Market, Central Plaza",
+      city: "Mumbai",
+      state: "Maharashtra",
+      pincode: "400001",
+    });
+}
 if ($("verifyFormInputsBtn")) {
   $("verifyFormInputsBtn").onclick = () =>
     sendQuery("Find and verify all form fields on this page.", "locate_element");
@@ -2510,6 +3694,7 @@ if ($("connectBtn")) {
 if ($("signoutBtn")) {
   $("signoutBtn").onclick = async () => {
     conversationBuffer.length = 0;
+    clearActiveUploadedDocument();
     if ($("historyBox")) $("historyBox").innerHTML = "";
     await chrome.runtime.sendMessage({ type: "SIGN_OUT" });
     render();
@@ -2874,31 +4059,128 @@ async function checkSavedCheckpoint() {
 if ($("refreshTasksHistoryBtn")) $("refreshTasksHistoryBtn").onclick = loadTasksHistory;
 
 // Models & Providers Handlers
+function updateProviderNoticeUI(providerId) {
+  const pid = providerId || selectedProvider || "gemini";
+  const info = cachedProviderStatuses[pid] || DEFAULT_PROVIDER_META[pid] || DEFAULT_PROVIDER_META.gemini;
+  const badge = $("activeProviderStatusBadge");
+  const notice = $("providerSelectionNotice");
+
+  const statusLabel =
+    info.statusLabel ||
+    (info.configured ? "Connected" : info.supportsLocal ? "Not Connected" : "Missing API");
+  const isConnected = info.configured === true || info.status === "connected";
+
+  if (badge) {
+    badge.textContent = statusLabel;
+    badge.className = `step-status-tag ${isConnected ? "completed" : "pending"}`;
+  }
+
+  if (notice) {
+    if (isConnected) {
+      notice.style.borderColor = "rgba(16, 185, 129, 0.35)";
+      notice.style.color = "var(--text)";
+      notice.textContent =
+        pid === "gemini"
+          ? "Google Gemini is connected and active as the default AI engine."
+          : `${info.name} is connected and selected as your active provider.`;
+    } else {
+      const missingKey = info.missingKeyName || `${pid.toUpperCase()}_API_KEY`;
+      notice.style.borderColor = "rgba(245, 158, 11, 0.35)";
+      notice.style.color = "#fde68a";
+      notice.textContent = `${info.name}: ${statusLabel} (${missingKey}). Your selection is saved — Google Gemini stays active as fallback until ${missingKey} is configured.`;
+    }
+  }
+}
+
+async function selectProvider(providerId) {
+  if (!providerId) return;
+  selectedProvider = providerId;
+  warnedMissingProviders.delete(providerId);
+  await chrome.storage.local.set({ selectedProvider: providerId });
+  if ($("providerSelector")) {
+    $("providerSelector").value = providerId;
+  }
+  updateProviderNoticeUI(providerId);
+  // Highlight active row in providerStatusList if already rendered
+  document.querySelectorAll("#providerStatusList .provider-row-item").forEach((row) => {
+    const isSel = row.getAttribute("data-provider") === providerId;
+    row.style.borderColor = isSel ? "var(--accent-cyan)" : "";
+    row.style.background = isSel ? "rgba(6, 182, 212, 0.08)" : "";
+  });
+}
+
 async function loadModelHubStatus() {
   const list = $("providerStatusList");
   if (!list) return;
   list.innerHTML =
     '<div style="color: var(--muted); font-size: 10px;">Checking provider statuses…</div>';
   try {
-    const { preferredModel } = await chrome.storage.local.get("preferredModel");
+    const { preferredModel, selectedProvider: storedProvider, userApiKey } =
+      await chrome.storage.local.get(["preferredModel", "selectedProvider", "userApiKey"]);
+    if (storedProvider) selectedProvider = storedProvider;
+
     const base = await getResolvedBackendBase();
     const res = await fetch(`${base}/api/public/extension/models`);
     const data = await res.json();
     if (data?.ok) {
       if (data.providers && data.providers.length > 0) {
+        data.providers.forEach((p) => {
+          const effectiveConfigured = p.configured || (p.id === "gemini" && Boolean(userApiKey));
+          const statusLabel = effectiveConfigured
+            ? "Connected"
+            : p.supportsLocal
+              ? "Not Connected"
+              : "Missing API";
+          cachedProviderStatuses[p.id] = {
+            ...p,
+            configured: effectiveConfigured,
+            status: effectiveConfigured
+              ? "connected"
+              : p.supportsLocal
+                ? "not_connected"
+                : "missing_api",
+            statusLabel,
+          };
+        });
+
+        if ($("providerSelector")) {
+          $("providerSelector").innerHTML = data.providers
+            .map((p) => {
+              const info = cachedProviderStatuses[p.id] || p;
+              const defaultSuffix = p.id === "gemini" ? " (Default)" : "";
+              return `<option value="${escapeHtml(p.id)}" ${p.id === selectedProvider ? "selected" : ""}>${escapeHtml(p.name)}${defaultSuffix} — ${escapeHtml(info.statusLabel)}</option>`;
+            })
+            .join("");
+        }
+
         list.innerHTML = data.providers
-          .map(
-            (p) => `
-          <div class="item-row">
+          .map((p) => {
+            const info = cachedProviderStatuses[p.id] || p;
+            const isSel = p.id === selectedProvider;
+            const statusText = info.statusLabel;
+            const detailNote = info.configured
+              ? p.rateLimitNote || "Ready for inference"
+              : `Missing ${p.missingKeyName || `${p.id.toUpperCase()}_API_KEY`} · Falls back to Gemini`;
+            return `
+          <div class="item-row provider-row-item" data-provider="${escapeHtml(p.id)}" style="cursor: pointer; ${isSel ? "border-color: var(--accent-cyan); background: rgba(6, 182, 212, 0.08);" : ""}">
             <div>
-              <span style="font-weight: 600; color: var(--text);">${escapeHtml(p.name)}</span>
-              <div style="font-size: 9px; color: var(--muted);">${escapeHtml(p.rateLimitNote || "")}</div>
+              <span style="font-weight: 600; color: var(--text);">${escapeHtml(p.name)}${p.id === "gemini" ? " · Default" : ""}</span>
+              <div style="font-size: 9px; color: var(--muted);">${escapeHtml(detailNote)}</div>
             </div>
-            <span class="step-status-tag ${p.configured ? "completed" : "pending"}">${p.configured ? "Available" : p.freeTier ? "Free Tier" : "Config Required"}</span>
+            <span class="step-status-tag ${info.configured ? "completed" : "pending"}">${escapeHtml(statusText)}</span>
           </div>
-        `,
-          )
+        `;
+          })
           .join("");
+
+        list.querySelectorAll(".provider-row-item").forEach((row) => {
+          row.onclick = () => {
+            const pid = row.getAttribute("data-provider");
+            if (pid) selectProvider(pid);
+          };
+        });
+
+        updateProviderNoticeUI(selectedProvider);
       }
 
       if (data.models && $("modelSelector")) {
@@ -2924,17 +4206,24 @@ async function loadModelHubStatus() {
       if ($("activeModelRecommendation")) {
         const recText =
           currentActiveMode === "research"
-            ? "Gemini 2.5 Flash / Pro recommended for high-accuracy claim verification and web synthesis."
+            ? "Gemini 3.8 Flash / Pro recommended for high-accuracy claim verification and web synthesis."
             : currentActiveMode === "file"
-              ? "Gemini 2.5 Pro recommended for multi-tab spreadsheets and large dataset reasoning."
-              : "Gemini 2.5 Flash recommended for fast DOM grounding, pointing animations, and browser tasks.";
+              ? "Gemini 3.8 Flash recommended for multi-tab spreadsheets, document OCR, and structured forms."
+              : "Gemini 3.8 Flash recommended for fast DOM grounding, pointing animations, and browser tasks.";
         $("activeModelRecommendation").textContent = recText;
       }
     }
   } catch {
+    updateProviderNoticeUI(selectedProvider);
     list.innerHTML =
-      '<div style="color: var(--muted); font-size: 10px;">Could not check provider status.</div>';
+      '<div style="color: var(--muted); font-size: 10px;">Could not reach server to refresh live provider status. Local defaults shown above.</div>';
   }
+}
+
+if ($("providerSelector")) {
+  $("providerSelector").onchange = (e) => {
+    selectProvider(e.target.value);
+  };
 }
 
 if ($("modelSelector")) {
@@ -2961,8 +4250,8 @@ if ($("toggleModelComparisonBtn")) {
     if (comp) {
       comp.hidden = !comp.hidden;
       $("toggleModelComparisonBtn").textContent = comp.hidden
-        ? "Show Model Comparison"
-        : "Hide Model Comparison";
+        ? "📊 Compare"
+        : "Hide Comparison";
     }
   };
 }
@@ -2970,25 +4259,28 @@ if ($("toggleModelComparisonBtn")) {
 if ($("testActiveProviderBtn")) {
   $("testActiveProviderBtn").onclick = async () => {
     const pingBox = $("pingTestResult");
+    const targetProv = selectedProvider || "gemini";
+    const info = cachedProviderStatuses[targetProv] || DEFAULT_PROVIDER_META[targetProv];
     if (pingBox) {
       pingBox.hidden = false;
-      pingBox.textContent = "Pinging Google Gemini API…";
+      pingBox.style.color = "var(--accent-cyan)";
+      pingBox.textContent = `Checking ${info?.name || targetProv} connection…`;
     }
     try {
       const base = await getResolvedBackendBase();
       const res = await fetch(`${base}/api/public/extension/test-model`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: "gemini" }),
+        body: JSON.stringify({ provider: targetProv }),
       });
       const data = await res.json();
       if (pingBox) {
         if (data?.ok) {
           pingBox.style.color = "var(--success)";
-          pingBox.textContent = `⚡ Gemini active: ${data.latencyMs}ms latency · ${data.message}`;
+          pingBox.textContent = `⚡ ${info?.name || targetProv} Connected (${data.latencyMs}ms): ${data.message}`;
         } else {
           pingBox.style.color = "var(--warning)";
-          pingBox.textContent = `Notice: ${data.message || "Provider verification completed"}`;
+          pingBox.textContent = `ℹ️ ${info?.name || targetProv}: ${data?.message || "Missing API or not connected"}`;
         }
       }
     } catch {

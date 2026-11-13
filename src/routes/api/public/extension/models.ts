@@ -22,20 +22,45 @@ export const Route = createFileRoute("/api/public/extension/models")({
           id: ProviderId;
           name: string;
           configured: boolean;
+          status: "connected" | "missing_api" | "not_connected";
+          statusLabel: "Connected" | "Missing API" | "Not Connected";
+          missingKeyName?: string;
+          isDefault: boolean;
           freeTier: boolean;
           supportsLocal: boolean;
           rateLimitNote: string;
-        }> = Object.values(PROVIDERS).map((p) => {
-          const configured = isProviderConfigured(p.id);
-          return {
-            id: p.id,
-            name: p.name,
-            configured,
-            freeTier: p.freeTierAvailable,
-            supportsLocal: p.supportsLocal,
-            rateLimitNote: p.rateLimitNote,
-          };
-        });
+        }> = Object.values(PROVIDERS)
+          .filter((p) => p.id !== "lovable-gateway")
+          .sort((a, b) => (a.id === "gemini" ? -1 : b.id === "gemini" ? 1 : 0))
+          .map((p) => {
+            const configured = isProviderConfigured(p.id);
+            const status = configured
+              ? "connected"
+              : p.supportsLocal
+                ? "not_connected"
+                : "missing_api";
+            const statusLabel = configured
+              ? "Connected"
+              : p.supportsLocal
+                ? "Not Connected"
+                : "Missing API";
+            return {
+              id: p.id,
+              name: p.name,
+              configured,
+              status,
+              statusLabel,
+              missingKeyName: configured
+                ? undefined
+                : p.supportsLocal
+                  ? "Local Ollama Server (OLLAMA_BASE_URL)"
+                  : p.envKeyName,
+              isDefault: p.id === "gemini",
+              freeTier: p.freeTierAvailable,
+              supportsLocal: p.supportsLocal,
+              rateLimitNote: p.rateLimitNote,
+            };
+          });
 
         // Curate top 30 featured models for side panel dropdown
         const featuredModels = MODEL_CATALOG.slice(0, 35).map((m) => ({
@@ -59,6 +84,7 @@ export const Route = createFileRoute("/api/public/extension/models")({
 
         return json({
           ok: true,
+          defaultProvider: "gemini",
           defaultModel: "gemini-3.8-flash",
           providers: providerStatuses,
           models: featuredModels,

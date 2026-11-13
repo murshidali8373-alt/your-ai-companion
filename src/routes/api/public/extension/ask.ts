@@ -68,10 +68,19 @@ const bodySchema = z.object({
     .max(10)
     .optional(),
   preferredModel: z.string().max(100).optional(),
+  preferredProvider: z.string().max(40).optional(),
   userApiKey: z.string().max(200).optional(),
   customBaseUrl: z.string().max(300).optional(),
   buddySlug: z.string().max(80).optional(),
   customBuddyId: z.string().max(80).optional(),
+  screenshotBase64: z.string().max(6_000_000).optional(),
+  uploadedDocumentSummary: z
+    .object({
+      fileName: z.string().max(200),
+      documentType: z.string().max(40),
+      availableFields: z.array(z.string().max(60)).max(30),
+    })
+    .optional(),
 });
 
 const json = (body: unknown, status = 200) =>
@@ -102,10 +111,13 @@ export const Route = createFileRoute("/api/public/extension/ask")({
               source: "extension",
               history: parsed.history,
               preferredModel: parsed.preferredModel,
+              preferredProvider: parsed.preferredProvider,
               userApiKey: parsed.userApiKey,
               customBaseUrl: parsed.customBaseUrl,
               buddySlug: parsed.buddySlug,
               customBuddyId: parsed.customBuddyId,
+              screenshotBase64: parsed.screenshotBase64,
+              uploadedDocumentSummary: parsed.uploadedDocumentSummary,
             });
             return json(result);
           } else {
@@ -117,10 +129,13 @@ export const Route = createFileRoute("/api/public/extension/ask")({
               source: "extension",
               history: parsed.history,
               preferredModel: parsed.preferredModel,
+              preferredProvider: parsed.preferredProvider,
               userApiKey: parsed.userApiKey,
               customBaseUrl: parsed.customBaseUrl,
               buddySlug: parsed.buddySlug,
               customBuddyId: parsed.customBuddyId,
+              screenshotBase64: parsed.screenshotBase64,
+              uploadedDocumentSummary: parsed.uploadedDocumentSummary,
             });
             return json({ ...result, guest: true });
           }
