@@ -38,6 +38,138 @@ async function getResolvedBackendBase() {
   return base;
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// --- STRUCTURED SIDEPANEL ↔ BACKGROUND IPC LOGGER & SAFE DISPATCHER ---
+const MAX_SP_COMM_LOGS = 100;
+const spCommLogBuffer = [];
+let spTraceSeq = 0;
+
+function summarizeSidepanelPayload(payload) {
+  if (!payload || typeof payload !== "object") return { invalid: typeof payload };
+  const summary = { type: payload.type };
+  if (payload.action) summary.action = payload.action;
+  if (payload.selector) summary.selector = String(payload.selector).slice(0, 80);
+  if (typeof payload.question === "string") summary.questionLen = payload.question.length;
+  if (typeof payload.query === "string") summary.queryLen = payload.query.length;
+  if (payload.intent) summary.intent = payload.intent;
+  if (payload.step?.action) summary.stepAction = payload.step.action;
+  if (payload.fields && typeof payload.fields === "object") {
+    summary.fieldCount = Object.keys(payload.fields).length;
+  }
+  if (payload.options?.explicitPairs) {
+    summary.explicitPairCount = payload.options.explicitPairs.length;
+  }
+  if (payload.document?.fileName) {
+    summary.docFile = payload.document.fileName;
+  }
+  return summary;
+}
+
+function spLog(level, stage, detail = {}) {
+  const entry = {
+    ts: new Date().toISOString(),
+    source: "SidePanel",
+    level,
+    stage,
+    ...detail,
+  };
+  spCommLogBuffer.push(entry);
+  if (spCommLogBuffer.length > MAX_SP_COMM_LOGS) {
+    spCommLogBuffer.shift();
+  }
+  try {
+    const logger = console[level] || console.info;
+    logger("[AI Buddy][SidePanel]", entry);
+  } catch {}
+}
+
+window.__aiBuddyGetCommLogs = () => spCommLogBuffer.slice();
+
+async function sendRuntimeMessage(payload, opts = {}) {
+  const traceId = `sp_${Date.now().toString(36)}_${++spTraceSeq}`;
+  const envelope = { ...payload, __traceId: traceId };
+  const isLongTask =
+    payload?.type === "ASK" ||
+    payload?.type === "EXTRACT_DOCUMENT" ||
+    payload?.type === "EXECUTE_PLAN";
+  const timeoutMs = opts.timeoutMs || (isLongTask ? 60000 : 15000);
+  const startedAt = Date.now();
+
+  if (!opts.silent) {
+    spLog("info", "ipc:outbound", {
+      traceId,
+      payload: summarizeSidepanelPayload(payload),
+    });
+  }
+
+  if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) {
+    const errMsg = "Chrome extension runtime is unavailable.";
+    spLog("error", "ipc:runtime_missing", { traceId, type: payload?.type });
+    return { ok: false, error: errMsg, message: errMsg, ipcError: true };
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result, isFailure, reason) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (!opts.silent || isFailure) {
+        spLog(isFailure ? "warn" : "info", isFailure ? "ipc:failed" : "ipc:response", {
+          traceId,
+          type: payload?.type,
+          elapsedMs: Date.now() - startedAt,
+          ok: result?.ok !== undefined ? Boolean(result.ok) : !result?.error,
+          error: reason || result?.error || (result?.ok === false ? result?.message : undefined),
+        });
+      }
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => {
+      const timeoutMsg = `Background worker timed out (${timeoutMs}ms) handling ${payload?.type}.`;
+      finish({ ok: false, error: timeoutMsg, message: timeoutMsg, ipcError: true }, true, timeoutMsg);
+    }, timeoutMs);
+
+    try {
+      chrome.runtime.sendMessage(envelope, (res) => {
+        const lastErr = chrome.runtime?.lastError;
+        if (lastErr) {
+          const errMsg = lastErr.message || String(lastErr);
+          finish(
+            { ok: false, error: errMsg, message: errMsg, ipcError: true },
+            true,
+            `lastError: ${errMsg}`,
+          );
+          return;
+        }
+        if (res === undefined) {
+          const emptyMsg = `No response returned from background worker for ${payload?.type}.`;
+          finish(
+            { ok: false, error: emptyMsg, message: emptyMsg, ipcError: true },
+            true,
+            "undefined_reply",
+          );
+          return;
+        }
+        finish(res, Boolean(res?.error || res?.ok === false), res?.error || res?.message);
+      });
+    } catch (err) {
+      const errMsg = String(err?.message || err);
+      finish({ ok: false, error: errMsg, message: errMsg, ipcError: true }, true, errMsg);
+    }
+  });
+}
+
 // --- CANONICAL 16 BUDDIES REGISTRY ---
 // 15 specialist buddies + 1 user Custom Buddy preloaded for offline/immediate access
 const BUDDIES_REGISTRY = [
@@ -320,8 +452,19 @@ const BuddyStateManager = {
     return ensureNonBlankState();
   },
   handleTabSwitch(tabId) {
+    lastHighlightSelector = null;
+    lastCallout = { title: null, description: null };
+    pendingAction = null;
+    if ($("highlightBtn")) $("highlightBtn").hidden = true;
+    if ($("confirmCard")) $("confirmCard").hidden = true;
+    if ($("pageCompletenessBanner")) $("pageCompletenessBanner").hidden = true;
+    sendRuntimeMessage({ type: "CLEAR_HIGHLIGHT" }, { silent: true }).catch(() => {});
     ensureNonBlankState();
+    updateGreetingContext();
     checkPageForErrors();
+    if ($("tabPage") && !$("tabPage").hidden) {
+      loadPageContextSummary();
+    }
   },
   setEmotion(emotion, label) {
     setRigEmotion(emotion, label);
@@ -770,28 +913,51 @@ if (SpeechRecognition) {
 
   recognition.onstart = () => {
     isRecognizing = true;
-    $("voiceBtn").classList.add("active");
-    $("voiceBtn").textContent = "🛑 Listening…";
+    const vb = $("voiceBtn");
+    if (vb) {
+      vb.classList.add("active", "listening");
+      vb.textContent = "🛑 Listening…";
+    }
     setRigEmotion("listening", "Listening");
-    $("statusText").textContent = "Listening to your voice…";
+    if ($("statusText")) $("statusText").textContent = "Listening to your voice…";
   };
 
   recognition.onresult = (event) => {
     const transcript = event.results[0]?.[0]?.transcript || "";
     if (transcript.trim()) {
-      $("promptInput").value = transcript;
+      if ($("promptInput")) $("promptInput").value = transcript;
       sendQuery(transcript, "answer");
     }
   };
 
-  recognition.onerror = () => stopVoice();
+  recognition.onerror = (event) => {
+    const code = event?.error || "";
+    stopVoice();
+    if (code && code !== "aborted") {
+      const msg =
+        code === "not-allowed" || code === "service-not-allowed"
+          ? "Microphone permission denied. Please allow microphone access in Chrome site/extension settings."
+          : code === "audio-capture"
+            ? "No microphone was detected. Connect a microphone and try again."
+            : code === "no-speech"
+              ? "No speech detected. Try speaking closer to your microphone."
+              : `Voice input error (${code}).`;
+      if ($("statusText")) $("statusText").textContent = msg;
+      if (code === "not-allowed" || code === "audio-capture") {
+        appendHistory("buddy", `🎤 ${msg}`);
+      }
+    }
+  };
   recognition.onend = () => stopVoice();
 }
 
 function stopVoice() {
   isRecognizing = false;
-  $("voiceBtn").classList.remove("active");
-  $("voiceBtn").textContent = "🎤 Talk";
+  const vb = $("voiceBtn");
+  if (vb) {
+    vb.classList.remove("active", "listening");
+    vb.textContent = "🎤 Talk";
+  }
   if (!busy) setRigEmotion("idle", "Idle");
 }
 
@@ -1049,15 +1215,34 @@ function pickExtensionVoice(lang) {
   );
 }
 
+if (typeof window !== "undefined" && window.speechSynthesis?.addEventListener) {
+  window.speechSynthesis.addEventListener("voiceschanged", () => {
+    try {
+      window.speechSynthesis.getVoices();
+    } catch {}
+  });
+}
+
+function cleanTextForSpeech(text) {
+  return String(text || "")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, "$1")
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/[*_`~#]+/g, "")
+    .replace(/[•▪►▸✅⚠️🎯📝📜🔒🛡️🌐⚡🔄⏸️⏭️⏹️🎤🔊🔇📄📌🎨🤖👤🧹🔌📊✨🙈📋]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function speakResponse(text, finishEmotion = "idle") {
-  if (isMuted || !window.speechSynthesis) {
+  const spokenText = cleanTextForSpeech(text);
+  if (isMuted || !window.speechSynthesis || !spokenText) {
     buddy3dViewer?.setSpeaking(false);
     setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
     return;
   }
   window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  const lang = detectSpeechLanguageForExtension(text);
+  const utterance = new SpeechSynthesisUtterance(spokenText);
+  const lang = detectSpeechLanguageForExtension(spokenText);
   utterance.lang = lang;
   const preferredVoice = pickExtensionVoice(lang);
   if (preferredVoice) utterance.voice = preferredVoice;
@@ -1099,29 +1284,51 @@ function speakResponse(text, finishEmotion = "idle") {
   window.speechSynthesis.speak(utterance);
 }
 
+let pointTimerId = null;
+
 /**
  * Pointing action:
  * Articulates the connected arm from Buddy's shoulder,
  * and commands the active page to extend the connected arm toward the element.
  */
-function pointArmAtElement() {
+async function pointArmAtElement() {
   setRigEmotion("pointing", "Pointing");
   const active = getActiveBuddy();
-
-  if (lastHighlightSelector) {
-    chrome.runtime.sendMessage({
-      type: "HIGHLIGHT",
-      selector: lastHighlightSelector,
-      title: lastCallout.title,
-      description: lastCallout.description,
-      buddyVisual: {
-        outfit: active.outfit,
-        buddyName: active.name,
-      },
-    });
+  if (pointTimerId) {
+    clearTimeout(pointTimerId);
+    pointTimerId = null;
   }
 
-  setTimeout(() => {
+  if (lastHighlightSelector) {
+    try {
+      const res = await sendRuntimeMessage({
+        type: "HIGHLIGHT",
+        selector: lastHighlightSelector,
+        title: lastCallout.title,
+        description: lastCallout.description,
+        buddyVisual: {
+          outfit: active.outfit,
+          buddyName: active.name,
+        },
+      });
+      if (res && res.ok === false) {
+        if ($("statusText")) {
+          $("statusText").textContent = res.message || "Could not highlight target on this page.";
+        }
+        setRigEmotion("idle", "Idle");
+        return;
+      }
+    } catch {
+      if ($("statusText")) {
+        $("statusText").textContent = "Could not highlight target on this page.";
+      }
+      setRigEmotion("idle", "Idle");
+      return;
+    }
+  }
+
+  pointTimerId = setTimeout(() => {
+    pointTimerId = null;
     if (currentEmotion === "pointing") setRigEmotion("idle", "Idle");
   }, 4000);
 }
@@ -1149,24 +1356,24 @@ async function render() {
   updateProviderNoticeUI(selectedProvider);
 
   const isAuth = Boolean(session);
-  $("signoutBtn").hidden = !isAuth;
-  $("connectBtn").hidden = isAuth;
+  if ($("signoutBtn")) $("signoutBtn").hidden = !isAuth;
+  if ($("connectBtn")) $("connectBtn").hidden = isAuth;
 
-  if (session) {
-    $("userAccount").textContent = `Connected: ${session.email || "User"}`;
-    if (session.apiBase) {
-      chrome.storage.local.set({ lastBase: session.apiBase });
-    }
-  } else {
-    $("userAccount").textContent = "Guest Mode (All 16 Buddies active)";
+  if ($("userAccount")) {
+    $("userAccount").textContent = session
+      ? `Connected: ${session.email || "User"}`
+      : "Guest Mode (All 16 Buddies active)";
+  }
+  if (session?.apiBase) {
+    chrome.storage.local.set({ lastBase: session.apiBase }).catch(() => {});
   }
 
   // Sync latest custom buddies from backend if available
   const apiBase = await getResolvedBackendBase();
-  fetch(`${apiBase}/api/public/extension/buddies`, {
+  fetchWithTimeout(`${apiBase}/api/public/extension/buddies`, {
     headers: session?.accessToken ? { authorization: `Bearer ${session.accessToken}` } : {},
-  })
-    .then((r) => r.json())
+  }, 6000)
+    .then((r) => (r.ok ? r.json() : null))
     .then((data) => {
       if (data?.ok && Array.isArray(data.buddies) && data.buddies.length > 0) {
         // Merge without breaking registry
@@ -1185,7 +1392,9 @@ async function render() {
     })
     .catch(() => {});
 
-  initBuddy3DStage();
+  if (currentRenderMode === "3d") {
+    initBuddy3DStage();
+  }
   renderBuddyCarousel();
   switchBuddy(selectedBuddySlug);
   applyRenderMode(currentRenderMode);
@@ -1206,6 +1415,9 @@ async function render() {
 
 function applyRenderMode(mode) {
   currentRenderMode = mode || "3d";
+  if (currentRenderMode === "3d" && !buddy3dViewer && !webglFallbackActive) {
+    initBuddy3DStage();
+  }
   const wrap3d = $("buddy3dCanvasWrap");
   const svg = $("characterSvg");
   const img = $("buddy3dImg");
@@ -1229,7 +1441,7 @@ function applyRenderMode(mode) {
 
 async function checkPageForErrors() {
   try {
-    const res = await chrome.runtime.sendMessage({ type: "GET_PAGE_SNAPSHOT" });
+    const res = await sendRuntimeMessage({ type: "GET_PAGE_SNAPSHOT" }, { silent: true });
     const snapshot = res?.snapshot;
     if (!snapshot) return;
 
@@ -1276,7 +1488,7 @@ async function executeScroll(direction = "down", amount = 450, targetText = null
     ? `Scrolling to "${targetText}"…`
     : `Scrolling page ${direction}…`;
 
-  const res = await chrome.runtime.sendMessage({
+  const res = await sendRuntimeMessage({
     type: "EXECUTE_ACTION",
     action: "scroll",
     value: direction,
@@ -1312,7 +1524,7 @@ async function executeFind(query, mode = "find") {
   $("statusText").textContent =
     mode === "point" ? `Pointing to "${query}"…` : `Searching page for "${query}"…`;
   const active = getActiveBuddy();
-  const res = await chrome.runtime.sendMessage({
+  const res = await sendRuntimeMessage({
     type: "FIND_CONTENT",
     query,
     options: {
@@ -1356,9 +1568,12 @@ async function executeFind(query, mode = "find") {
   } else {
     setRigEmotion("idle", "Not found");
     const isHindi = active.defaultLanguage !== "english";
-    const msg = isHindi
-      ? `Visible page par "${query}" nahi mila. Kripya neeche scroll karein ya sahi naam batayein.`
-      : `Could not find "${query}" in visible page content.`;
+    const msg =
+      res && res.ok === false && res.message
+        ? res.message
+        : isHindi
+          ? `Visible page par "${query}" nahi mila. Kripya neeche scroll karein ya sahi naam batayein.`
+          : `Could not find "${query}" in visible page content.`;
     $("statusText").textContent = msg;
     appendHistory("buddy", `⚠️ ${msg}`);
   }
@@ -2030,7 +2245,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     $("promptInput").value = "";
     setRigEmotion("working", "Selecting…");
     $("statusText").textContent = `Selecting "${intent.value}"…`;
-    const res = await chrome.runtime.sendMessage({
+    const res = await sendRuntimeMessage({
       type: "EXECUTE_ACTION",
       action: "select",
       value: intent.value,
@@ -2057,7 +2272,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     appendHistory("user", trimmed);
     $("promptInput").value = "";
     setRigEmotion("working", intent.checked ? "Checking…" : "Unchecking…");
-    const res = await chrome.runtime.sendMessage({
+    const res = await sendRuntimeMessage({
       type: "EXECUTE_ACTION",
       action: intent.checked ? "check" : "uncheck",
       value: intent.target,
@@ -2086,7 +2301,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     setRigEmotion("thinking", "Inspecting…");
     $("statusText").textContent = "Inspecting visible form fields on active page…";
 
-    const snapRes = await chrome.runtime.sendMessage({ type: "GET_PAGE_SNAPSHOT" });
+    const snapRes = await sendRuntimeMessage({ type: "GET_PAGE_SNAPSHOT" });
     const forms = snapRes?.snapshot?.forms || [];
     if (!snapRes?.ok || forms.length === 0) {
       setRigEmotion("confused", "No forms");
@@ -2196,7 +2411,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
         ? "Clicking highlighted element…"
         : `Clicking "${intent.target}" on active page…`;
 
-    const res = await chrome.runtime.sendMessage({
+    const res = await sendRuntimeMessage({
       type: "EXECUTE_ACTION",
       action: "click",
       selector: intent.target === "__CURRENT__" ? lastHighlightSelector || undefined : undefined,
@@ -2404,7 +2619,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
 
       // Inspect form first & ask cleanly without inventing missing personal info!
       setRigEmotion("curious", "Need Details");
-      const snapRes = await chrome.runtime.sendMessage({ type: "GET_PAGE_SNAPSHOT" });
+      const snapRes = await sendRuntimeMessage({ type: "GET_PAGE_SNAPSHOT" });
       const fieldNames = (snapRes?.snapshot?.forms || [])
         .map((f) => f.name || f.placeholder || f.role)
         .filter(Boolean)
@@ -2432,7 +2647,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     setRigEmotion("working", "Extracting…");
     $("statusText").textContent = `Extracting ${intent.target} from page…`;
 
-    const res = await chrome.runtime.sendMessage({
+    const res = await sendRuntimeMessage({
       type: "EXECUTE_ACTION",
       action: "copy_to_clipboard",
       value: intent.target,
@@ -2532,7 +2747,7 @@ async function sendQuery(question, intent) {
           availableFields: Object.keys(activeUploadedDocument.fields || {}),
         }
       : undefined;
-    const res = await chrome.runtime.sendMessage({
+    const res = await sendRuntimeMessage({
       type: "ASK",
       question: trimmed,
       intent: finalIntent,
@@ -2546,12 +2761,12 @@ async function sendQuery(question, intent) {
 
     hideChatLoadingSpinner();
 
-    if (res?.error) {
+    if (!res || res.error) {
       setRigEmotion("error", "Notice");
       const errMsg =
-        res.pageReadable === false
+        res?.pageReadable === false
           ? "I cannot read the current webpage right now. Please refresh or allow page access."
-          : res.message || "I encountered an issue with the page. Please ensure your tab is open and refreshed.";
+          : res?.message || res?.error || "I encountered an issue reaching AI Buddy. Please ensure your tab is open and refreshed.";
       $("statusText").textContent = errMsg;
       appendHistory("buddy", errMsg);
       return;
@@ -2575,7 +2790,7 @@ async function sendQuery(question, intent) {
     if ((res.actionType === "click" || res.actionType === "open_link") && (res.targetSelector || res.targetText)) {
       setRigEmotion("working", res.actionType === "open_link" ? "Opening" : "Acting");
       const execActionName = res.actionType === "open_link" ? "open_link" : "click";
-      const clickRes = await chrome.runtime.sendMessage({
+      const clickRes = await sendRuntimeMessage({
         type: "EXECUTE_ACTION",
         action: execActionName,
         selector: res.targetSelector,
@@ -2689,7 +2904,7 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
   const dataToFill = sampleData || (extraOpts?.explicitPairs ? null : savedProfileData);
 
   if (!dataToFill && !extraOpts?.explicitPairs?.length) {
-    const snapRes = await chrome.runtime.sendMessage({ type: "GET_SNAPSHOT" }).catch(() => null);
+    const snapRes = await sendRuntimeMessage({ type: "GET_SNAPSHOT" });
     const fieldCount = snapRes?.snapshot?.forms?.length || 0;
     const reportEl = $("formFillReport");
     if (reportEl) {
@@ -2722,7 +2937,7 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
     } catch {}
   }
 
-  const res = await chrome.runtime.sendMessage({
+  const res = await sendRuntimeMessage({
     type: "SMART_FILL_FORM",
     fields: dataToFill,
     options: {
@@ -3103,6 +3318,7 @@ async function startMultiActionPlan(instruction) {
   pendingApprovalStep = null;
   if ($("consequentialApprovalCard")) $("consequentialApprovalCard").hidden = true;
   if ($("extractedDataCard")) $("extractedDataCard").hidden = true;
+  if ($("planRetryBtn")) $("planRetryBtn").hidden = true;
 
   appendHistory("user", instruction);
   appendHistory(
@@ -3163,7 +3379,7 @@ async function runPlanLoop() {
 
     // --- OAV STAGE 1 & 4: OBSERVE FRESH LIVE DOM & RE-GROUND TARGET ---
     try {
-      const snapRes = await chrome.runtime.sendMessage({ type: "GET_PAGE_SNAPSHOT" });
+      const snapRes = await sendRuntimeMessage({ type: "GET_PAGE_SNAPSHOT" });
       if (snapRes?.ok && snapRes.snapshot) {
         const freshSnap = snapRes.snapshot;
         const allElements = [
@@ -3206,7 +3422,7 @@ async function runPlanLoop() {
     }
 
     // --- OAV STAGE 5: DISPATCH STEP ACTION ---
-    const res = await chrome.runtime.sendMessage({
+    const res = await sendRuntimeMessage({
       type: "EXECUTE_STEP",
       step: currentStep,
       options: {
@@ -3217,7 +3433,7 @@ async function runPlanLoop() {
 
     // --- OAV STAGE 6: TRIPLE-SIGNAL PAGE SETTLE DETECTOR ---
     try {
-      await chrome.runtime.sendMessage({
+      await sendRuntimeMessage({
         type: "WAIT_FOR_PAGE_SETTLE",
         timeoutMs: 4000,
       });
@@ -3259,7 +3475,11 @@ async function runPlanLoop() {
 
   // All steps completed
   activePlan.status = "completed";
+  if ($("planRetryBtn")) $("planRetryBtn").hidden = true;
   await persistPlanState();
+  try {
+    await chrome.storage.local.remove("savedCheckpoint");
+  } catch {}
   renderTaskPlanUI();
   setRigEmotion("celebrate", "Done");
   const extractedCount = activePlan.extractedData.length;
@@ -3511,7 +3731,7 @@ async function handleUploadedDocumentFile(file) {
       }
     }
 
-    const extractRes = await chrome.runtime.sendMessage({
+    const extractRes = await sendRuntimeMessage({
       type: "EXTRACT_DOCUMENT",
       document: {
         fileName: file.name,
@@ -3700,6 +3920,8 @@ if ($("planStopBtn")) {
     activePlan.status = "cancelled";
     isPlanPaused = false;
     if ($("consequentialApprovalCard")) $("consequentialApprovalCard").hidden = true;
+    if ($("planRetryBtn")) $("planRetryBtn").hidden = true;
+    chrome.storage.local.remove(["savedCheckpoint", "ai_buddy_active_plan"]).catch(() => {});
     renderTaskPlanUI();
     setRigEmotion("idle", "Stopped");
     appendHistory("buddy", "⏹️ Multi-action execution plan stopped by user.");
@@ -3789,13 +4011,18 @@ if ($("speakAnswerBtn")) {
 if ($("voiceBtn")) {
   $("voiceBtn").onclick = () => {
     if (!recognition) {
-      alert("Speech recognition is not supported in this browser window.");
+      const msg = "Speech recognition is not supported in this browser window.";
+      if ($("statusText")) $("statusText").textContent = msg;
+      setRigEmotion("concerned", "No Mic");
+      appendHistory("buddy", `🎤 ${msg}`);
       return;
     }
     if (isRecognizing) {
       recognition.stop();
     } else {
       try {
+        const active = getActiveBuddy();
+        recognition.lang = active?.defaultLanguage === "english" ? "en-IN" : "hi-IN";
         recognition.start();
       } catch {
         stopVoice();
@@ -3833,7 +4060,7 @@ if ($("confirmApproveBtn")) {
     setRigEmotion("working", "Acting");
 
     try {
-      const res = await chrome.runtime.sendMessage({
+      const res = await sendRuntimeMessage({
         type: "EXECUTE_ACTION",
         action: actionToRun.type,
         selector: actionToRun.selector,
@@ -3958,7 +4185,7 @@ if ($("signoutBtn")) {
     conversationBuffer.length = 0;
     clearActiveUploadedDocument();
     if ($("historyBox")) $("historyBox").innerHTML = "";
-    await chrome.runtime.sendMessage({ type: "SIGN_OUT" });
+    await sendRuntimeMessage({ type: "SIGN_OUT" });
     render();
   };
 }
@@ -4025,7 +4252,7 @@ async function loadPageContextSummary() {
   if (!summaryBox) return;
   summaryBox.textContent = "Scanning active tab…";
   try {
-    const snap = await chrome.runtime.sendMessage({ type: "GET_SNAPSHOT" });
+    const snap = await sendRuntimeMessage({ type: "GET_SNAPSHOT" });
     if (snap?.ok && snap.snapshot) {
       const s = snap.snapshot;
       summaryBox.innerHTML = `
@@ -4050,49 +4277,36 @@ if ($("refreshPageContextBtn")) $("refreshPageContextBtn").onclick = loadPageCon
 if ($("pageExplainActionBtn")) {
   $("pageExplainActionBtn").onclick = () => {
     switchTab("chat");
-    $("promptInput").value = "Explain what this page is about simply and summarize key points.";
-    askQuestion("explain_page");
+    sendQuery("Explain what this page is about simply and summarize key points.", "explain_page");
   };
 }
 
 if ($("pageCheckErrorsActionBtn")) {
   $("pageCheckErrorsActionBtn").onclick = () => {
     switchTab("chat");
-    $("promptInput").value = "Are there any validation errors or missing required fields?";
-    askQuestion("classify");
+    sendQuery("Are there any validation errors or missing required fields?", "classify");
   };
 }
 
 if ($("pageExtractTableActionBtn")) {
   $("pageExtractTableActionBtn").onclick = () => {
     switchTab("chat");
-    startMultiStepWorkflow(
+    startMultiActionPlan(
       "Find tables on this page, extract all rows and columns, copy list to clipboard",
+      true,
     );
   };
 }
 
 if ($("pageScrollDownBtn")) {
   $("pageScrollDownBtn").onclick = async () => {
-    await chrome.runtime.sendMessage({
-      type: "EXECUTE_ACTION",
-      action: "scroll_down",
-      selector: "window",
-    });
-    setRigEmotion("working", "Scrolling");
-    setTimeout(() => setRigEmotion("idle", "Idle"), 800);
+    await executeScroll("down", 450, null, false);
   };
 }
 
 if ($("pageScrollUpBtn")) {
   $("pageScrollUpBtn").onclick = async () => {
-    await chrome.runtime.sendMessage({
-      type: "EXECUTE_ACTION",
-      action: "scroll_up",
-      selector: "window",
-    });
-    setRigEmotion("working", "Scrolling");
-    setTimeout(() => setRigEmotion("idle", "Idle"), 800);
+    await executeScroll("up", 450, null, false);
   };
 }
 
@@ -4100,8 +4314,9 @@ if ($("pageScrollUpBtn")) {
 if ($("runMeeshoWorkflowBtn")) {
   $("runMeeshoWorkflowBtn").onclick = () => {
     switchTab("chat");
-    startMultiStepWorkflow(
+    startMultiActionPlan(
       "Open Meesho Supplier Panel, go to Orders, open today's orders, find pending orders, copy their order IDs, and prepare a list of them",
+      true,
     );
   };
 }
@@ -4109,8 +4324,9 @@ if ($("runMeeshoWorkflowBtn")) {
 if ($("runReconcileWorkflowBtn")) {
   $("runReconcileWorkflowBtn").onclick = () => {
     switchTab("chat");
-    startMultiStepWorkflow(
+    startMultiActionPlan(
       "Open seller orders portal, collect today's order numbers and pricing, compare against spreadsheet, identify missing orders, calculate differences, and prepare a non-destructive audit report",
+      true,
     );
   };
 }
@@ -4118,8 +4334,9 @@ if ($("runReconcileWorkflowBtn")) {
 if ($("runResearchWorkflowBtn")) {
   $("runResearchWorkflowBtn").onclick = () => {
     switchTab("chat");
-    startMultiStepWorkflow(
+    startMultiActionPlan(
       "Conduct multi-source research across web sources, categorize verified consensus versus conflicting evidence, and generate structured cited report",
+      true,
     );
   };
 }
@@ -4127,31 +4344,50 @@ if ($("runResearchWorkflowBtn")) {
 if ($("runExtractTableWorkflowBtn")) {
   $("runExtractTableWorkflowBtn").onclick = () => {
     switchTab("chat");
-    startMultiStepWorkflow(
+    startMultiActionPlan(
       "Find tables on this page, extract all rows and columns, copy list to clipboard",
+      true,
     );
   };
 }
 
 if ($("resumeSavedTaskBtn")) {
   $("resumeSavedTaskBtn").onclick = async () => {
-    const { savedCheckpoint } = await chrome.storage.local.get("savedCheckpoint");
-    if (savedCheckpoint) {
-      const card = $("savedCheckpointCard") || $("savedTaskCheckpointCard");
-      if (card) card.hidden = true;
-      switchTab("chat");
+    const { savedCheckpoint, ai_buddy_active_plan } = await chrome.storage.local.get([
+      "savedCheckpoint",
+      "ai_buddy_active_plan",
+    ]);
+    const card = $("savedCheckpointCard") || $("savedTaskCheckpointCard");
+    if (card) card.hidden = true;
+    switchTab("chat");
+
+    if (ai_buddy_active_plan && Array.isArray(ai_buddy_active_plan.steps) && ai_buddy_active_plan.steps.length > 0) {
+      activePlan = ai_buddy_active_plan;
+      isPlanPaused = false;
+      pendingApprovalStep = null;
+      const curStep = activePlan.steps[activePlan.currentStepIndex];
+      if (curStep && (curStep.status === "failed" || curStep.status === "running")) {
+        curStep.status = "pending";
+      }
+      activePlan.status = "running";
       appendHistory(
         "buddy",
-        `▶️ Resuming task: "${savedCheckpoint.title}". Continuing from step ${savedCheckpoint.currentStepIndex + 1} of ${savedCheckpoint.totalSteps}.`,
+        `▶️ Resuming task: "${activePlan.title}". Continuing from step ${activePlan.currentStepIndex + 1} of ${activePlan.steps.length}.`,
       );
       setRigEmotion("working", "Resuming");
+      renderTaskPlanUI();
+      await runPlanLoop();
+    } else if (savedCheckpoint?.originalInstruction || savedCheckpoint?.title) {
+      await startMultiActionPlan(savedCheckpoint.originalInstruction || savedCheckpoint.title, true);
+    } else {
+      appendHistory("buddy", "No active checkpoint found to resume.");
     }
   };
 }
 
 if ($("discardSavedTaskBtn")) {
   $("discardSavedTaskBtn").onclick = async () => {
-    await chrome.storage.local.remove("savedCheckpoint");
+    await chrome.storage.local.remove(["savedCheckpoint", "ai_buddy_active_plan"]);
     const card = $("savedCheckpointCard") || $("savedTaskCheckpointCard");
     if (card) card.hidden = true;
   };
@@ -4166,8 +4402,10 @@ async function loadMemories() {
     const { session } = await chrome.storage.local.get("session");
     const base = await getResolvedBackendBase();
     const headers = {};
-    if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
-    const res = await fetch(`${base}/api/public/extension/memories`, { headers });
+    const token = session?.accessToken || session?.access_token;
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetchWithTimeout(`${base}/api/public/extension/memories`, { headers }, 8000);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data?.ok && data.memories && data.memories.length > 0) {
       list.innerHTML = data.memories
@@ -4205,19 +4443,22 @@ async function deleteMemory(key) {
     const { session } = await chrome.storage.local.get("session");
     const base = await getResolvedBackendBase();
     const headers = {};
-    if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
-    await fetch(`${base}/api/public/extension/memories?key=${encodeURIComponent(key)}`, {
+    const token = session?.accessToken || session?.access_token;
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    await fetchWithTimeout(`${base}/api/public/extension/memories?key=${encodeURIComponent(key)}`, {
       method: "DELETE",
       headers,
-    });
+    }, 8000);
     loadMemories();
   } catch (err) {
+    if ($("statusText")) $("statusText").textContent = "Could not delete memory right now.";
     console.error("deleteMemory error", err);
   }
 }
 
 if ($("addMemoryToggleBtn")) {
   $("addMemoryToggleBtn").onclick = () => {
+    if ($("memErrorMsg")) $("memErrorMsg").hidden = true;
     $("addMemoryForm").hidden = !$("addMemoryForm").hidden;
   };
 }
@@ -4225,38 +4466,65 @@ if ($("addMemoryToggleBtn")) {
 if ($("cancelMemoryBtn")) {
   $("cancelMemoryBtn").onclick = () => {
     $("addMemoryForm").hidden = true;
-    $("memKeyInput").value = "";
-    $("memValInput").value = "";
+    if ($("memErrorMsg")) $("memErrorMsg").hidden = true;
+    if ($("memKeyInput")) $("memKeyInput").value = "";
+    if ($("memValInput")) $("memValInput").value = "";
   };
 }
 
 if ($("saveMemoryBtn")) {
   $("saveMemoryBtn").onclick = async () => {
-    const key = $("memKeyInput").value.trim();
-    const value = $("memValInput").value.trim();
-    if (!key || !value) return;
+    const key = $("memKeyInput")?.value.trim() || "";
+    const value = $("memValInput")?.value.trim() || "";
+    const errEl = $("memErrorMsg");
+    if (!key || !value) {
+      if (errEl) {
+        errEl.textContent = "Please enter both a key and a value.";
+        errEl.hidden = false;
+      }
+      return;
+    }
+    if (errEl) errEl.hidden = true;
+    const btn = $("saveMemoryBtn");
+    btn.disabled = true;
 
     try {
       const { session } = await chrome.storage.local.get("session");
       const base = await getResolvedBackendBase();
       const headers = { "Content-Type": "application/json" };
-      if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
-      const res = await fetch(`${base}/api/public/extension/memories`, {
+      const token = session?.accessToken || session?.access_token;
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const res = await fetchWithTimeout(`${base}/api/public/extension/memories`, {
         method: "POST",
         headers,
         body: JSON.stringify({ key, value, kind: "preference" }),
-      });
-      const data = await res.json();
-      if (data?.ok) {
+      }, 8000);
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.ok) {
         $("addMemoryForm").hidden = true;
-        $("memKeyInput").value = "";
-        $("memValInput").value = "";
+        if ($("memKeyInput")) $("memKeyInput").value = "";
+        if ($("memValInput")) $("memValInput").value = "";
+        if ($("statusText")) $("statusText").textContent = `✓ Saved memory "${key}".`;
         loadMemories();
       } else {
-        alert(data?.message || data?.error || "Failed to save memory");
+        const errMsg = data?.message || data?.error || "Failed to save memory";
+        if (errEl) {
+          errEl.textContent = errMsg;
+          errEl.hidden = false;
+        }
+        if ($("statusText")) $("statusText").textContent = errMsg;
+        setRigEmotion("error", "Error");
       }
     } catch {
-      alert("Error saving memory");
+      const errMsg = "Could not reach server to save memory.";
+      if (errEl) {
+        errEl.textContent = errMsg;
+        errEl.hidden = false;
+      }
+      if ($("statusText")) $("statusText").textContent = errMsg;
+      setRigEmotion("error", "Error");
+    } finally {
+      btn.disabled = false;
     }
   };
 }
@@ -4270,8 +4538,10 @@ async function loadTasksHistory() {
     const { session } = await chrome.storage.local.get("session");
     const base = await getResolvedBackendBase();
     const headers = {};
-    if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
-    const res = await fetch(`${base}/api/public/extension/tasks`, { headers });
+    const token = session?.accessToken || session?.access_token;
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetchWithTimeout(`${base}/api/public/extension/tasks`, { headers }, 8000);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data?.ok && data.tasks && data.tasks.length > 0) {
       list.innerHTML = data.tasks
@@ -4382,7 +4652,8 @@ async function loadModelHubStatus() {
     if (storedProvider) selectedProvider = storedProvider;
 
     const base = await getResolvedBackendBase();
-    const res = await fetch(`${base}/api/public/extension/models`);
+    const res = await fetchWithTimeout(`${base}/api/public/extension/models`, {}, 8000);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data?.ok) {
       if (data.providers && data.providers.length > 0) {
@@ -4530,14 +4801,14 @@ if ($("testActiveProviderBtn")) {
     }
     try {
       const base = await getResolvedBackendBase();
-      const res = await fetch(`${base}/api/public/extension/test-model`, {
+      const res = await fetchWithTimeout(`${base}/api/public/extension/test-model`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider: targetProv }),
-      });
-      const data = await res.json();
+      }, 8000);
+      const data = await res.json().catch(() => null);
       if (pingBox) {
-        if (data?.ok) {
+        if (res.ok && data?.ok) {
           pingBox.style.color = "var(--success)";
           pingBox.textContent = `⚡ ${info?.name || targetProv} Connected (${data.latencyMs}ms): ${data.message}`;
         } else {
@@ -4577,6 +4848,8 @@ if ($("sizeSelect")) {
     const stage = $("characterStage");
     if (!stage) return;
     const wrap3d = $("buddy3dCanvasWrap");
+    const svg = $("characterSvg");
+    const img = $("buddy3dImg");
     if (e.target.value === "hidden") {
       stage.style.display = "none";
     } else if (e.target.value === "compact") {
@@ -4585,11 +4858,13 @@ if ($("sizeSelect")) {
         wrap3d.style.width = "102px";
         wrap3d.style.height = "102px";
       }
-      $("characterSvg").style.width = "90px";
-      $("characterSvg").style.height = "100px";
-      if ($("buddy3dImg")) {
-        $("buddy3dImg").style.width = "90px";
-        $("buddy3dImg").style.height = "90px";
+      if (svg) {
+        svg.style.width = "90px";
+        svg.style.height = "100px";
+      }
+      if (img) {
+        img.style.width = "90px";
+        img.style.height = "90px";
       }
       buddy3dViewer?.resize();
     } else {
@@ -4598,11 +4873,13 @@ if ($("sizeSelect")) {
         wrap3d.style.width = "132px";
         wrap3d.style.height = "132px";
       }
-      $("characterSvg").style.width = "120px";
-      $("characterSvg").style.height = "120px";
-      if ($("buddy3dImg")) {
-        $("buddy3dImg").style.width = "110px";
-        $("buddy3dImg").style.height = "110px";
+      if (svg) {
+        svg.style.width = "120px";
+        svg.style.height = "120px";
+      }
+      if (img) {
+        img.style.width = "110px";
+        img.style.height = "110px";
       }
       buddy3dViewer?.resize();
     }
@@ -4793,11 +5070,36 @@ if ($("settingsOpenDashboardBtn")) {
   };
 }
 
-// Listen for tab switch and session changes
+// Listen for tab switch, step progress, and session changes
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "TAB_CHANGED" || msg.type === "TAB_UPDATED") {
-    BuddyStateManager.handleTabSwitch(msg.tabId);
+  if (!msg || typeof msg !== "object" || typeof msg.type !== "string") {
+    spLog("warn", "onMessage:invalid_payload");
+    return false;
   }
+  spLog("debug", "onMessage:received", {
+    type: msg.type,
+    tabId: msg.tabId,
+    planId: msg.planId,
+    stepIndex: msg.stepIndex,
+    stepStatus: msg.stepStatus,
+  });
+  if (msg.type === "TAB_CHANGED" || msg.type === "TAB_UPDATED") {
+    if (msg.type === "TAB_CHANGED" || msg.active !== false) {
+      BuddyStateManager.handleTabSwitch(msg.tabId);
+    }
+    return false;
+  }
+  if (msg.type === "PLAN_STEP_PROGRESS" && activePlan && msg.planId === activePlan.id) {
+    const step = activePlan.steps?.[msg.stepIndex];
+    if (step) {
+      step.status = msg.stepStatus || step.status;
+      if (msg.result) step.result = msg.result;
+      if (msg.error) step.error = msg.error;
+      renderTaskPlanUI();
+    }
+    return false;
+  }
+  return false;
 });
 
 // Guard against blank states on window focus and tab visibility transitions

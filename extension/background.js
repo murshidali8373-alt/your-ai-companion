@@ -7,6 +7,199 @@ const LEGACY_BROKEN_HOST = "asfavkynho62d5znlmqa5n";
 const MAX_CONVERSATION_TURNS = 3;
 let conversationBuffer = [];
 
+// --- STRUCTURED COMMUNICATION DIAGNOSTIC LOGGER & RING BUFFER ---
+const MAX_COMM_LOGS = 120;
+const commLogBuffer = [];
+let commTraceSeq = 0;
+
+function sanitizeUrlForLog(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== "string") return "";
+  try {
+    const u = new URL(rawUrl);
+    if (RESTRICTED.test(rawUrl)) return `${u.protocol}//${u.host || ""}`;
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return "unparseable-url";
+  }
+}
+
+function summarizeMessagePayload(msg) {
+  if (!msg || typeof msg !== "object") return { invalid: typeof msg };
+  const summary = {
+    type: msg.type,
+    traceId: msg.__traceId || undefined,
+  };
+  if (msg.action) summary.action = msg.action;
+  if (msg.selector) summary.selector = String(msg.selector).slice(0, 80);
+  if (msg.extractType) summary.extractType = msg.extractType;
+  if (msg.tabId !== undefined) summary.tabId = msg.tabId;
+  if (typeof msg.question === "string") summary.questionLen = msg.question.length;
+  if (typeof msg.query === "string") summary.queryLen = msg.query.length;
+  if (msg.intent) summary.intent = msg.intent;
+  if (msg.step?.action) summary.stepAction = msg.step.action;
+  if (msg.plan?.id) summary.planId = msg.plan.id;
+  if (msg.fields && typeof msg.fields === "object") summary.fieldCount = Object.keys(msg.fields).length;
+  if (msg.options?.explicitPairs) summary.explicitPairCount = msg.options.explicitPairs.length;
+  if (msg.document?.fileName) {
+    summary.docFile = msg.document.fileName;
+    summary.hasDocBase64 = Boolean(msg.document.base64Data);
+  }
+  return summary;
+}
+
+function swLog(level, stage, detail = {}) {
+  const entry = {
+    ts: new Date().toISOString(),
+    source: "SW",
+    level,
+    stage,
+    ...detail,
+  };
+  commLogBuffer.push(entry);
+  if (commLogBuffer.length > MAX_COMM_LOGS) {
+    commLogBuffer.shift();
+  }
+  try {
+    const logger = console[level] || console.info;
+    logger("[AI Buddy][SW]", entry);
+  } catch {}
+}
+
+function sendPanelNotification(payload) {
+  try {
+    chrome.runtime
+      .sendMessage(payload)
+      .then(() => {
+        swLog("debug", "notifyPanel:delivered", { type: payload?.type, tabId: payload?.tabId });
+      })
+      .catch((err) => {
+        const msg = String(err?.message || err || "");
+        const noListener =
+          msg.includes("Receiving end does not exist") ||
+          msg.includes("Could not establish connection");
+        swLog(noListener ? "debug" : "warn", "notifyPanel:undelivered", {
+          type: payload?.type,
+          tabId: payload?.tabId,
+          reason: noListener ? "sidepanel_closed" : msg,
+        });
+      });
+  } catch (err) {
+    swLog("warn", "notifyPanel:throw", {
+      type: payload?.type,
+      error: String(err?.message || err),
+    });
+  }
+}
+
+async function sendTabMessageToBridge(tabId, message, traceId) {
+  const invokeSend = () =>
+    new Promise((resolve) => {
+      try {
+        chrome.tabs.sendMessage(tabId, message, { frameId: 0 }, (resp) => {
+          const lastErr = chrome.runtime?.lastError;
+          if (lastErr) {
+            resolve({ ok: false, lastError: lastErr.message || String(lastErr), resp: null });
+          } else {
+            resolve({ ok: true, lastError: null, resp: resp || null });
+          }
+        });
+      } catch (err) {
+        resolve({ ok: false, lastError: String(err?.message || err), resp: null });
+      }
+    });
+
+  let attempt = await invokeSend();
+  if (!attempt.ok) {
+    swLog("warn", "tabs.sendMessage:failed", {
+      traceId,
+      tabId,
+      frameId: 0,
+      type: message?.type,
+      error: attempt.lastError,
+    });
+    const missingReceiver =
+      attempt.lastError?.includes("Receiving end does not exist") ||
+      attempt.lastError?.includes("Could not establish connection");
+    if (missingReceiver && chrome.scripting?.executeScript) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId, frameIds: [0] },
+          files: ["bridge.js"],
+        });
+        swLog("info", "tabs.sendMessage:bridge_reinjected", { traceId, tabId });
+        attempt = await invokeSend();
+        if (!attempt.ok) {
+          swLog("warn", "tabs.sendMessage:retry_failed", {
+            traceId,
+            tabId,
+            error: attempt.lastError,
+          });
+        }
+      } catch (injectErr) {
+        swLog("warn", "tabs.sendMessage:bridge_inject_failed", {
+          traceId,
+          tabId,
+          error: String(injectErr?.message || injectErr),
+        });
+      }
+    }
+  } else {
+    swLog("debug", "tabs.sendMessage:ack", {
+      traceId,
+      tabId,
+      type: message?.type,
+      respOk: Boolean(attempt.resp?.ok),
+      status: attempt.resp?.status,
+    });
+  }
+  return attempt.resp;
+}
+
+async function runTabScript({ tabId, target, files, func, args, label = "script" }) {
+  const startedAt = Date.now();
+  const resolvedTarget = target || { tabId };
+  try {
+    const injectSpec = { target: resolvedTarget };
+    if (files) injectSpec.files = files;
+    if (func) injectSpec.func = func;
+    if (args !== undefined) injectSpec.args = args;
+    const results = await chrome.scripting.executeScript(injectSpec);
+    const frameErrors = (results || [])
+      .filter((r) => r?.error)
+      .map((r) => ({ frameId: r.frameId, error: String(r.error?.message || r.error) }));
+    if (frameErrors.length > 0 || !results || results.length === 0) {
+      swLog("warn", "executeScript:partial_or_empty", {
+        label,
+        tabId: resolvedTarget.tabId,
+        allFrames: Boolean(resolvedTarget.allFrames),
+        frameCount: results?.length || 0,
+        frameErrors,
+        elapsedMs: Date.now() - startedAt,
+      });
+    } else {
+      swLog("debug", "executeScript:ok", {
+        label,
+        tabId: resolvedTarget.tabId,
+        allFrames: Boolean(resolvedTarget.allFrames),
+        frameCount: results.length,
+        hasResult: results.some((r) => r?.result !== undefined),
+        elapsedMs: Date.now() - startedAt,
+      });
+    }
+    return { ok: true, results: results || [], frameErrors };
+  } catch (err) {
+    const errMsg = String(err?.message || err);
+    swLog("error", "executeScript:rejected", {
+      label,
+      tabId: resolvedTarget.tabId,
+      allFrames: Boolean(resolvedTarget.allFrames),
+      error: errMsg,
+      elapsedMs: Date.now() - startedAt,
+    });
+    return { ok: false, results: [], error: errMsg };
+  }
+}
+
 // Initialize buffer from local storage
 chrome.storage.local
   .get("conversationBuffer")
@@ -21,37 +214,91 @@ chrome.storage.local
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   try {
     const tab = await chrome.tabs.get(activeInfo.tabId);
-    chrome.runtime
-      .sendMessage({
-        type: "TAB_CHANGED",
-        tabId: activeInfo.tabId,
-        url: tab?.url,
-        title: tab?.title,
-      })
-      .catch(() => {});
-  } catch {
-    // Non-fatal
+    sendPanelNotification({
+      type: "TAB_CHANGED",
+      tabId: activeInfo.tabId,
+      url: tab?.url,
+      title: tab?.title,
+    });
+  } catch (err) {
+    swLog("debug", "tabs.onActivated:get_failed", {
+      tabId: activeInfo.tabId,
+      error: String(err?.message || err),
+    });
   }
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === "complete" || changeInfo.url) {
-    chrome.runtime
-      .sendMessage({
-        type: "TAB_UPDATED",
-        tabId,
-        url: tab.url,
-        title: tab.title,
-      })
-      .catch(() => {});
+    sendPanelNotification({
+      type: "TAB_UPDATED",
+      tabId,
+      active: Boolean(tab?.active),
+      url: tab?.url,
+      title: tab?.title,
+    });
   }
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+  if (!msg || typeof msg !== "object" || typeof msg.type !== "string") {
+    swLog("warn", "onMessage:invalid_payload", {
+      senderOrigin: sanitizeUrlForLog(sender?.url),
+      payloadType: typeof msg,
+    });
+    return false;
+  }
+
+  const traceId = msg.__traceId || `sw_${Date.now().toString(36)}_${++commTraceSeq}`;
+  const startedAt = Date.now();
+  const senderInfo = {
+    senderOrigin: sanitizeUrlForLog(sender?.url) || (sender?.id ? `ext:${sender.id}` : "unknown"),
+    senderTabId: sender?.tab?.id,
+    senderFrameId: sender?.frameId,
+  };
+
+  swLog("info", "onMessage:received", {
+    traceId,
+    ...senderInfo,
+    payload: summarizeMessagePayload(msg),
+  });
+
+  let replied = false;
+  const safeReply = (response) => {
+    if (replied) {
+      swLog("warn", "onMessage:duplicate_reply_ignored", { traceId, type: msg.type });
+      return;
+    }
+    replied = true;
+    const elapsedMs = Date.now() - startedAt;
+    swLog(response?.error ? "warn" : "info", "onMessage:reply", {
+      traceId,
+      type: msg.type,
+      elapsedMs,
+      ok: response?.ok !== undefined ? Boolean(response.ok) : !response?.error,
+      error: response?.error || (response?.ok === false ? response?.message : undefined),
+    });
+    try {
+      reply(response);
+    } catch (err) {
+      swLog("error", "onMessage:reply_port_closed", {
+        traceId,
+        type: msg.type,
+        elapsedMs,
+        error: String(err?.message || err),
+      });
+    }
+  };
+
+  if (msg.type === "GET_COMM_LOGS") {
+    safeReply({ ok: true, logs: commLogBuffer.slice(-60) });
+    return false;
+  }
+
   if (msg.type === "SAVE_SESSION") {
     if (!sender.url || !msg.session?.apiBase) {
-      reply({ ok: false, error: "Missing sender URL or session payload" });
-      return;
+      safeReply({ ok: false, error: "Missing sender URL or session payload" });
+      return false;
     }
     try {
       const senderParsed = new URL(sender.url);
@@ -59,145 +306,167 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
 
       // Strict origin match: protocol, hostname, and port must match exactly
       if (senderParsed.origin !== apiBaseParsed.origin) {
-        reply({ ok: false, error: "Origin mismatch" });
-        return;
+        safeReply({ ok: false, error: "Origin mismatch" });
+        return false;
       }
 
       // Strict pathname check: must be exactly "/connect" or "/connect/"
       const path = senderParsed.pathname.replace(/\/+$/, "") || "/";
       if (path !== "/connect") {
-        reply({ ok: false, error: "Invalid route for session handshake" });
-        return;
+        safeReply({ ok: false, error: "Invalid route for session handshake" });
+        return false;
       }
 
       chrome.storage.local
         .set({ session: msg.session, lastBase: apiBaseParsed.origin })
-        .then(() => reply({ ok: true }));
+        .then(() => safeReply({ ok: true }))
+        .catch((err) => safeReply({ ok: false, error: String(err?.message || err) }));
       return true;
     } catch {
-      reply({ ok: false, error: "Invalid URL structure" });
-      return;
+      safeReply({ ok: false, error: "Invalid URL structure" });
+      return false;
     }
   }
   if (msg.type === "ASK") {
     pendingUploadedDocumentSummary = msg.uploadedDocumentSummary || null;
     pendingPreferredProvider = msg.preferredProvider || null;
-    ask(msg.question, msg.intent, msg.history, msg.buddySlug, msg.customBuddyId, msg.preferredModel).then(reply, (e) => reply({ error: String(e?.message || e) }));
+    ask(
+      msg.question,
+      msg.intent,
+      msg.history,
+      msg.buddySlug,
+      msg.customBuddyId,
+      msg.preferredModel
+    ).then(safeReply, (e) => safeReply({ error: String(e?.message || e) }));
     return true;
   }
   if (msg.type === "EXTRACT_DOCUMENT") {
-    extractUploadedDocument(msg.document).then(reply, (e) =>
-      reply({ ok: false, error: String(e?.message || e) }),
+    extractUploadedDocument(msg.document).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
     );
     return true;
   }
   if (msg.type === "SIGN_OUT") {
     conversationBuffer = [];
-    chrome.storage.local.remove(["session", "conversationBuffer"]).then(() => reply({ ok: true }));
+    chrome.storage.local
+      .remove(["session", "conversationBuffer"])
+      .then(() => safeReply({ ok: true }))
+      .catch((err) => safeReply({ ok: false, error: String(err?.message || err) }));
     return true;
   }
   if (msg.type === "GET_CONVERSATION_BUFFER") {
-    reply({ ok: true, buffer: conversationBuffer });
-    return true;
+    safeReply({ ok: true, buffer: conversationBuffer });
+    return false;
   }
   if (msg.type === "OPEN_SIDE_PANEL") {
-    openSidePanel(sender).then(reply, (e) => reply({ ok: false, error: String(e?.message || e) }));
+    openSidePanel(sender).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
+    );
     return true;
   }
   if (msg.type === "EXECUTE_ACTION") {
-    executeAction(msg.action, msg.selector, msg.value, msg.options).then(reply, (e) =>
-      reply({ ok: false, error: String(e?.message || e) }),
+    executeAction(msg.action, msg.selector, msg.value, msg.options).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
     );
     return true;
   }
   if (msg.type === "EXECUTE_PLAN") {
-    executePlan(msg.plan, msg.options).then(reply, (e) =>
-      reply({ ok: false, error: String(e?.message || e) }),
+    executePlan(msg.plan, msg.options).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
     );
     return true;
   }
   if (msg.type === "EXECUTE_STEP") {
-    executePlanStepInTab(msg.step, msg.options).then(reply, (e) =>
-      reply({ ok: false, error: String(e?.message || e) }),
+    executePlanStepInTab(msg.step, msg.options).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
     );
     return true;
   }
   if (msg.type === "EXTRACT_PAGE_DATA") {
-    extractPageData(msg.selector, msg.extractType, msg.query, msg.options).then(reply, (e) =>
-      reply({ ok: false, error: String(e?.message || e) }),
+    extractPageData(msg.selector, msg.extractType, msg.query, msg.options).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
     );
     return true;
   }
   if (msg.type === "NAVIGATE_TAB") {
-    navigateTab(msg.url, msg.tabId).then(reply, (e) =>
-      reply({ ok: false, error: String(e?.message || e) }),
+    navigateTab(msg.url, msg.tabId).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
     );
     return true;
   }
   if (msg.type === "GET_ALL_TABS") {
-    getAllTabs().then(reply, (e) => reply({ ok: false, error: String(e?.message || e) }));
+    getAllTabs().then(safeReply, (e) => safeReply({ ok: false, error: String(e?.message || e) }));
     return true;
   }
   if (msg.type === "SWITCH_TAB") {
-    switchTab(msg.tabId).then(reply, (e) => reply({ ok: false, error: String(e?.message || e) }));
+    switchTab(msg.tabId).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
+    );
     return true;
   }
   if (msg.type === "KEYBOARD_ACTION") {
-    keyboardAction(msg.key, msg.selector, msg.options).then(reply, (e) =>
-      reply({ ok: false, error: String(e?.message || e) }),
+    keyboardAction(msg.key, msg.selector, msg.options).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
     );
     return true;
   }
   if (msg.type === "WAIT_FOR_CONDITION") {
-    waitForCondition(msg.selector, msg.text, msg.timeoutMs).then(reply, (e) =>
-      reply({ ok: false, error: String(e?.message || e) }),
+    waitForCondition(msg.selector, msg.text, msg.timeoutMs).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
     );
     return true;
   }
   if (msg.type === "WAIT_FOR_PAGE_SETTLE") {
-    waitForPageSettle(msg.timeoutMs).then(reply, (e) =>
-      reply({ ok: false, error: String(e?.message || e) }),
+    waitForPageSettle(msg.timeoutMs).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
     );
     return true;
   }
   if (msg.type === "FIND_CONTENT") {
-    findContentOnPage(msg.query, msg.options).then(reply, (e) =>
-      reply({ ok: false, error: String(e?.message || e) }),
+    findContentOnPage(msg.query, msg.options).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
     );
     return true;
   }
   if (msg.type === "HIGHLIGHT") {
-    highlightElement(msg.selector, msg.title, msg.description, msg.buddyVisual).then(reply, (e) =>
-      reply({ ok: false, error: String(e?.message || e) }),
+    highlightElement(msg.selector, msg.title, msg.description, msg.buddyVisual).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
+    );
+    return true;
+  }
+  if (msg.type === "CLEAR_HIGHLIGHT") {
+    clearHighlightOverlay().then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
     );
     return true;
   }
   if (msg.type === "SMART_FILL_FORM") {
-    smartFillForm(msg.fields, msg.options).then(reply, (e) =>
-      reply({ ok: false, error: String(e?.message || e) }),
+    smartFillForm(msg.fields, msg.options).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
     );
     return true;
   }
   if (msg.type === "SAVE_TASK_CHECKPOINT") {
     chrome.storage.local
       .set({ savedCheckpoint: msg.checkpoint })
-      .then(() => reply({ ok: true }))
-      .catch((err) => reply({ ok: false, error: String(err) }));
+      .then(() => safeReply({ ok: true }))
+      .catch((err) => safeReply({ ok: false, error: String(err?.message || err) }));
     return true;
   }
   if (msg.type === "GET_TASK_CHECKPOINT") {
     chrome.storage.local
       .get("savedCheckpoint")
-      .then((data) => reply({ ok: true, checkpoint: data.savedCheckpoint || null }))
-      .catch((err) => reply({ ok: false, error: String(err) }));
+      .then((data) => safeReply({ ok: true, checkpoint: data.savedCheckpoint || null }))
+      .catch((err) => safeReply({ ok: false, error: String(err?.message || err) }));
     return true;
   }
   if (msg.type === "GET_SNAPSHOT" || msg.type === "GET_PAGE_SNAPSHOT") {
-    getSnapshotForActiveTab().then(reply, (e) =>
-      reply({ ok: false, error: String(e?.message || e) }),
+    getSnapshotForActiveTab().then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
     );
     return true;
   }
+  swLog("warn", "onMessage:unhandled_type", { traceId, type: msg.type });
   return false;
 });
 
@@ -248,13 +517,52 @@ async function openSidePanel(sender) {
 }
 
 /**
- * Robust active tab finder: queries last focused window first (critical when side panel is focused),
- * then falls back to current window, then any active tab.
+ * Robust active tab finder:
+ * Prefers normal browser windows over DevTools/popup windows so opening DevTools
+ * or clicking outside the webpage doesn't misroute commands onto devtools:// URLs.
  */
 async function activeTab() {
   try {
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      windowType: "normal",
+      lastFocusedWindow: true,
+    });
+    if (tab?.id && tab.url && !RESTRICTED.test(tab.url)) {
+      swLog("debug", "activeTab:resolved", {
+        strategy: "normal_lastFocused",
+        tabId: tab.id,
+        windowId: tab.windowId,
+        url: sanitizeUrlForLog(tab.url),
+      });
+      return tab;
+    }
+  } catch {}
+  try {
+    const normalActiveTabs = await chrome.tabs.query({ active: true, windowType: "normal" });
+    const webTab = normalActiveTabs.find((t) => t?.id && t.url && !RESTRICTED.test(t.url));
+    if (webTab) {
+      swLog("debug", "activeTab:resolved", {
+        strategy: "normal_any_web",
+        tabId: webTab.id,
+        windowId: webTab.windowId,
+        url: sanitizeUrlForLog(webTab.url),
+      });
+      return webTab;
+    }
+  } catch {}
+  try {
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (tab && tab.id) return tab;
+    if (tab && tab.id) {
+      swLog("debug", "activeTab:resolved", {
+        strategy: "lastFocused_fallback",
+        tabId: tab.id,
+        windowId: tab.windowId,
+        url: sanitizeUrlForLog(tab.url),
+        restricted: Boolean(tab.url && RESTRICTED.test(tab.url)),
+      });
+      return tab;
+    }
   } catch {}
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -264,6 +572,7 @@ async function activeTab() {
     const [tab] = await chrome.tabs.query({ active: true });
     if (tab && tab.id) return tab;
   } catch {}
+  swLog("warn", "activeTab:none_found");
   return null;
 }
 
@@ -316,25 +625,33 @@ async function captureTabScreenshot(windowId) {
 async function getSnapshotForActiveTab() {
   const tab = await activeTab();
   if (!tab?.id || !tab.url || RESTRICTED.test(tab.url)) {
+    swLog("warn", "snapshot:restricted_or_missing_tab", {
+      tabId: tab?.id,
+      url: sanitizeUrlForLog(tab?.url),
+    });
     return { ok: false, snapshot: null, error: "Restricted or inactive page" };
   }
-  try {
-    let results;
-    try {
-      results = await chrome.scripting.executeScript({
-        target: { tabId: tab.id, allFrames: true },
-        files: ["snapshot.js"],
-      });
-    } catch {
-      results = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ["snapshot.js"],
-      });
-    }
-    return { ok: true, snapshot: mergeFrameSnapshots(results) };
-  } catch (err) {
-    return { ok: false, snapshot: null, error: String(err?.message || err) };
+  let run = await runTabScript({
+    target: { tabId: tab.id, allFrames: true },
+    files: ["snapshot.js"],
+    label: "snapshot:allFrames",
+  });
+  if (!run.ok || run.results.length === 0) {
+    run = await runTabScript({
+      target: { tabId: tab.id },
+      files: ["snapshot.js"],
+      label: "snapshot:topFrame",
+    });
   }
+  if (!run.ok) {
+    return { ok: false, snapshot: null, error: run.error || "Script execution failed" };
+  }
+  const merged = mergeFrameSnapshots(run.results);
+  if (!merged) {
+    swLog("warn", "snapshot:empty_merge", { tabId: tab.id });
+    return { ok: false, snapshot: null, error: "Snapshot returned no DOM data" };
+  }
+  return { ok: true, snapshot: merged };
 }
 
 function getFormattedHistory(incomingHistory) {
@@ -1155,19 +1472,17 @@ async function extractUploadedDocument(doc) {
       const buddyTab = allTabs.find((t) => t.url && (t.url.includes("run.app") || t.url.includes("localhost")));
       if (buddyTab?.id && buddyTab.url) {
         const origin = new URL(buddyTab.url).origin;
-        const proxyRes = await new Promise((resolve) => {
-          chrome.tabs.sendMessage(
-            buddyTab.id,
-            {
-              type: "AI_BUDDY_PAGE_FETCH",
-              url: `${origin}/api/public/extension/extract-document`,
-              method: "POST",
-              headers,
-              body: reqBody,
-            },
-            (resp) => resolve(chrome.runtime.lastError ? null : resp),
-          );
-        });
+        const proxyRes = await sendTabMessageToBridge(
+          buddyTab.id,
+          {
+            type: "AI_BUDDY_PAGE_FETCH",
+            url: `${origin}/api/public/extension/extract-document`,
+            method: "POST",
+            headers,
+            body: reqBody,
+          },
+          "extract_document_proxy",
+        );
         if (proxyRes?.ok && proxyRes.json) data = proxyRes.json;
       }
     }
@@ -1267,10 +1582,11 @@ async function ask(
   customBuddyId,
   preferredModel,
   uploadedDocumentSummary,
+  preferredProvider,
 ) {
   const effectiveDocSummary = uploadedDocumentSummary || pendingUploadedDocumentSummary || undefined;
   pendingUploadedDocumentSummary = null;
-  const requestedPreferredProvider = pendingPreferredProvider || undefined;
+  const requestedPreferredProvider = preferredProvider || pendingPreferredProvider || undefined;
   pendingPreferredProvider = null;
 
   const { session } = await chrome.storage.local.get("session");
@@ -1393,25 +1709,17 @@ async function ask(
 
         if (buddyTab?.id && buddyTab?.url) {
           const tabOrigin = new URL(buddyTab.url).origin;
-          const proxyRes = await new Promise((resolve) => {
-            chrome.tabs.sendMessage(
-              buddyTab.id,
-              {
-                type: "AI_BUDDY_PAGE_FETCH",
-                url: `${tabOrigin}/api/public/extension/ask`,
-                method: "POST",
-                headers,
-                body: payload,
-              },
-              (response) => {
-                if (chrome.runtime.lastError || !response) {
-                  resolve(null);
-                } else {
-                  resolve(response);
-                }
-              },
-            );
-          });
+          const proxyRes = await sendTabMessageToBridge(
+            buddyTab.id,
+            {
+              type: "AI_BUDDY_PAGE_FETCH",
+              url: `${tabOrigin}/api/public/extension/ask`,
+              method: "POST",
+              headers,
+              body: payload,
+            },
+            "ask_proxy",
+          );
 
           if (proxyRes?.json && proxyRes.ok) {
             body = proxyRes.json;
@@ -1458,8 +1766,16 @@ async function ask(
 
     if (res?.status === 401 && session) {
       await chrome.storage.local.remove("session");
-      pendingPreferredProvider = effectivePreferredProvider;
-      return ask(question, intent, history, buddySlug, customBuddyId, preferredModel, uploadedDocumentSummary);
+      return ask(
+        question,
+        intent,
+        history,
+        buddySlug,
+        customBuddyId,
+        preferredModel,
+        effectiveDocSummary,
+        effectivePreferredProvider,
+      );
     }
     if (res && !res.ok && !body.reply?.answer) {
       const autonomousResult = await generateAutonomousCompanionReply({
@@ -1489,18 +1805,17 @@ async function ask(
     }
 
     if (body.highlightSelector && tab?.id && snapshot) {
-      chrome.scripting
-        .executeScript({
-          target: { tabId: tab.id },
-          func: highlight,
-          args: [
-            body.highlightSelector,
-            body.calloutTitle || null,
-            body.calloutDescription || null,
-            { outfit: body.reply?.outfit || "teal", buddyName: body.buddyName || "Buddy" },
-          ],
-        })
-        .catch(() => undefined);
+      runTabScript({
+        target: { tabId: tab.id },
+        func: highlight,
+        args: [
+          body.highlightSelector,
+          body.calloutTitle || null,
+          body.calloutDescription || null,
+          { outfit: body.reply?.outfit || "teal", buddyName: body.buddyName || "Buddy" },
+        ],
+        label: "ask:highlight",
+      }).catch(() => undefined);
     }
     return { ...body, pageReadable: Boolean(snapshot), snapshot };
   } catch (err) {
@@ -1521,18 +1836,17 @@ async function ask(
           recordTurn(question, autonomousResult.reply.answer);
         }
         if (autonomousResult.highlightSelector && tab?.id && snapshot) {
-          chrome.scripting
-            .executeScript({
-              target: { tabId: tab.id },
-              func: highlight,
-              args: [
-                autonomousResult.highlightSelector,
-                autonomousResult.calloutTitle || null,
-                autonomousResult.calloutDescription || null,
-                { outfit: "teal", buddyName: autonomousResult.buddyName || "Buddy" },
-              ],
-            })
-            .catch(() => undefined);
+          runTabScript({
+            target: { tabId: tab.id },
+            func: highlight,
+            args: [
+              autonomousResult.highlightSelector,
+              autonomousResult.calloutTitle || null,
+              autonomousResult.calloutDescription || null,
+              { outfit: "teal", buddyName: autonomousResult.buddyName || "Buddy" },
+            ],
+            label: "ask:fallbackHighlight",
+          }).catch(() => undefined);
         }
         return { ...autonomousResult, pageReadable: Boolean(snapshot), snapshot };
       }
@@ -1770,12 +2084,31 @@ async function highlightElement(selector, title, description, buddyVisual) {
   if (!tab?.id || !tab.url || RESTRICTED.test(tab.url)) {
     return { ok: false, message: "Cannot access this browser tab." };
   }
-  const [res] = await chrome.scripting.executeScript({
+  const run = await runTabScript({
     target: { tabId: tab.id },
     func: highlight,
     args: [selector, title || null, description || null, buddyVisual || {}],
+    label: "highlight",
   });
-  return { ok: Boolean(res?.result) };
+  if (!run.ok) {
+    return { ok: false, message: run.error || "Could not highlight element." };
+  }
+  return { ok: Boolean(run.results?.[0]?.result) };
+}
+
+async function clearHighlightOverlay() {
+  const tab = await activeTab();
+  if (!tab?.id || !tab.url || RESTRICTED.test(tab.url)) {
+    return { ok: true };
+  }
+  const run = await runTabScript({
+    target: { tabId: tab.id },
+    func: () => {
+      document.getElementById("ai-buddy-highlight-host")?.remove();
+    },
+    label: "clearHighlight",
+  });
+  return { ok: run.ok };
 }
 
 /**
@@ -2409,36 +2742,37 @@ async function smartFillForm(fields, options = {}) {
       return { ok: true, results };
   };
 
-  const [res] = await chrome.scripting.executeScript({
+  const mainRun = await runTabScript({
     target: { tabId: tab.id },
     func: smartFillFrameFunc,
     args: [fields, options],
+    label: "smartFill:topFrame",
   });
 
-  const mainResult = res?.result || { ok: false, message: "Form filling execution failed." };
+  const mainResult = mainRun.results?.[0]?.result || {
+    ok: false,
+    message: mainRun.error || "Form filling execution failed.",
+  };
 
-  // Iframe fallback: if top frame filled/preserved nothing, check subframes
+  // Iframe fallback: if top frame failed or filled/preserved nothing, check subframes
   if (
-    mainResult.ok &&
-    (mainResult.results?.filled?.length || 0) === 0 &&
-    (mainResult.results?.preserved?.length || 0) === 0
+    !mainResult.ok ||
+    ((mainResult.results?.filled?.length || 0) === 0 &&
+      (mainResult.results?.preserved?.length || 0) === 0)
   ) {
-    try {
-      const frameRuns = await chrome.scripting.executeScript({
-        target: { tabId: tab.id, allFrames: true },
-        func: smartFillFrameFunc,
-        args: [fields, options],
-      });
-      const subMatch = frameRuns.find(
-        (r) =>
-          r.frameId !== 0 &&
-          r.result?.ok &&
-          ((r.result.results?.filled?.length || 0) > 0 || (r.result.results?.preserved?.length || 0) > 0),
-      );
-      if (subMatch?.result) return subMatch.result;
-    } catch {
-      // Ignore inaccessible cross-origin subframes
-    }
+    const subRun = await runTabScript({
+      target: { tabId: tab.id, allFrames: true },
+      func: smartFillFrameFunc,
+      args: [fields, options],
+      label: "smartFill:allFrames",
+    });
+    const subMatch = (subRun.results || []).find(
+      (r) =>
+        r.frameId !== 0 &&
+        r.result?.ok &&
+        ((r.result.results?.filled?.length || 0) > 0 || (r.result.results?.preserved?.length || 0) > 0),
+    );
+    if (subMatch?.result) return subMatch.result;
   }
 
   return mainResult;
@@ -2690,28 +3024,33 @@ async function findContentOnPage(query, options = {}) {
       };
   };
 
-  const [res] = await chrome.scripting.executeScript({
+  const findRun = await runTabScript({
     target: { tabId: tab.id },
     func: findFrameFunc,
     args: [query, options],
+    label: "findContent:topFrame",
   });
 
-  let result = res?.result || { ok: false, message: "Search execution failed." };
+  let result = findRun.results?.[0]?.result || {
+    ok: false,
+    message: findRun.error || "Search execution failed.",
+  };
   let targetFrameId = 0;
 
-  if (result.ok && result.totalMatches === 0) {
-    try {
-      const frameRuns = await chrome.scripting.executeScript({
-        target: { tabId: tab.id, allFrames: true },
-        func: findFrameFunc,
-        args: [query, options],
-      });
-      const subHit = frameRuns.find((r) => r.frameId !== 0 && r.result?.ok && r.result.totalMatches > 0);
-      if (subHit?.result) {
-        result = subHit.result;
-        targetFrameId = subHit.frameId;
-      }
-    } catch {}
+  if (!result.ok || result.totalMatches === 0) {
+    const subRun = await runTabScript({
+      target: { tabId: tab.id, allFrames: true },
+      func: findFrameFunc,
+      args: [query, options],
+      label: "findContent:allFrames",
+    });
+    const subHit = (subRun.results || []).find(
+      (r) => r.frameId !== 0 && r.result?.ok && r.result.totalMatches > 0,
+    );
+    if (subHit?.result) {
+      result = subHit.result;
+      targetFrameId = subHit.frameId;
+    }
   }
 
   if (result.ok && result.firstSelector && options?.highlight !== false) {
@@ -2723,18 +3062,17 @@ async function findContentOnPage(query, options = {}) {
         options?.buddyVisual,
       );
     } else {
-      await chrome.scripting
-        .executeScript({
-          target: { tabId: tab.id, frameIds: [targetFrameId] },
-          func: highlight,
-          args: [
-            result.firstSelector,
-            options?.title || `Pointing: ${query}`,
-            result.matches?.[0]?.textSnippet || `Found ${result.totalMatches} match(es) for "${query}".`,
-            options?.buddyVisual || {},
-          ],
-        })
-        .catch(() => {});
+      await runTabScript({
+        target: { tabId: tab.id, frameIds: [targetFrameId] },
+        func: highlight,
+        args: [
+          result.firstSelector,
+          options?.title || `Pointing: ${query}`,
+          result.matches?.[0]?.textSnippet || `Found ${result.totalMatches} match(es) for "${query}".`,
+          options?.buddyVisual || {},
+        ],
+        label: "findContent:subframeHighlight",
+      });
     }
   }
 
@@ -3551,23 +3889,26 @@ async function executeAction(action, selector, value, options = {}) {
       return { ok: false, message: `Unknown browser action: ${act}` };
   };
 
-  const [res] = await chrome.scripting.executeScript({
+  const execRun = await runTabScript({
     target: { tabId: tab.id },
     func: executeFrameFunc,
     args: [action, selector, value, options],
+    label: `executeAction:${action}:topFrame`,
   });
 
-  const mainResult = res?.result || { ok: false, message: "Action failed to execute." };
+  const mainResult = execRun.results?.[0]?.result || {
+    ok: false,
+    message: execRun.error || "Action failed to execute.",
+  };
   if (!mainResult.ok) {
-    try {
-      const frameRuns = await chrome.scripting.executeScript({
-        target: { tabId: tab.id, allFrames: true },
-        func: executeFrameFunc,
-        args: [action, selector, value, options],
-      });
-      const subHit = frameRuns.find((r) => r.frameId !== 0 && r.result?.ok);
-      if (subHit?.result) return subHit.result;
-    } catch {}
+    const subRun = await runTabScript({
+      target: { tabId: tab.id, allFrames: true },
+      func: executeFrameFunc,
+      args: [action, selector, value, options],
+      label: `executeAction:${action}:allFrames`,
+    });
+    const subHit = (subRun.results || []).find((r) => r.frameId !== 0 && r.result?.ok);
+    if (subHit?.result) return subHit.result;
   }
 
   return mainResult;
@@ -3689,23 +4030,30 @@ async function extractPageData(selector, extractType = "order_id", query, option
       };
   };
 
-  const [res] = await chrome.scripting.executeScript({
+  const extractRun = await runTabScript({
     target: { tabId: tab.id },
     func: extractFrameFunc,
     args: [selector, extractType, query, options],
+    label: `extractPageData:${extractType}:topFrame`,
   });
 
-  let result = res?.result || { ok: false, count: 0, extracted: [], message: "Extraction failed to execute." };
+  let result = extractRun.results?.[0]?.result || {
+    ok: false,
+    count: 0,
+    extracted: [],
+    message: extractRun.error || "Extraction failed to execute.",
+  };
   if (!result.ok && (result.count || 0) === 0) {
-    try {
-      const frameRuns = await chrome.scripting.executeScript({
-        target: { tabId: tab.id, allFrames: true },
-        func: extractFrameFunc,
-        args: [selector, extractType, query, options],
-      });
-      const subHit = frameRuns.find((r) => r.frameId !== 0 && r.result?.ok && r.result.count > 0);
-      if (subHit?.result) result = subHit.result;
-    } catch {}
+    const subRun = await runTabScript({
+      target: { tabId: tab.id, allFrames: true },
+      func: extractFrameFunc,
+      args: [selector, extractType, query, options],
+      label: `extractPageData:${extractType}:allFrames`,
+    });
+    const subHit = (subRun.results || []).find(
+      (r) => r.frameId !== 0 && r.result?.ok && r.result.count > 0,
+    );
+    if (subHit?.result) result = subHit.result;
   }
 
   return result;
@@ -3789,7 +4137,7 @@ async function waitForPageSettle(timeoutMs = 6000) {
     return { ok: true, settled: true, reason: "Restricted page or no tab" };
   }
 
-  const [res] = await chrome.scripting.executeScript({
+  const settleRun = await runTabScript({
     target: { tabId: tab.id },
     func: async (maxWait) => {
       const startTime = performance.now();
@@ -3851,9 +4199,10 @@ async function waitForPageSettle(timeoutMs = 6000) {
       };
     },
     args: [timeoutMs],
+    label: "waitForPageSettle",
   });
 
-  return res?.result || { ok: true, settled: true };
+  return settleRun.results?.[0]?.result || { ok: true, settled: true };
 }
 
 async function waitForCondition(selector, text, timeoutMs = 4000) {
@@ -3862,7 +4211,7 @@ async function waitForCondition(selector, text, timeoutMs = 4000) {
     return { ok: false, message: "Cannot wait on restricted page." };
   }
 
-  const [res] = await chrome.scripting.executeScript({
+  const waitRun = await runTabScript({
     target: { tabId: tab.id },
     func: async (sel, targetText, maxWait) => {
       const normalize = (t) => (t || "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -3886,9 +4235,13 @@ async function waitForCondition(selector, text, timeoutMs = 4000) {
       return { ok: true, found: false, timeout: true };
     },
     args: [selector, text, timeoutMs],
+    label: "waitForCondition",
   });
 
-  return res?.result || { ok: false, message: "Wait condition timed out." };
+  return waitRun.results?.[0]?.result || {
+    ok: false,
+    message: waitRun.error || "Wait condition timed out.",
+  };
 }
 
 /**
@@ -4098,15 +4451,13 @@ async function executePlan(plan, options = {}) {
     step.status = "running";
 
     // Notify listeners of running step
-    chrome.runtime
-      .sendMessage({
-        type: "PLAN_STEP_PROGRESS",
-        planId: plan.id,
-        stepIndex: i,
-        stepStatus: "running",
-        stepTitle: step.title,
-      })
-      .catch(() => {});
+    sendPanelNotification({
+      type: "PLAN_STEP_PROGRESS",
+      planId: plan.id,
+      stepIndex: i,
+      stepStatus: "running",
+      stepTitle: step.title,
+    });
 
     // Execute step
     const res = await executePlanStepInTab(step, options);
@@ -4117,15 +4468,13 @@ async function executePlan(plan, options = {}) {
       updatedPlan.pendingApprovalStepId = step.id;
       updatedPlan.currentStepIndex = i;
 
-      chrome.runtime
-        .sendMessage({
-          type: "PLAN_STEP_PROGRESS",
-          planId: plan.id,
-          stepIndex: i,
-          stepStatus: "awaiting_approval",
-          stepTitle: step.title,
-        })
-        .catch(() => {});
+      sendPanelNotification({
+        type: "PLAN_STEP_PROGRESS",
+        planId: plan.id,
+        stepIndex: i,
+        stepStatus: "awaiting_approval",
+        stepTitle: step.title,
+      });
 
       return {
         ok: true,
@@ -4141,15 +4490,13 @@ async function executePlan(plan, options = {}) {
       updatedPlan.status = "failed";
       updatedPlan.currentStepIndex = i;
 
-      chrome.runtime
-        .sendMessage({
-          type: "PLAN_STEP_PROGRESS",
-          planId: plan.id,
-          stepIndex: i,
-          stepStatus: "failed",
-          error: step.error,
-        })
-        .catch(() => {});
+      sendPanelNotification({
+        type: "PLAN_STEP_PROGRESS",
+        planId: plan.id,
+        stepIndex: i,
+        stepStatus: "failed",
+        error: step.error,
+      });
 
       return { ok: false, plan: updatedPlan, error: step.error };
     }
@@ -4166,15 +4513,13 @@ async function executePlan(plan, options = {}) {
       }
     }
 
-    chrome.runtime
-      .sendMessage({
-        type: "PLAN_STEP_PROGRESS",
-        planId: plan.id,
-        stepIndex: i,
-        stepStatus: "completed",
-        result: step.result,
-      })
-      .catch(() => {});
+    sendPanelNotification({
+      type: "PLAN_STEP_PROGRESS",
+      planId: plan.id,
+      stepIndex: i,
+      stepStatus: "completed",
+      result: step.result,
+    });
 
     // Small natural delay between multi-step browser actions
     await new Promise((r) => setTimeout(r, 450));

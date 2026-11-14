@@ -1324,47 +1324,6 @@
 
       <!-- ================= TAB 3: TASKS & MEMORY ================= -->
       <div id="tabTasks" class="tab-panel" hidden>
-        <!-- MULTI-ACTION TASK PLANNER RUNNER -->
-        <div id="taskPlanCard" class="task-plan-card" hidden>
-          <div class="task-plan-header">
-            <div>
-              <div id="planTitle" class="task-plan-title">Multi-Action Task Plan</div>
-              <div id="planMeta" class="task-plan-meta">Target: current tab · 0 steps</div>
-            </div>
-            <span id="planStatusBadge" class="status-badge">Pending</span>
-          </div>
-          <div class="progress-container">
-            <div class="progress-label-row">
-              <span id="progressStepsLabel">0 of 0 steps completed</span>
-              <span id="progressPercentLabel">0%</span>
-            </div>
-            <div class="progress-bar-bg" id="taskProgressBar">
-              <div id="progressBarFill" class="progress-bar-fill"></div>
-            </div>
-          </div>
-          <div id="planStepsList" class="plan-steps-list"></div>
-          <div style="display: flex; gap: 4px; margin-top: 2px">
-            <button id="planPauseResumeBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
-              ⏸️ Pause
-            </button>
-            <button id="planSkipBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
-              ⏭️ Skip
-            </button>
-            <button
-              id="planStopBtn"
-              class="ghost"
-              style="
-                padding: 3px 8px;
-                font-size: 10px;
-                color: var(--destructive);
-                border-color: rgba(239, 68, 68, 0.4);
-              "
-            >
-              ⏹️ Stop
-            </button>
-          </div>
-        </div>
-
         <!-- Proactive Assistant & Saved Checkpoints -->
         <div
           id="savedCheckpointCard"
@@ -1476,6 +1435,11 @@
                 font-size: 11px;
               "
             />
+            <div
+              id="memErrorMsg"
+              style="font-size: 10px; color: var(--destructive); padding: 2px 0"
+              hidden
+            ></div>
             <div style="display: flex; gap: 4px">
               <button
                 id="saveMemoryBtn"
@@ -2023,6 +1987,89 @@
         </div>
       </div>
 
+      <!-- ================= SHARED ACTIVE TASK & EXTRACTED DATA CARDS ================= -->
+      <!-- MULTI-ACTION TASK PLANNER RUNNER -->
+      <div id="taskPlanCard" class="task-plan-card" hidden>
+        <div class="task-plan-header">
+          <div>
+            <div id="planTitle" class="task-plan-title">Multi-Action Task Plan</div>
+            <div id="planMeta" class="task-plan-meta">Target: current tab · 0 steps</div>
+          </div>
+          <span id="planStatusBadge" class="status-badge">Pending</span>
+        </div>
+        <div class="progress-container">
+          <div class="progress-label-row">
+            <span id="progressStepsLabel">0 of 0 steps completed</span>
+            <span id="progressPercentLabel">0%</span>
+          </div>
+          <div class="progress-bar-bg" id="taskProgressBar">
+            <div id="progressBarFill" class="progress-bar-fill"></div>
+          </div>
+        </div>
+        <div id="planStepsList" class="plan-steps-list"></div>
+        <div style="display: flex; gap: 4px; margin-top: 2px; flex-wrap: wrap">
+          <button id="planPauseResumeBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
+            ⏸️ Pause
+          </button>
+          <button id="planSkipBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
+            ⏭️ Skip
+          </button>
+          <button
+            id="planRetryBtn"
+            class="ghost"
+            style="
+              padding: 3px 8px;
+              font-size: 10px;
+              color: var(--accent-cyan);
+              border-color: rgba(6, 182, 212, 0.4);
+            "
+            hidden
+          >
+            🔄 Retry
+          </button>
+          <button
+            id="planStopBtn"
+            class="ghost"
+            style="
+              padding: 3px 8px;
+              font-size: 10px;
+              color: var(--destructive);
+              border-color: rgba(239, 68, 68, 0.4);
+            "
+          >
+            ⏹️ Stop
+          </button>
+        </div>
+      </div>
+
+      <!-- EXTRACTED DATA PANEL -->
+      <div id="extractedDataCard" class="section-card" hidden>
+        <div class="section-card-title">
+          <span id="extractedCountTitle">📊 Extracted Data</span>
+          <button id="copyExtractedBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">
+            📋 Copy List
+          </button>
+        </div>
+        <pre
+          id="extractedContent"
+          style="
+            margin: 0;
+            font-size: 10px;
+            line-height: 1.4;
+            color: var(--text);
+            background: #0b0f19;
+            padding: 6px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            max-height: 110px;
+            overflow: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          "
+        ></pre>
+      </div>
+
       <!-- ================= SAFETY & CONFIRMATION CARDS ================= -->
       <!-- Consequential Action Approval Card -->
       <div id="consequentialApprovalCard" class="confirm-card" hidden>
@@ -2115,7 +2162,26 @@
           </button>
         </div>
       </div>
-      <div id="pageCompletenessBanner" hidden></div>
+      <div
+        id="pageCompletenessBanner"
+        class="section-card"
+        style="
+          flex-direction: row;
+          align-items: center;
+          justify-content: space-between;
+          border-color: rgba(6, 182, 212, 0.35);
+          background: rgba(6, 182, 212, 0.08);
+          padding: 6px 10px;
+        "
+        hidden
+      >
+        <span style="font-size: 10px; color: var(--accent-cyan)">
+          ⬇️ More content is available below on this page.
+        </span>
+        <button id="scrollDownBannerBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
+          Scroll Down
+        </button>
+      </div>
 
       <!-- FOOTER -->
       <footer>

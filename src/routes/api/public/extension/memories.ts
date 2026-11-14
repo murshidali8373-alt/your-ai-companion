@@ -94,7 +94,7 @@ export const Route = createFileRoute("/api/public/extension/memories")({
           return json({ ok: false, message: "Invalid memory payload" }, 400);
         }
 
-        const id = body.id || `mem_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const id = body.id || globalThis.crypto.randomUUID();
 
         if (auth) {
           const { data, error } = await auth.db

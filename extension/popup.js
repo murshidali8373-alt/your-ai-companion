@@ -85,8 +85,35 @@ $("connect").onclick = async () => {
   render();
 };
 
+async function sendPopupRuntimeMessage(payload) {
+  const traceId = `pop_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const envelope = { ...payload, __traceId: traceId };
+  console.debug("[AI Buddy][Popup] outbound", { traceId, type: payload?.type });
+  try {
+    const res = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(envelope, (reply) => {
+        const lastErr = chrome.runtime?.lastError;
+        if (lastErr) {
+          reject(new Error(lastErr.message || String(lastErr)));
+          return;
+        }
+        resolve(reply);
+      });
+    });
+    console.debug("[AI Buddy][Popup] response", { traceId, type: payload?.type, ok: Boolean(res?.ok || res?.reply) });
+    return res;
+  } catch (err) {
+    console.error("[AI Buddy][Popup] sendMessage failed", {
+      traceId,
+      type: payload?.type,
+      error: String(err?.message || err),
+    });
+    throw err;
+  }
+}
+
 $("signout").onclick = async () => {
-  await chrome.runtime.sendMessage({ type: "SIGN_OUT" });
+  await sendPopupRuntimeMessage({ type: "SIGN_OUT" }).catch(() => null);
   render();
 };
 
@@ -98,18 +125,18 @@ async function send(question, intent) {
   $("status").textContent = "Reading the page and thinking…";
   $("answer").hidden = true;
   try {
-    const res = await chrome.runtime.sendMessage({ type: "ASK", question, intent });
+    const res = await sendPopupRuntimeMessage({ type: "ASK", question, intent });
     if (res?.error) {
       $("status").textContent = res.message || "Something went wrong. Try again.";
       if (res.error === "signed_out") render();
       return;
     }
-    $("answer").textContent = res.reply?.answer || "No answer came back.";
+    $("answer").textContent = res?.reply?.answer || "No answer came back.";
     $("answer").hidden = false;
     const notes = [];
-    if (!res.pageReadable)
+    if (!res?.pageReadable)
       notes.push("I could not read this page (browser-protected), so I answered generally.");
-    if (res.highlightSelector) notes.push("I outlined the element on the page.");
+    if (res?.highlightSelector) notes.push("I outlined the element on the page.");
     $("status").textContent = notes.join(" ");
   } catch {
     $("status").textContent = "Buddy could not be reached. Check your connection.";
@@ -154,7 +181,7 @@ if ($("openSidePanel")) {
         return;
       }
     }
-    chrome.runtime.sendMessage({ type: "OPEN_SIDE_PANEL" });
+    sendPopupRuntimeMessage({ type: "OPEN_SIDE_PANEL" }).catch(() => {});
     window.close();
   };
 }

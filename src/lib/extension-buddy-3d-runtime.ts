@@ -283,6 +283,7 @@ export function createStageViewer(
 
   // Pre-allocated math helpers outside render loop
   let disposed = false;
+  let contextLost = false;
   let rafId = 0;
   let swTimerId: ReturnType<typeof setTimeout> | null = null;
   let lastTime = typeof performance !== "undefined" ? performance.now() : 0;
@@ -436,8 +437,44 @@ export function createStageViewer(
   ro?.observe(containerEl);
   resize();
 
-  function tick(now: number) {
+  const onContextLost = (e: Event) => {
+    e.preventDefault();
+    contextLost = true;
+    cancelAnimationFrame(rafId);
+    if (swTimerId) {
+      clearTimeout(swTimerId);
+      swTimerId = null;
+    }
+  };
+  const onContextRestored = () => {
     if (disposed) return;
+    contextLost = false;
+    lastTime = typeof performance !== "undefined" ? performance.now() : 0;
+    rafId = requestAnimationFrame(tick);
+  };
+  const onVisibilityChange = () => {
+    if (disposed) return;
+    if (typeof document !== "undefined" && document.hidden) {
+      cancelAnimationFrame(rafId);
+      if (swTimerId) {
+        clearTimeout(swTimerId);
+        swTimerId = null;
+      }
+    } else if (!contextLost) {
+      lastTime = typeof performance !== "undefined" ? performance.now() : 0;
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(tick);
+    }
+  };
+  renderer.domElement.addEventListener("webglcontextlost", onContextLost);
+  renderer.domElement.addEventListener("webglcontextrestored", onContextRestored);
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", onVisibilityChange);
+  }
+
+  function tick(now: number) {
+    if (disposed || contextLost) return;
+    if (typeof document !== "undefined" && document.hidden) return;
     const dt = Math.min(0.05, Math.max(0.001, (now - lastTime) / 1000));
     lastTime = now;
     const t = now * 0.001;
@@ -674,6 +711,11 @@ export function createStageViewer(
       if (swTimerId) clearTimeout(swTimerId);
       ro?.disconnect();
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      renderer.domElement.removeEventListener("webglcontextlost", onContextLost);
+      renderer.domElement.removeEventListener("webglcontextrestored", onContextRestored);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+      }
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
       if (activeModelRoot) disposeObjectTree(activeModelRoot);

@@ -67,6 +67,61 @@ describe("AI Buddy System Repair Verification", () => {
     expect(sp).toContain("onboundary");
   });
 
+  it("eliminates ReferenceErrors, alert() dialogs, missing DOM IDs, and auth token mismatches in sidepanel", () => {
+    const html = fs.readFileSync(path.join(root, "extension/sidepanel.html"), "utf-8");
+    const sp = fs.readFileSync(path.join(root, "extension/sidepanel.js"), "utf-8");
+    const bg = fs.readFileSync(path.join(root, "extension/background.js"), "utf-8");
+    const memoriesRoute = fs.readFileSync(
+      path.join(root, "src/routes/api/public/extension/memories.ts"),
+      "utf-8",
+    );
+    const runtimeTs = fs.readFileSync(
+      path.join(root, "src/lib/extension-buddy-3d-runtime.ts"),
+      "utf-8",
+    );
+
+    // No calls to removed/undefined functions
+    expect(sp).not.toMatch(/\baskQuestion\s*\(/);
+    expect(sp).not.toMatch(/\bstartMultiStepWorkflow\s*\(/);
+
+    // No window.alert / alert() calls (avoid matching prose like "alert(s)")
+    expect(sp).not.toMatch(/\bwindow\.alert\s*\(/);
+    expect(sp).not.toMatch(/(?:^|[^\w$])alert\s*\((?!s\))/m);
+
+    // Required side panel cards and controls exist in HTML
+    expect(html).toContain('id="planRetryBtn"');
+    expect(html).toContain('id="extractedDataCard"');
+    expect(html).toContain('id="extractedCountTitle"');
+    expect(html).toContain('id="extractedContent"');
+    expect(html).toContain('id="copyExtractedBtn"');
+    expect(html).toContain('id="memErrorMsg"');
+    expect(html).toContain('id="scrollDownBannerBtn"');
+    expect(html).toContain("[hidden] {\n        display: none !important;\n      }");
+
+    // taskPlanCard must sit outside tabTasks so workflows launched from Chat are visible
+    const tabTasksIdx = html.indexOf('id="tabTasks"');
+    const tabModelsIdx = html.indexOf('id="tabModels"');
+    const taskPlanCardIdx = html.indexOf('id="taskPlanCard"');
+    expect(taskPlanCardIdx).toBeGreaterThan(tabModelsIdx);
+    expect(tabTasksIdx).toBeLessThan(tabModelsIdx);
+
+    // Auth bearer tokens read camelCase accessToken (with fallback)
+    expect(sp).toContain("session?.accessToken || session?.access_token");
+
+    // Real task checkpoint resumption & tab switch CLEAR_HIGHLIGHT
+    expect(sp).toContain("ai_buddy_active_plan");
+    expect(sp).toContain('type: "CLEAR_HIGHLIGHT"');
+    expect(bg).toContain('if (msg.type === "CLEAR_HIGHLIGHT")');
+    expect(sp).toContain("cleanTextForSpeech");
+    expect(sp).toContain("fetchWithTimeout");
+
+    // 3D WebGL context recovery + visibility throttling + UUID memories
+    expect(runtimeTs).toContain("webglcontextlost");
+    expect(runtimeTs).toContain("visibilitychange");
+    expect(memoriesRoute).toContain("randomUUID()");
+    expect(memoriesRoute).not.toContain("mem_${Date.now()}");
+  });
+
   describe("Voice Turn Detection, Voice Selection & Lip Sync", () => {
     beforeEach(() => {
       vi.restoreAllMocks();
@@ -222,6 +277,54 @@ describe("AI Buddy System Repair Verification", () => {
       expect(report.errors[0].error).toContain("validation");
 
       vi.unstubAllGlobals();
+    });
+  });
+
+  describe("Chrome Extension Communication Chain & Diagnostic Logging", () => {
+    it("validates payloads, guards async reply ports, prefers normal windows in activeTab(), and targets frameId 0 cleanly", () => {
+      const bg = fs.readFileSync(path.join(root, "extension/background.js"), "utf-8");
+      const sp = fs.readFileSync(path.join(root, "extension/sidepanel.js"), "utf-8");
+      const bridge = fs.readFileSync(path.join(root, "extension/bridge.js"), "utf-8");
+      const popup = fs.readFileSync(path.join(root, "extension/popup.js"), "utf-8");
+
+      // Background service worker hardening & structured logging
+      expect(bg).toContain('if (!msg || typeof msg !== "object" || typeof msg.type !== "string")');
+      expect(bg).toContain("const safeReply =");
+      expect(bg).toContain("swLog");
+      expect(bg).toContain("summarizeMessagePayload");
+      expect(bg).toContain('if (msg.type === "GET_COMM_LOGS")');
+      expect(bg).toContain('windowType: "normal"');
+      expect(bg).toContain("sendTabMessageToBridge");
+      expect(bg).toContain("{ frameId: 0 }");
+      expect(bg).toContain("runTabScript");
+      expect(bg).toContain("onMessage:reply_port_closed");
+
+      // Ensure SAVE_SESSION and SIGN_OUT always catch storage rejections so ports never hang
+      expect(bg).toMatch(
+        /set\(\{\s*session:\s*msg\.session[\s\S]*?\.catch\(\(err\)\s*=>\s*safeReply/,
+      );
+      expect(bg).toMatch(
+        /remove\(\["session",\s*"conversationBuffer"\]\)[\s\S]*?\.catch\(\(err\)\s*=>\s*safeReply/,
+      );
+
+      // Content script bridge.js logging, idempotency, and lastError handling
+      expect(bridge).toContain("__AI_BUDDY_BRIDGE_BOUND__");
+      expect(bridge).toContain("[AI Buddy][Bridge]");
+      expect(bridge).toContain("chrome.runtime?.lastError");
+      expect(bridge).toContain("session_sync:rejected_route");
+      expect(bridge).toContain(
+        'if (!msg || typeof msg !== "object" || typeof msg.type !== "string")',
+      );
+
+      // Sidepanel & popup IPC wrappers with traceId + lastError checks
+      expect(sp).toContain("async function sendRuntimeMessage(payload");
+      expect(sp).toContain("__traceId: traceId");
+      expect(sp).toContain("[AI Buddy][SidePanel]");
+      expect(sp).toContain("chrome.runtime?.lastError");
+      expect(sp).toContain('msg.type === "PLAN_STEP_PROGRESS"');
+      expect(sp).toContain("msg.active !== false");
+      expect(popup).toContain("sendPopupRuntimeMessage");
+      expect(popup).toContain("chrome.runtime?.lastError");
     });
   });
 });
