@@ -1,12 +1,13 @@
 const $ = (id) => document.getElementById(id);
-const DEFAULT_BASE = "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
+const DEFAULT_BASE = "https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app";
+const LEGACY_BROKEN_HOST = "asfavkynho62d5znlmqa5n";
 const RESTRICTED =
   /^(chrome|edge|about|chrome-extension|devtools|view-source):|chromewebstore\.google\.com|chrome\.google\.com\/webstore/;
 
 async function getResolvedBackendBase() {
   const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
   let base = session?.apiBase || lastBase;
-  if (base && (base.includes("5t53lwemhepi") || base.includes("152127168827"))) {
+  if (base && base.includes(LEGACY_BROKEN_HOST)) {
     base = DEFAULT_BASE;
     chrome.storage.local.set({ lastBase: DEFAULT_BASE }).catch(() => {});
   }
@@ -18,16 +19,16 @@ async function getResolvedBackendBase() {
           const u = new URL(t.url);
           if (
             u.protocol.startsWith("http") &&
+            !u.hostname.includes("aistudio.google.com") &&
+            !u.hostname.includes(LEGACY_BROKEN_HOST) &&
             (u.hostname.includes("run.app") ||
               u.hostname === "localhost" ||
               u.hostname === "127.0.0.1" ||
               t.title?.includes("AI Buddy"))
           ) {
-            if (!u.hostname.includes("5t53lwemhepi") && !u.hostname.includes("aistudio.google.com")) {
-              base = u.origin;
-              chrome.storage.local.set({ lastBase: base }).catch(() => {});
-              break;
-            }
+            base = u.origin;
+            chrome.storage.local.set({ lastBase: base }).catch(() => {});
+            break;
           }
         }
       }
@@ -1024,6 +1025,30 @@ function recordConversationTurn(userQuestion, assistantAnswer) {
   chrome.storage.local.set({ conversationBuffer }).catch(() => {});
 }
 
+function detectSpeechLanguageForExtension(text) {
+  const sample = String(text || "");
+  if (/[\u0900-\u097F]/.test(sample)) return "hi-IN";
+  const hinglishHits = sample.match(
+    /\b(?:kya|hai|hain|karo|kijiye|aap|aapka|aapke|main|maine|nahi|nhi|batao|dikhao|neeche|upar|kholo|bharo|bhariye|chahiye|kripya|samjhao|yahan|kahan|kaise)\b/gi,
+  );
+  if (hinglishHits && hinglishHits.length >= 2) return "hi-IN";
+  return "en-IN";
+}
+
+function pickExtensionVoice(lang) {
+  const voices = window.speechSynthesis?.getVoices?.() || [];
+  if (!voices.length) return null;
+  const target = String(lang || "en-IN").toLowerCase();
+  const prefix = target.split("-")[0];
+  return (
+    voices.find((v) => v.lang?.toLowerCase() === target && /natural|google|heera|ravi|swara|madhur|lekha/i.test(v.name)) ||
+    voices.find((v) => v.lang?.toLowerCase() === target) ||
+    voices.find((v) => v.lang?.toLowerCase().startsWith(prefix)) ||
+    voices.find((v) => v.lang?.toLowerCase().endsWith("-in")) ||
+    null
+  );
+}
+
 function speakResponse(text, finishEmotion = "idle") {
   if (isMuted || !window.speechSynthesis) {
     buddy3dViewer?.setSpeaking(false);
@@ -1032,7 +1057,14 @@ function speakResponse(text, finishEmotion = "idle") {
   }
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = /[\u0900-\u097F]/.test(text) ? "hi-IN" : "en-IN";
+  const lang = detectSpeechLanguageForExtension(text);
+  utterance.lang = lang;
+  const preferredVoice = pickExtensionVoice(lang);
+  if (preferredVoice) utterance.voice = preferredVoice;
+  utterance.rate = lang === "hi-IN" ? 0.96 : 1.0;
+
+  const boundaryShapes = ["open_a", "open_o", "open_e", "wide_smile", "open_a", "rest"];
+  let boundaryIdx = 0;
 
   utterance.onstart = () => {
     if (currentEmotion !== "privacy") {
@@ -1040,6 +1072,14 @@ function speakResponse(text, finishEmotion = "idle") {
       buddy3dViewer?.setSpeaking(true);
     }
     startSpeechMouthCycle();
+  };
+  utterance.onboundary = () => {
+    if (speechMouthInterval) {
+      clearInterval(speechMouthInterval);
+      speechMouthInterval = null;
+    }
+    boundaryIdx = (boundaryIdx + 1) % boundaryShapes.length;
+    setMouthShape(boundaryShapes[boundaryIdx]);
   };
   utterance.onend = () => {
     stopSpeechMouthCycle();
@@ -2477,7 +2517,13 @@ async function sendQuery(question, intent) {
       "selectedProvider",
     ]);
     const activeProv = selectedProvider || storedProvider || "gemini";
-    const detachPage = $("pageContextToggle") && !$("pageContextToggle").checked;
+    const pageToggleEl = $("pageContextToggle");
+    const pageVisionActive = pageToggleEl
+      ? pageToggleEl.type === "checkbox"
+        ? pageToggleEl.checked
+        : pageToggleEl.classList.contains("active")
+      : true;
+    const detachPage = !pageVisionActive;
     const finalIntent = detachPage ? "general" : intent || "answer";
     const uploadedDocumentSummary = activeUploadedDocument
       ? {
@@ -2526,24 +2572,42 @@ async function sendQuery(question, intent) {
     }
 
     // If AI planned an action, actually execute it instead of only explaining!
-    if (res.actionType === "click" && (res.targetSelector || res.targetText)) {
-      setRigEmotion("working", "Acting");
+    if ((res.actionType === "click" || res.actionType === "open_link") && (res.targetSelector || res.targetText)) {
+      setRigEmotion("working", res.actionType === "open_link" ? "Opening" : "Acting");
+      const execActionName = res.actionType === "open_link" ? "open_link" : "click";
       const clickRes = await chrome.runtime.sendMessage({
         type: "EXECUTE_ACTION",
-        action: "click",
+        action: execActionName,
         selector: res.targetSelector,
         value: res.targetText,
       });
       if (clickRes?.ok) {
-        setRigEmotion("happy", "Clicked!");
-        const clickedMsg = isHindi
-          ? `Maine page par "${clickRes.text || res.targetText}" click kar diya hai!`
-          : `Clicked "${clickRes.text || res.targetText}"!`;
+        setRigEmotion("happy", execActionName === "open_link" ? "Opened!" : "Clicked!");
+        const clickedMsg =
+          execActionName === "open_link"
+            ? isHindi
+              ? `Maine link "${clickRes.text || res.targetText}" khol diya hai${clickRes.newUrl ? ` (${clickRes.newUrl})` : ""}!`
+              : `Opened link "${clickRes.text || res.targetText}"${clickRes.newUrl ? ` -> ${clickRes.newUrl}` : ""}!`
+            : isHindi
+              ? `Maine page par "${clickRes.text || res.targetText}" click kar diya hai!`
+              : `Clicked "${clickRes.text || res.targetText}"!`;
         $("statusText").textContent = clickedMsg;
         appendHistory("buddy", `✅ ${clickedMsg}`);
+      } else if (clickRes && !clickRes.ok) {
+        setRigEmotion("confused", "Blocked");
+        const failMsg = clickRes.message || `Could not ${execActionName} "${res.targetText || "target"}".`;
+        $("statusText").textContent = failMsg;
+        appendHistory("buddy", `⚠️ ${failMsg}`);
       }
     } else if (res.actionType === "form_fill") {
-      await startSmartFormFill();
+      if (res.targetField && res.targetValue) {
+        await startSmartFormFill(
+          { [res.targetField]: res.targetValue },
+          { explicitUserProvided: true, selector: res.targetSelector || undefined, fromChatCommand: true },
+        );
+      } else {
+        await startSmartFormFill();
+      }
     } else if (res.actionType === "scroll") {
       await executeScroll(res.scrollDirection || "down", 450, res.scrollTarget || null, true);
     }
@@ -2608,18 +2672,40 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
     setRigEmotion("thinking", "Filling…");
   }
 
-  const dataToFill = sampleData || (extraOpts?.explicitPairs ? null : {
-    name: "Murshid Ali",
-    legal_name: "Ali Enterprises Pvt Ltd",
-    trade_name: "Ali Retail & Co",
-    gstin: "27AABCU9603R1ZM",
-    email: "contact@alienterprises.com",
-    phone: "9876543210",
-    address: "Shop 12, Commercial Market, Central Plaza",
-    city: "Mumbai",
-    state: "Maharashtra",
-    pincode: "400001",
-  });
+  let savedProfileData = null;
+  if (!sampleData && !extraOpts?.explicitPairs) {
+    if (activeUploadedDocument?.fields && Object.keys(activeUploadedDocument.fields).length > 0) {
+      savedProfileData = activeUploadedDocument.fields;
+    } else {
+      try {
+        const { userProfile = {} } = await chrome.storage.local.get("userProfile");
+        if (userProfile && Object.keys(userProfile).length > 0) {
+          savedProfileData = userProfile;
+        }
+      } catch {}
+    }
+  }
+
+  const dataToFill = sampleData || (extraOpts?.explicitPairs ? null : savedProfileData);
+
+  if (!dataToFill && !extraOpts?.explicitPairs?.length) {
+    const snapRes = await chrome.runtime.sendMessage({ type: "GET_SNAPSHOT" }).catch(() => null);
+    const fieldCount = snapRes?.snapshot?.forms?.length || 0;
+    const reportEl = $("formFillReport");
+    if (reportEl) {
+      reportEl.hidden = false;
+      reportEl.textContent = isHindi
+        ? `Page par ${fieldCount} form field(s) mile. Kripya apna document attach karein ya field values chat mein batayein.`
+        : `Detected ${fieldCount} form field(s) on this page. Attach a document or share your field values in chat so Buddy never fills invented data.`;
+    }
+    setRigEmotion("confused", "Need Info");
+    const askDetailsMsg = isHindi
+      ? `Main is page ke ${fieldCount} form field(s) fill karne ke liye taiyar hoon, lekin mere paas abhi aapke saved details ya uploaded document nahi hain. Kripya Attach se document upload karein ya batayein kaunsi values bharni hain.`
+      : `I detected ${fieldCount} form field(s) on this page, but have no saved profile or attached document values yet. Attach a document or tell me the exact details to fill.`;
+    $("statusText").textContent = askDetailsMsg;
+    appendHistory("buddy", askDetailsMsg);
+    return;
+  }
 
   // Save explicitly provided non-sensitive user preferences to local userProfile for future sequential convenience
   if (extraOpts?.explicitUserProvided && extraOpts?.explicitPairs) {
@@ -3492,11 +3578,22 @@ if ($("attachFileBtn") && $("composerFileInput")) {
 
 // Page Context Toggle
 if ($("pageContextToggle")) {
-  $("pageContextToggle").onchange = (e) => {
+  const syncPageContextUi = (enabled) => {
+    const toggleBtn = $("pageContextToggle");
+    toggleBtn.classList.toggle("active", enabled);
+    toggleBtn.setAttribute("aria-pressed", String(enabled));
     if ($("pageContextStatus")) {
-      $("pageContextStatus").textContent = e.target.checked ? "Page Vision On" : "Detached";
-      $("pageContextStatus").style.color = e.target.checked ? "var(--teal)" : "var(--muted)";
+      $("pageContextStatus").textContent = enabled ? "Page Vision On" : "Detached";
+      $("pageContextStatus").style.color = enabled ? "var(--teal)" : "var(--muted)";
+    } else {
+      toggleBtn.textContent = enabled ? "👁️ Page Vision On" : "👁️ Page Detached";
     }
+  };
+  $("pageContextToggle").onclick = () => {
+    const el = $("pageContextToggle");
+    const nextEnabled =
+      el.type === "checkbox" ? Boolean(el.checked) : !el.classList.contains("active");
+    syncPageContextUi(nextEnabled);
   };
 }
 
@@ -3670,19 +3767,7 @@ if ($("scrollDownBannerBtn")) $("scrollDownBannerBtn").onclick = () => executeSc
 
 if ($("openFormAssistantChip")) $("openFormAssistantChip").onclick = () => startSmartFormFill();
 if ($("autoFillSampleBtn")) {
-  $("autoFillSampleBtn").onclick = () =>
-    startSmartFormFill({
-      name: "Murshid Ali",
-      legal_name: "Ali Enterprises Pvt Ltd",
-      trade_name: "Ali Retail & Co",
-      gstin: "27AABCU9603R1ZM",
-      email: "contact@alienterprises.com",
-      phone: "9876543210",
-      address: "Shop 12, Commercial Market, Central Plaza",
-      city: "Mumbai",
-      state: "Maharashtra",
-      pincode: "400001",
-    });
+  $("autoFillSampleBtn").onclick = () => startSmartFormFill();
 }
 if ($("verifyFormInputsBtn")) {
   $("verifyFormInputsBtn").onclick = () =>
@@ -3799,6 +3884,9 @@ if ($("connectBtn")) {
         if (!t.url) return false;
         try {
           const u = new URL(t.url);
+          if (u.hostname.includes("aistudio.google.com") || u.hostname.includes(LEGACY_BROKEN_HOST)) {
+            return false;
+          }
           return (
             u.hostname.includes("run.app") ||
             u.hostname === "localhost" ||
@@ -3832,17 +3920,7 @@ if ($("connectBtn")) {
       }
     } catch {}
 
-    // 2. Activate immediate Guest Session locally so user is connected with zero obstacles
-    await chrome.storage.local.set({
-      lastBase: resolvedBase,
-      session: {
-        email: "Guest User",
-        isGuest: true,
-        apiBase: resolvedBase,
-      },
-    });
-
-    // Prepare fallback connect URL
+    // 2. Open /connect handshake tab if not signed in & activate immediate Guest Session
     const connectUrl = new URL(`${resolvedBase}/connect`);
     if (session?.accessToken) {
       connectUrl.searchParams.set("ext_session", "active");
@@ -3850,8 +3928,24 @@ if ($("connectBtn")) {
     }
     connectUrl.searchParams.set("src", "extension_sidepanel");
 
+    if (!session?.accessToken) {
+      try {
+        await chrome.tabs.create({ url: connectUrl.toString() });
+      } catch {}
+      await chrome.storage.local.set({
+        lastBase: resolvedBase,
+        session: {
+          email: "Guest User",
+          isGuest: true,
+          apiBase: resolvedBase,
+        },
+      });
+    } else {
+      await chrome.storage.local.set({ lastBase: resolvedBase });
+    }
+
     setRigEmotion("celebrate", "Connected!");
-    $("statusText").textContent = "✓ Connected in Guest Mode! All 16 Specialist Buddies ready.";
+    $("statusText").textContent = "✓ Connected in Guest Mode! Complete web sign-in on /connect anytime.";
     await render();
 
     // 3. Switch smoothly to Settings tab for optional API key / custom server settings
@@ -4465,6 +4559,9 @@ if ($("muteToggle")) {
   $("muteToggle").onchange = (e) => {
     isMuted = e.target.checked;
     if (isMuted && window.speechSynthesis) window.speechSynthesis.cancel();
+    if ($("settingsVoiceToggleBtn")) {
+      $("settingsVoiceToggleBtn").textContent = isMuted ? "🔇 Muted" : "🔊 Unmuted";
+    }
   };
 }
 
@@ -4534,7 +4631,7 @@ async function loadSettingsTab() {
   }
   if ($("settingsApiBaseInput")) {
     let resolved = session?.apiBase || lastBase;
-    if (resolved && (resolved.includes("5t53lwemhepi") || resolved.includes("152127168827"))) {
+    if (resolved && resolved.includes(LEGACY_BROKEN_HOST)) {
       resolved = DEFAULT_BASE;
     }
     $("settingsApiBaseInput").value = resolved || DEFAULT_BASE;
@@ -4649,10 +4746,10 @@ if ($("settingsConsequentialGate")) {
 
 if ($("settingsVoiceToggleBtn")) {
   $("settingsVoiceToggleBtn").onclick = () => {
-    $("voiceToggleBtn")?.click();
-    if ($("settingsVoiceToggleBtn")) {
-      $("settingsVoiceToggleBtn").textContent = isMuted ? "🔇 Muted" : "🔊 Unmuted";
-    }
+    isMuted = !isMuted;
+    if (isMuted && window.speechSynthesis) window.speechSynthesis.cancel();
+    if ($("muteToggle")) $("muteToggle").checked = isMuted;
+    $("settingsVoiceToggleBtn").textContent = isMuted ? "🔇 Muted" : "🔊 Unmuted";
   };
 }
 

@@ -107,6 +107,7 @@ export interface AskOutput {
   latencyMs?: number;
   blocked?: boolean;
   fellBack?: boolean;
+  aiFallbackUsed?: boolean;
   providerWarning?: {
     requestedProvider: string;
     requestedProviderName: string;
@@ -116,6 +117,358 @@ export interface AskOutput {
     message: string;
   } | null;
   recommendedMode?: BuddyModeRecommendation | null;
+}
+
+function matchSnapshotElementForFallback(
+  snapshot: PageSnapshot | null,
+  question: string,
+): SnapshotElement | null {
+  if (!snapshot || !question) return null;
+  const STOPWORDS = new Set([
+    "khaa",
+    "kha",
+    "kahan",
+    "kaha",
+    "kidhar",
+    "kdr",
+    "hai",
+    "hain",
+    "tha",
+    "the",
+    "tab",
+    "button",
+    "link",
+    "section",
+    "menu",
+    "dikhao",
+    "batao",
+    "page",
+    "par",
+    "mein",
+    "me",
+    "ko",
+    "ka",
+    "ki",
+    "ke",
+    "where",
+    "what",
+    "which",
+    "show",
+    "tell",
+    "find",
+    "locate",
+    "search",
+    "this",
+    "that",
+    "click",
+    "press",
+    "dabao",
+    "tap",
+    "kholo",
+    "open",
+    "point",
+    "highlight",
+    "to",
+    "on",
+    "and",
+    "pe",
+    "karo",
+    "please",
+    "without",
+    "submitting",
+    "submit",
+  ]);
+  const norm = (s: string) =>
+    String(s || "")
+      .toLowerCase()
+      .replace(/[-_]+/g, " ")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const termsAll = norm(question)
+    .split(/\s+/)
+    .filter((t) => t.length > 1);
+  const meaningful = termsAll.filter((t) => !STOPWORDS.has(t));
+  const qTerms = meaningful.length > 0 ? meaningful : termsAll;
+  if (qTerms.length === 0) return null;
+
+  const elements: SnapshotElement[] = [
+    ...(snapshot.controls || []),
+    ...(snapshot.forms || []),
+    ...(snapshot.headings || []),
+  ];
+
+  let best: SnapshotElement | null = null;
+  let bestScore = 0;
+  const targetPhrase = qTerms.join(" ");
+
+  for (const el of elements) {
+    const rawText = norm(
+      `${el.name || ""} ${el.placeholder || ""} ${(el as { text?: string }).text || ""} ${el.role || ""}`,
+    );
+    if (!rawText) continue;
+    const nameLower = norm(el.name || (el as { text?: string }).text || el.placeholder || "");
+    const isClickable =
+      el.role === "button" || el.role === "link" || el.tag === "button" || el.tag === "a";
+    let score = 0;
+    if (nameLower && nameLower === targetPhrase) score += 12;
+    for (const term of qTerms) {
+      if (rawText.includes(term)) {
+        score += 3;
+        if (nameLower === term || nameLower.startsWith(term)) score += 4;
+      } else if (term.endsWith("s") && rawText.includes(term.slice(0, -1))) {
+        score += 2;
+      } else if (!term.endsWith("s") && rawText.includes(`${term}s`)) {
+        score += 2;
+      }
+    }
+    if (isClickable && score > 0) score += 2;
+    if (score > bestScore && el.selector) {
+      bestScore = score;
+      best = el;
+    }
+  }
+
+  return bestScore > 0 ? best : null;
+}
+
+function buildGroundedSnapshotFallback(params: {
+  question: string;
+  snapshot: PageSnapshot | null;
+  buddyName: string;
+  language: string;
+  aiError: AiError;
+}): {
+  reply: BuddyReply;
+  highlightSelector: string | null;
+  calloutTitle?: string | null;
+  calloutDescription?: string | null;
+  actionType?: "click" | "type" | "scroll" | "inspect" | null;
+  targetRect?: SnapshotElement["rect"] | null;
+} {
+  const { question, snapshot, buddyName, language, aiError } = params;
+  const isEnglish = language === "english";
+  const qLower = question.toLowerCase().trim();
+  const isGreeting = /^(?:hi+|hello+|hey+|namaste|pranam|hola|kya haal|ram ram)[.!?\s]*$/i.test(
+    question,
+  );
+
+  if (isGreeting) {
+    return {
+      reply: {
+        answer: isEnglish
+          ? `Hello! I am ${buddyName}. I am active and ready to help you navigate, inspect fields, check data, or perform tasks across this page!`
+          : `Namaste! Main aapka ${buddyName} hoon. Main is webpage par aapki poori help karne ke liye ready hoon. Bataiye aap kya karna chahte hain!`,
+        highlight: null,
+        confidence: "high",
+        needs: null,
+        emotion: "happy",
+      },
+      highlightSelector: null,
+    };
+  }
+
+  if (snapshot && (aiError.kind === "auth" || aiError.kind === "outage")) {
+    const isScroll =
+      /\b(?:scroll|neeche\s+(?:jao|le\s+jao)|upar\s+(?:jao|le\s+jao)|bottom\s+par\s+jao|top\s+par\s+jao)\b/i.test(
+        qLower,
+      );
+    if (isScroll) {
+      const dir = /\b(?:up|upar|top)\b/i.test(qLower) ? "up" : "down";
+      return {
+        reply: {
+          answer: isEnglish
+            ? `Scrolling page ${dir} now.`
+            : `Main page ko ${dir} scroll kar raha hoon.`,
+          highlight: null,
+          confidence: "high",
+          needs: null,
+          emotion: "thinking",
+          actionType: "scroll",
+        },
+        highlightSelector: null,
+        actionType: "scroll",
+      };
+    }
+
+    const isExplicitFill =
+      /\b(?:fill|bhar|bharo)\b/i.test(qLower) &&
+      /\b(?:with|se|form|field|input|sku|name|email|phone)\b/i.test(qLower);
+    const isPointOrFind =
+      !isExplicitFill &&
+      /\b(?:point|highlight|find|where|locate|search|dhoondho|dhundo|kaha|kahan|kidhar|dikhao|batao)\b/i.test(
+        qLower,
+      );
+    const isClickOrOpen =
+      /(?:\b(?:click|press|dabao|tap|kholo|tick|check|uncheck)\b|\bopen\b.*\b(?:link|tab|page|url)\b)/i.test(
+        qLower,
+      );
+
+    if (isPointOrFind && !isClickOrOpen) {
+      const matchEl = matchSnapshotElementForFallback(snapshot, question);
+      if (matchEl) {
+        const label =
+          matchEl.name ||
+          matchEl.placeholder ||
+          (matchEl as { text?: string }).text ||
+          matchEl.role ||
+          "element";
+        return {
+          reply: {
+            answer: isEnglish
+              ? `Pointing to "${label}" on this page without clicking.`
+              : `Maine "${label}" dhoondh kar point kar diya hai (bina click kiye).`,
+            highlight: matchEl.ref || null,
+            confidence: "high",
+            needs: null,
+            emotion: "curious",
+            actionType: "inspect",
+          },
+          highlightSelector: matchEl.selector || null,
+          calloutTitle: label.slice(0, 50),
+          calloutDescription: "Pointing here",
+          actionType: "inspect",
+          targetRect: matchEl.rect ?? null,
+        };
+      }
+      return {
+        reply: {
+          answer: isEnglish
+            ? "I could not find a matching visible element on this page. Please share its exact label or scroll so it is visible."
+            : "Is page par matching element abhi visible nahi mila. Kripya exact naam batayein ya thoda scroll karein.",
+          highlight: null,
+          confidence: "low",
+          needs: null,
+          emotion: "concerned",
+        },
+        highlightSelector: null,
+      };
+    }
+
+    if (isClickOrOpen) {
+      const matchEl = matchSnapshotElementForFallback(snapshot, question);
+      if (matchEl) {
+        const label =
+          matchEl.name ||
+          matchEl.placeholder ||
+          (matchEl as { text?: string }).text ||
+          matchEl.role ||
+          "button";
+        return {
+          reply: {
+            answer: isEnglish
+              ? `Targeting "${label}" for interaction.`
+              : `Main "${label}" par action ke liye ready hoon.`,
+            highlight: matchEl.ref || null,
+            confidence: "high",
+            needs: null,
+            emotion: "thinking",
+            actionType: "click",
+          },
+          highlightSelector: matchEl.selector || null,
+          calloutTitle: label.slice(0, 50),
+          calloutDescription: "Target interactive control",
+          actionType: "click",
+          targetRect: matchEl.rect ?? null,
+        };
+      }
+      return {
+        reply: {
+          answer: isEnglish
+            ? "I could not find a matching clickable button or link on this page."
+            : "Is page par aisa matching button ya link nahi mila.",
+          highlight: null,
+          confidence: "low",
+          needs: null,
+          emotion: "concerned",
+        },
+        highlightSelector: null,
+      };
+    }
+
+    if (/\b(?:fill|form|input|fields)\b/i.test(qLower)) {
+      const matchEl =
+        matchSnapshotElementForFallback(snapshot, question) || snapshot.forms?.[0] || null;
+      if (matchEl) {
+        const label = matchEl.name || matchEl.placeholder || matchEl.role || "form field";
+        return {
+          reply: {
+            answer: isEnglish
+              ? `Located form field "${label}" ready to fill without submitting.`
+              : `Form field "${label}" mil gaya hai, bina submit kiye fill karne ke liye ready hai.`,
+            highlight: matchEl.ref || null,
+            confidence: "high",
+            needs: null,
+            emotion: "thinking",
+            actionType: "type",
+          },
+          highlightSelector: matchEl.selector || null,
+          calloutTitle: label.slice(0, 50),
+          calloutDescription: "Form field target",
+          actionType: "type",
+          targetRect: matchEl.rect ?? null,
+        };
+      }
+      return {
+        reply: {
+          answer: isEnglish
+            ? "No visible input fields were detected on this page."
+            : "Is page par abhi koi visible form field nahi mila.",
+          highlight: null,
+          confidence: "low",
+          needs: null,
+          emotion: "concerned",
+        },
+        highlightSelector: null,
+      };
+    }
+
+    const title = snapshot.title || "active page";
+    const headings = (snapshot.headings || [])
+      .map((h) => h.name || (h as { text?: string }).text)
+      .filter(Boolean)
+      .slice(0, 5);
+    const formCount = snapshot.forms?.length || 0;
+    const btnCount = snapshot.controls?.length || 0;
+    let answer = "";
+    if (isEnglish) {
+      answer = `You are on "${title}".\n\n📌 **Page Overview:**\n`;
+      if (headings.length) answer += `• Key Sections: ${headings.join(" • ")}\n`;
+      if (btnCount > 0 || formCount > 0)
+        answer += `• Interactive Elements: ${btnCount} clickable controls and ${formCount} input fields.\n`;
+      answer += `\nI am grounded on this page and ready to assist you with form filling, locating buttons, or automating workflows!`;
+    } else {
+      answer = `Aap abhi "${title}" par hain.\n\n📌 **Page Overview:**\n`;
+      if (headings.length) answer += `• Key Sections: ${headings.join(" • ")}\n`;
+      if (btnCount > 0 || formCount > 0)
+        answer += `• Interactive Elements: ${btnCount} clickable buttons aur ${formCount} form fields.\n`;
+      answer += `\nMain is page par grounded hoon aur forms fill karne, buttons dhoondhne, ya tasks automate karne ke liye ready hoon!`;
+    }
+    return {
+      reply: {
+        answer,
+        highlight: null,
+        confidence: "high",
+        needs: null,
+        emotion: "happy",
+      },
+      highlightSelector: null,
+    };
+  }
+
+  return {
+    reply: {
+      answer: aiError.resolution
+        ? `${aiError.userMessage} ${aiError.resolution}`
+        : aiError.userMessage,
+      highlight: null,
+      confidence: "low",
+      needs: null,
+      emotion: "concerned",
+    },
+    highlightSelector: null,
+  };
 }
 
 export function resolveProviderRouting(params: {
@@ -644,57 +997,27 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
         .update({ status: "failed", error: `${aiError.kind}: ${aiError.userMessage}` })
         .eq("id", taskId);
     }
-    const isGreeting = /^(?:hi+|hello+|hey+|namaste|pranam|hola|kya haal|ram ram)[.!?\s]*$/i.test(
+    const fallback = buildGroundedSnapshotFallback({
       question,
-    );
-    const greetingFallback =
-      persona.language === "english"
-        ? `Hello! I am ${persona.name}. I am active and ready to help you navigate, inspect fields, check data, or perform tasks across this page!`
-        : `Namaste! Main aapka ${persona.name} hoon. Main is webpage par aapki poori help karne ke liye ready hoon. Bataiye aap kya karna chahte hain!`;
-
-    let answer = "";
-    if (isGreeting) {
-      answer = greetingFallback;
-    } else if (input.snapshot && (aiError.kind === "auth" || aiError.kind === "outage")) {
-      const title = input.snapshot.title || "active page";
-      const headings = (input.snapshot.headings || [])
-        .map((h) => h.name || h.text)
-        .filter(Boolean)
-        .slice(0, 5);
-      const formCount = input.snapshot.forms?.length || 0;
-      const btnCount = input.snapshot.controls?.length || 0;
-      const isEnglish = persona.language === "english";
-      if (isEnglish) {
-        answer = `You are on "${title}".\n\n📌 **Page Overview:**\n`;
-        if (headings.length) answer += `• Key Sections: ${headings.join(" • ")}\n`;
-        if (btnCount > 0 || formCount > 0)
-          answer += `• Interactive Elements: ${btnCount} clickable controls and ${formCount} input fields.\n`;
-        answer += `\nI am grounded on this page and ready to assist you with form filling, locating buttons, or automating workflows!`;
-      } else {
-        answer = `Aap abhi "${title}" par hain.\n\n📌 **Page Overview:**\n`;
-        if (headings.length) answer += `• Key Sections: ${headings.join(" • ")}\n`;
-        if (btnCount > 0 || formCount > 0)
-          answer += `• Interactive Elements: ${btnCount} clickable buttons aur ${formCount} form fields.\n`;
-        answer += `\nMain is page par grounded hoon aur forms fill karne, buttons dhoondhne, ya tasks automate karne ke liye ready hoon!`;
-      }
-    } else {
-      answer = aiError.resolution
-        ? `${aiError.userMessage} ${aiError.resolution}`
-        : aiError.userMessage;
-    }
+      snapshot: input.snapshot,
+      buddyName: persona.name,
+      language: persona.language,
+      aiError,
+    });
 
     return {
       taskId,
-      reply: {
-        answer,
-        highlight: null,
-        confidence: isGreeting || Boolean(input.snapshot) ? "high" : "low",
-        needs: null,
-        emotion: isGreeting || Boolean(input.snapshot) ? "happy" : "concerned",
-      },
-      highlightSelector: null,
+      reply: fallback.reply,
+      highlightSelector: fallback.highlightSelector,
+      calloutTitle: fallback.calloutTitle,
+      calloutDescription: fallback.calloutDescription,
+      actionType: fallback.actionType,
+      targetRect: fallback.targetRect,
       buddyName: persona.name,
       permission,
+      activeProvider: "local_grounded",
+      fellBack: true,
+      aiFallbackUsed: true,
       blocked: aiError.kind === "credits" || aiError.kind === "blocked",
       providerWarning: routingDecision.providerWarning,
       recommendedMode,
@@ -903,57 +1226,27 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
         : new AiError("outage", "Something went wrong on my side. Try once more.", {
             cause: error,
           });
-    const isGreeting = /^(?:hi+|hello+|hey+|namaste|pranam|hola|kya haal|ram ram)[.!?\s]*$/i.test(
+    const fallback = buildGroundedSnapshotFallback({
       question,
-    );
-    const greetingFallback =
-      persona.default_language === "english"
-        ? `Hello! I am ${persona.name}. I am active and ready to help you navigate, inspect fields, check data, or perform tasks across this page!`
-        : `Namaste! Main aapka ${persona.name} hoon. Main is webpage par aapki poori help karne ke liye ready hoon. Bataiye aap kya karna chahte hain!`;
-
-    let answer = "";
-    if (isGreeting) {
-      answer = greetingFallback;
-    } else if (input.snapshot && (aiError.kind === "auth" || aiError.kind === "outage")) {
-      const title = input.snapshot.title || "active page";
-      const headings = (input.snapshot.headings || [])
-        .map((h) => h.name || h.text)
-        .filter(Boolean)
-        .slice(0, 5);
-      const formCount = input.snapshot.forms?.length || 0;
-      const btnCount = input.snapshot.controls?.length || 0;
-      const isEnglish = persona.default_language === "english";
-      if (isEnglish) {
-        answer = `You are on "${title}".\n\n📌 **Page Overview:**\n`;
-        if (headings.length) answer += `• Key Sections: ${headings.join(" • ")}\n`;
-        if (btnCount > 0 || formCount > 0)
-          answer += `• Interactive Elements: ${btnCount} clickable controls and ${formCount} input fields.\n`;
-        answer += `\nI am grounded on this page and ready to assist you with form filling, locating buttons, or automating workflows!`;
-      } else {
-        answer = `Aap abhi "${title}" par hain.\n\n📌 **Page Overview:**\n`;
-        if (headings.length) answer += `• Key Sections: ${headings.join(" • ")}\n`;
-        if (btnCount > 0 || formCount > 0)
-          answer += `• Interactive Elements: ${btnCount} clickable buttons aur ${formCount} form fields.\n`;
-        answer += `\nMain is page par grounded hoon aur forms fill karne, buttons dhoondhne, ya tasks automate karne ke liye ready hoon!`;
-      }
-    } else {
-      answer = aiError.resolution
-        ? `${aiError.userMessage} ${aiError.resolution}`
-        : aiError.userMessage;
-    }
+      snapshot: input.snapshot,
+      buddyName: persona.name,
+      language: persona.default_language,
+      aiError,
+    });
 
     return {
       taskId: null,
-      reply: {
-        answer,
-        highlight: null,
-        confidence: isGreeting || Boolean(input.snapshot) ? "high" : "low",
-        needs: null,
-        emotion: isGreeting || Boolean(input.snapshot) ? "happy" : "concerned",
-      },
-      highlightSelector: null,
+      reply: fallback.reply,
+      highlightSelector: fallback.highlightSelector,
+      calloutTitle: fallback.calloutTitle,
+      calloutDescription: fallback.calloutDescription,
+      actionType: fallback.actionType,
+      targetRect: fallback.targetRect,
       buddyName: persona.name,
       permission,
+      activeProvider: "local_grounded",
+      fellBack: true,
+      aiFallbackUsed: true,
       blocked: aiError.kind === "credits" || aiError.kind === "blocked",
       providerWarning: routingDecision.providerWarning,
       recommendedMode,

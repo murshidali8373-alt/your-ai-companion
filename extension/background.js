@@ -2,7 +2,8 @@
 const RESTRICTED =
   /^(chrome|edge|about|chrome-extension|devtools|view-source):|chromewebstore\.google\.com|chrome\.google\.com\/webstore/;
 
-const DEFAULT_HOST = "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
+const DEFAULT_HOST = "https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app";
+const LEGACY_BROKEN_HOST = "asfavkynho62d5znlmqa5n";
 const MAX_CONVERSATION_TURNS = 3;
 let conversationBuffer = [];
 
@@ -239,7 +240,11 @@ async function openSidePanel(sender) {
       } catch {}
     }
   }
-  return { ok: false, message: "Side panel not supported or tab not found" };
+  return {
+    ok: false,
+    message:
+      "Side panel could not open programmatically; Chrome requires clicking the extension toolbar icon directly.",
+  };
 }
 
 /**
@@ -428,21 +433,27 @@ function getBuddyPresetInternal(slug) {
 }
 
 function findBestMatchingElement(snapshot, query) {
-  if (!snapshot) return null;
+  if (!snapshot || !query) return null;
   const STOPWORDS = new Set([
     "khaa", "kha", "kahan", "kaha", "kidhar", "kdr", "hai", "hain", "tha", "the",
     "tab", "button", "link", "section", "dikhao", "batao", "page", "par", "mein",
-    "where", "what", "which", "show", "tell", "find", "locate", "search", "the", "this"
+    "where", "what", "which", "show", "tell", "find", "locate", "search", "this",
+    "click", "press", "dabao", "tap", "kholo", "pe", "karo", "please"
   ]);
 
-  const allTerms = query
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter((t) => t.length > 1);
+  const normText = (s) =>
+    String(s || "")
+      .toLowerCase()
+      .replace(/[-_]+/g, " ")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
 
-  const meaningfulTerms = allTerms.filter((t) => !STOPWORDS.has(t) && t.length > 2);
-  const qTerms = meaningfulTerms.length > 0 ? meaningfulTerms : allTerms.filter((t) => t.length > 2);
+  const normalizedQuery = normText(query);
+  const allTerms = normalizedQuery.split(/\s+/).filter((t) => t.length > 1);
+  const meaningfulTerms = allTerms.filter((t) => !STOPWORDS.has(t) && t.length > 1);
+  const qTerms = meaningfulTerms.length > 0 ? meaningfulTerms : allTerms;
+  if (qTerms.length === 0) return null;
 
   const elements = [
     ...(snapshot.controls || []),
@@ -454,19 +465,28 @@ function findBestMatchingElement(snapshot, query) {
   let bestScore = 0;
 
   for (const el of elements) {
-    const rawText = `${el.name || ""} ${el.placeholder || ""} ${el.text || ""} ${el.role || ""}`.toLowerCase();
-    const isClickable = el.role === "button" || el.role === "link" || el.tag === "button" || el.tag === "a";
+    const rawText = normText(
+      `${el.name || ""} ${el.placeholder || ""} ${el.text || ""} ${el.role || ""}`,
+    );
+    if (!rawText) continue;
+    const isClickable =
+      el.role === "button" || el.role === "link" || el.tag === "button" || el.tag === "a";
     let score = 0;
+
+    const nameLower = normText(el.name || el.text || el.placeholder || "");
+    const targetPhrase = qTerms.join(" ");
+    if (nameLower && nameLower === targetPhrase) {
+      score += 12;
+    }
 
     for (const term of qTerms) {
       if (rawText.includes(term)) {
         score += 3;
-        // Exact name or word match bonus
-        const nameLower = (el.name || el.text || "").toLowerCase();
         if (nameLower === term || nameLower.startsWith(term)) score += 4;
-        // Stem match (e.g., payment -> payments)
-        if (term.endsWith("s") && rawText.includes(term.slice(0, -1))) score += 2;
-        if (!term.endsWith("s") && rawText.includes(`${term}s`)) score += 2;
+      } else if (term.endsWith("s") && rawText.includes(term.slice(0, -1))) {
+        score += 2;
+      } else if (!term.endsWith("s") && rawText.includes(`${term}s`)) {
+        score += 2;
       }
     }
 
@@ -478,7 +498,7 @@ function findBestMatchingElement(snapshot, query) {
     }
   }
 
-  return bestScore > 0 ? best : (elements[0] || null);
+  return bestScore > 0 ? best : null;
 }
 
 async function generateAutonomousCompanionReply({
@@ -504,7 +524,7 @@ async function generateAutonomousCompanionReply({
   // 1. Direct Google Gemini API call if user provided API key
   if (userApiKey) {
     try {
-      const geminiModel = "gemini-2.5-flash";
+      const geminiModels = ["gemini-3.8-flash", "gemini-3.1-flash-lite"];
       const systemInstruction = `You are ${activeBuddy.name}, an expert AI browser companion. Personality: ${activeBuddy.personality}. Language: ${activeBuddy.defaultLanguage || "hinglish"}.
 You understand the user's active webpage and help them inspect, navigate, fill forms, verify data, and complete tasks.
 Return your answer in clear, helpful, natural speech. Ground your observations strictly in the page content.`;
@@ -533,19 +553,37 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
       }
       parts.push({ text: promptText });
 
-      const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${encodeURIComponent(userApiKey)}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: systemInstruction }] },
-            contents: [{ parts }],
-            generationConfig: { maxOutputTokens: 1000, temperature: 0.7 },
-          }),
-        },
-      );
-      if (geminiRes.ok) {
+      const historyContents = Array.isArray(history)
+        ? history
+            .filter((h) => h && typeof h.content === "string" && h.content.trim())
+            .slice(-6)
+            .map((h) => ({
+              role: h.role === "assistant" || h.role === "model" ? "model" : "user",
+              parts: [{ text: h.content }],
+            }))
+        : [];
+      const contents = [...historyContents, { role: "user", parts }];
+
+      let geminiRes = null;
+      for (const modelName of geminiModels) {
+        geminiRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(userApiKey)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              systemInstruction: { parts: [{ text: systemInstruction }] },
+              contents,
+              generationConfig: { maxOutputTokens: 1000, temperature: 0.7 },
+            }),
+          },
+        );
+        if (geminiRes.ok) break;
+        if (geminiRes.status !== 404 && geminiRes.status !== 400 && geminiRes.status !== 503) {
+          break;
+        }
+      }
+      if (geminiRes?.ok) {
         const geminiJson = await geminiRes.json();
         const candidateText =
           geminiJson.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -613,7 +651,7 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
     };
   }
 
-  // Scroll Action commands
+  // Scroll Action commands (including nested scrollable containers)
   const isScrollAction =
     /\b(?:scroll|neeche\s+(?:jao|le\s+jao)|upar\s+(?:jao|le\s+jao)|page\s+(?:down|up|ke\s+last|ke\s+top)|bottom\s+par\s+jao|top\s+par\s+jao|tak\s+scroll)\b/i.test(
       qLower,
@@ -627,13 +665,24 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
     else if (/\b(?:top|shuru)\b/i.test(qLower)) dir = "top";
     else if (/\b(?:bottom|last|aakhir|end)\b/i.test(qLower)) dir = "bottom";
 
+    let scrollTarget = null;
+    if (/\b(?:inside|container|box|table|panel|list|area|modal|drawer)\b/i.test(qLower)) {
+      const matchedContainer = findBestMatchingElement(snapshot, question);
+      if (matchedContainer?.selector) {
+        scrollTarget = matchedContainer.selector;
+      } else {
+        const scrollableCtrl = (snapshot?.controls || []).find((c) => c.scrollable && c.selector);
+        if (scrollableCtrl) scrollTarget = scrollableCtrl.selector;
+      }
+    }
+
     const isHindi = activeBuddy.defaultLanguage !== "english";
     return {
       taskId: null,
       reply: {
         answer: isHindi
-          ? `Main page ko ${dir} scroll kar raha hoon!`
-          : `Scrolling page ${dir}!`,
+          ? `Main ${scrollTarget ? "container" : "page"} ko ${dir} scroll kar raha hoon!`
+          : `Scrolling ${scrollTarget ? "container" : "page"} ${dir}!`,
         highlight: null,
         confidence: "high",
         needs: null,
@@ -642,6 +691,7 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
       },
       actionType: "scroll",
       scrollDirection: dir,
+      scrollTarget,
       buddyName: activeBuddy.name,
       permission: "interact",
       guest: true,
@@ -682,35 +732,68 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
     };
   }
 
-  // Explicit Click / Press Action commands
+  // Explicit Open Link / Click / Press Action commands
+  const isOpenLinkAction =
+    /\bopen\s+(?:the\s+|this\s+)?.*?\b(?:link|url|page)\b|\b(?:link|url)\s+(?:open|kholo)\b/i.test(qLower);
   const isClickAction =
+    isOpenLinkAction ||
     /(?:click|press|dabao|tap|kholo|tick|check|uncheck)\b/i.test(qLower) ||
     /(?:par\s+click|pe\s+click|click\s+karo|dabao|daba\s+do|press\s+karo)/i.test(qLower);
 
   if (isClickAction) {
     const matchEl = findBestMatchingElement(snapshot, question);
-    const elLabel = matchEl?.name || matchEl?.placeholder || matchEl?.text || matchEl?.role || "button";
     const isHindi = activeBuddy.defaultLanguage !== "english";
-    const answer = isHindi
-      ? `Main page par "${elLabel}" click kar raha hoon!`
-      : `Executing click on "${elLabel}"!`;
+    if (!matchEl) {
+      return {
+        taskId: null,
+        reply: {
+          answer: isHindi
+            ? "Is page par aisa matching button ya control abhi visible nahi mila. Kripya element ka exact naam batayein ya thoda scroll karein."
+            : "I could not find a matching visible button or interactive control on this page. Please specify its exact label or scroll so it is visible.",
+          highlight: null,
+          confidence: "low",
+          needs: null,
+          emotion: "confused",
+          actionType: null,
+        },
+        actionType: null,
+        targetSelector: null,
+        targetText: null,
+        highlightSelector: null,
+        buddyName: activeBuddy.name,
+        permission: "explain",
+        guest: true,
+      };
+    }
+
+    const elLabel = matchEl.name || matchEl.placeholder || matchEl.text || matchEl.role || "button";
+    const resolvedAction =
+      isOpenLinkAction || matchEl.role === "link" || matchEl.tag === "a" ? "open_link" : "click";
+    const answer =
+      resolvedAction === "open_link"
+        ? isHindi
+          ? `Main "${elLabel}" link khol raha hoon!`
+          : `Opening link "${elLabel}"!`
+        : isHindi
+          ? `Main page par "${elLabel}" click kar raha hoon!`
+          : `Executing click on "${elLabel}"!`;
 
     return {
       taskId: null,
       reply: {
         answer,
-        highlight: matchEl?.ref || null,
+        highlight: matchEl.ref || null,
         confidence: "high",
         needs: null,
         emotion: "working",
-        actionType: "click",
+        actionType: resolvedAction,
       },
-      actionType: "click",
-      targetSelector: matchEl?.selector || null,
+      actionType: resolvedAction,
+      targetSelector: matchEl.selector || null,
       targetText: elLabel,
-      highlightSelector: matchEl?.selector || null,
+      highlightSelector: matchEl.selector || null,
       calloutTitle: elLabel,
-      calloutDescription: "Clicking target element",
+      calloutDescription: resolvedAction === "open_link" ? "Opening destination link" : "Clicking target element",
       buddyName: activeBuddy.name,
       permission: "interact",
       guest: true,
@@ -718,29 +801,42 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
   }
 
   // Form filling commands
+  const fillWithMatch = question.match(/\bfill\s+(.+?)\s+with\s+["']?([^"'\n]+?)["']?(?:\s+without\s+submitting)?[.!?]*$/i);
   const isFormFillAction =
+    Boolean(fillWithMatch) ||
     /(?:form\s+(?:fill|bhar|bharo)|fill\s+(?:the\s+|this\s+)?form|auto\s*fill|fill\s+(?:all\s+)?(?:inputs|fields)|fill\s+kar|likh\s+do|daal\s+do|type\s+kar)/i.test(
       qLower,
     );
 
   if (isFormFillAction) {
     const isHindi = activeBuddy.defaultLanguage !== "english";
-    const answer = isHindi
-      ? `Main active form fields fill aur verify kar raha hoon.`
-      : `Executing Smart Form Fill on visible input fields.`;
+    const targetField = fillWithMatch?.[1]?.trim() || null;
+    const targetValue = fillWithMatch?.[2]?.trim() || null;
+    const matchedField = targetField ? findBestMatchingElement(snapshot, targetField) : snapshot?.forms?.[0];
+    const answer =
+      targetField && targetValue
+        ? isHindi
+          ? `Main "${targetField}" field ko "${targetValue}" se fill kar raha hoon (bina submit kiye).`
+          : `Filling "${targetField}" with "${targetValue}" without submitting.`
+        : isHindi
+          ? `Main active form fields fill aur verify kar raha hoon.`
+          : `Executing Smart Form Fill on visible input fields.`;
 
     return {
       taskId: null,
       reply: {
         answer,
-        highlight: snapshot?.forms?.[0]?.ref || null,
+        highlight: matchedField?.ref || snapshot?.forms?.[0]?.ref || null,
         confidence: "high",
         needs: null,
         emotion: "working",
         actionType: "form_fill",
       },
       actionType: "form_fill",
-      highlightSelector: snapshot?.forms?.[0]?.selector || null,
+      targetField,
+      targetValue,
+      targetSelector: matchedField?.selector || null,
+      highlightSelector: matchedField?.selector || snapshot?.forms?.[0]?.selector || null,
       buddyName: activeBuddy.name,
       permission: "interact",
       guest: true,
@@ -906,7 +1002,7 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
 
 async function resolveExtensionApiBase(session, lastBase) {
   let apiBase = session?.apiBase || lastBase;
-  if (apiBase && (apiBase.includes("5t53lwemhepi") || apiBase.includes("152127168827"))) {
+  if (apiBase && apiBase.includes(LEGACY_BROKEN_HOST)) {
     apiBase = DEFAULT_HOST;
     chrome.storage.local.set({ lastBase: DEFAULT_HOST }).catch(() => {});
   }
@@ -919,17 +1015,17 @@ async function resolveExtensionApiBase(session, lastBase) {
           const u = new URL(t.url);
           if (
             u.protocol.startsWith("http") &&
+            !u.hostname.includes("aistudio.google.com") &&
+            !u.hostname.includes(LEGACY_BROKEN_HOST) &&
             (u.hostname.includes("run.app") ||
               u.hostname === "localhost" ||
               u.hostname === "127.0.0.1" ||
               t.title?.includes("AI Buddy") ||
               t.title?.includes("your-ai-companion"))
           ) {
-            if (!u.hostname.includes("5t53lwemhepi") && !u.hostname.includes("aistudio.google.com")) {
-              apiBase = u.origin;
-              chrome.storage.local.set({ lastBase: apiBase }).catch(() => {});
-              break;
-            }
+            apiBase = u.origin;
+            chrome.storage.local.set({ lastBase: apiBase }).catch(() => {});
+            break;
           }
         }
       }
@@ -1088,27 +1184,34 @@ async function extractUploadedDocument(doc) {
     try {
       const cleanBase64 = String(doc.base64Data).replace(/^data:[^;]+;base64,/, "");
       const mimeType = doc.mimeType === "image/jpg" ? "image/jpeg" : (doc.mimeType || "image/png");
-      const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(userApiKey)}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  { inlineData: { mimeType, data: cleanBase64 } },
-                  {
-                    text: `Extract fields from ${doc.fileName} as strict JSON: {"documentType":"aadhaar|pan|invoice|shipping_label|id_card|form|other","confidence":"high|medium|low","fields":{"name":"","fatherName":"","dob":"","gender":"","phone":"","email":"","address":"","city":"","state":"","pincode":"","aadhaarNumber":"","panNumber":"","gstin":"","invoiceNumber":"","orderId":"","trackingNumber":"","company":""},"ambiguousFields":[]}. NEVER invent fields that are not clearly visible.`,
-                  },
-                ],
-              },
-            ],
-            generationConfig: { responseMimeType: "application/json" },
-          }),
-        },
-      );
-      if (geminiRes.ok) {
+      let geminiRes = null;
+      for (const modelName of ["gemini-3.8-flash", "gemini-3.1-flash-lite"]) {
+        geminiRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(userApiKey)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [
+                    { inlineData: { mimeType, data: cleanBase64 } },
+                    {
+                      text: `Extract fields from ${doc.fileName} as strict JSON: {"documentType":"aadhaar|pan|invoice|shipping_label|id_card|form|other","confidence":"high|medium|low","fields":{"name":"","fatherName":"","dob":"","gender":"","phone":"","email":"","address":"","city":"","state":"","pincode":"","aadhaarNumber":"","panNumber":"","gstin":"","invoiceNumber":"","orderId":"","trackingNumber":"","company":""},"ambiguousFields":[]}. NEVER invent fields that are not clearly visible.`,
+                    },
+                  ],
+                },
+              ],
+              generationConfig: { responseMimeType: "application/json" },
+            }),
+          },
+        );
+        if (geminiRes.ok) break;
+        if (geminiRes.status !== 404 && geminiRes.status !== 400 && geminiRes.status !== 503) {
+          break;
+        }
+      }
+      if (geminiRes?.ok) {
         const gj = await geminiRes.json();
         const raw = gj.candidates?.[0]?.content?.parts?.[0]?.text;
         if (raw) {
@@ -1273,10 +1376,13 @@ async function ask(
           if (!t.url) return false;
           try {
             const u = new URL(t.url);
+            if (u.hostname.includes("aistudio.google.com") || u.hostname.includes(LEGACY_BROKEN_HOST)) {
+              return false;
+            }
             return (
               u.hostname.includes("run.app") ||
-              u.hostname.includes("aistudio.google.com") ||
               u.hostname === "localhost" ||
+              u.hostname === "127.0.0.1" ||
               t.title?.includes("AI Buddy") ||
               t.title?.includes("your-ai-companion")
             );
@@ -1321,6 +1427,8 @@ async function ask(
 
     const hasServerAiError =
       !body?.reply?.answer ||
+      body?.aiFallbackUsed === true ||
+      body?.activeProvider === "local_grounded" ||
       body?.reply?.answer?.includes("No AI provider is configured on the server") ||
       body?.reply?.answer?.includes("Add GEMINI_API_KEY") ||
       body?.error === "server_error" ||
@@ -1554,6 +1662,10 @@ function highlight(selector, title, description, options = {}) {
   let frame = 0;
 
   const updatePositions = () => {
+    if (!host.isConnected || !el.isConnected) {
+      cleanupOverlay();
+      return;
+    }
     const r = el.getBoundingClientRect();
     const vw = window.innerWidth;
     const vh = window.innerHeight;
@@ -1612,7 +1724,22 @@ function highlight(selector, title, description, options = {}) {
     }
   };
 
+  const onViewportChange = () => updatePositions();
+  let cleanedUp = false;
+  const cleanupOverlay = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    cancelAnimationFrame(frame);
+    window.removeEventListener("scroll", onViewportChange, true);
+    window.removeEventListener("resize", onViewportChange);
+    host.remove();
+  };
+
+  window.addEventListener("scroll", onViewportChange, { passive: true, capture: true });
+  window.addEventListener("resize", onViewportChange, { passive: true });
+
   const tick = (now) => {
+    if (cleanedUp) return;
     if (!reduce) {
       const elapsed = now - startTime;
       if (!isRetracting) {
@@ -1632,10 +1759,7 @@ function highlight(selector, title, description, options = {}) {
     isRetracting = true;
     ring.classList.remove("pulse");
     card.classList.remove("show");
-    setTimeout(() => {
-      cancelAnimationFrame(frame);
-      host.remove();
-    }, 550);
+    setTimeout(cleanupOverlay, 550);
   }, 10000);
 
   return true;
@@ -2383,6 +2507,7 @@ async function findContentOnPage(query, options = {}) {
       };
 
       const getElementSearchText = (el) => {
+        const root = el.getRootNode?.() || document;
         const parts = [
           el.innerText,
           el.textContent,
@@ -2390,16 +2515,28 @@ async function findContentOnPage(query, options = {}) {
           el.getAttribute?.("data-placeholder"),
           el.getAttribute?.("aria-label"),
           el.getAttribute?.("title"),
+          el.getAttribute?.("alt"),
           el.getAttribute?.("name"),
+          el.querySelector?.("img[alt]")?.getAttribute("alt"),
+          el.querySelector?.("svg title")?.textContent,
           el.value,
         ];
+        const labelledby = el.getAttribute?.("aria-labelledby");
+        if (labelledby) {
+          for (const lid of labelledby.split(/\s+/)) {
+            const le = root.getElementById?.(lid) || document.getElementById(lid);
+            if (le?.innerText) parts.push(le.innerText);
+          }
+        }
         if (el.id) {
           try {
-            const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+            const l =
+              root.querySelector?.(`label[for="${CSS.escape(el.id)}"]`) ||
+              document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
             if (l?.innerText) parts.push(l.innerText);
           } catch {}
         }
-        return normalize(parts.filter(Boolean).join(" ")).toLowerCase();
+        return normalize(parts.filter(Boolean).join(" ").replace(/[-_]+/g, " ")).toLowerCase();
       };
 
       const STOPWORDS = [
@@ -2408,6 +2545,7 @@ async function findContentOnPage(query, options = {}) {
         "khaa", "kha", "hai", "hain", "kahan", "kidhar", "kaha", "buddy", "point", "highlight", "karo",
       ];
       const rawTokens = q
+        .replace(/[-_]+/g, " ")
         .replace(/[^a-z0-9\s]/g, " ")
         .split(/\s+/)
         .filter((t) => t.length > 1 && !STOPWORDS.includes(t));
@@ -2884,10 +3022,21 @@ async function executeAction(action, selector, value, options = {}) {
           ).filter(isVisible);
 
           const getElementText = (node) => {
+            const nodeRoot = node.getRootNode?.() || document;
             let labelTxt = "";
-            if (node.id) {
+            const labelledby = node.getAttribute?.("aria-labelledby");
+            if (labelledby) {
+              labelTxt = labelledby
+                .split(/\s+/)
+                .map((lid) => (nodeRoot.getElementById?.(lid) || document.getElementById(lid))?.innerText)
+                .filter(Boolean)
+                .join(" ");
+            }
+            if (!labelTxt && node.id) {
               try {
-                const lbl = document.querySelector(`label[for="${CSS.escape(node.id)}"]`);
+                const lbl =
+                  nodeRoot.querySelector?.(`label[for="${CSS.escape(node.id)}"]`) ||
+                  document.querySelector(`label[for="${CSS.escape(node.id)}"]`);
                 if (lbl?.innerText) labelTxt = lbl.innerText;
               } catch {}
             }
@@ -2901,8 +3050,11 @@ async function executeAction(action, selector, value, options = {}) {
                 labelTxt ||
                 node.getAttribute?.("aria-label") ||
                 node.getAttribute?.("title") ||
+                node.getAttribute?.("alt") ||
                 node.getAttribute?.("placeholder") ||
                 node.getAttribute?.("name") ||
+                node.querySelector?.("img[alt]")?.getAttribute("alt") ||
+                node.querySelector?.("svg title")?.textContent ||
                 "",
             ).toLowerCase();
           };
@@ -3357,6 +3509,45 @@ async function executeAction(action, selector, value, options = {}) {
         };
       }
 
+      // --- 8. OPEN LINK ACTION ---
+      if (act === "open_link" || act === "open") {
+        let el = sel ? queryDeepSelector(sel) : null;
+        if (!el && (val || opts?.text)) {
+          const needle = String(val || opts?.text).trim().toLowerCase();
+          const links = queryAllDeep('a[href], [role="link"]').filter(isVisible);
+          el =
+            links.find((a) => normalize(a.innerText || a.getAttribute("aria-label") || a.title || "").toLowerCase() === needle) ||
+            links.find((a) => normalize(a.innerText || a.getAttribute("aria-label") || a.title || a.getAttribute("href") || "").toLowerCase().includes(needle));
+        }
+        if (!el) {
+          return {
+            ok: false,
+            message: `Could not find link matching "${val || opts?.text || sel || "target"}".`,
+          };
+        }
+        const urlBefore = window.location.href;
+        const rawHref = el.getAttribute?.("href") || el.href || "";
+        const resolvedHref = rawHref && !/^\s*javascript:/i.test(rawHref) ? new URL(rawHref, urlBefore).href : "";
+        const label = normalize(el.innerText || el.getAttribute?.("aria-label") || resolvedHref || "link").slice(0, 60);
+        const isBlank = el.target === "_blank" || el.getAttribute?.("target") === "_blank";
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.click();
+        await new Promise((r) => setTimeout(r, 250));
+        const navigated = window.location.href !== urlBefore;
+        const destinationUrl = (navigated ? window.location.href : resolvedHref) || undefined;
+        return {
+          ok: true,
+          action: "open_link",
+          href: resolvedHref || undefined,
+          newUrl: destinationUrl,
+          openedNewTab: isBlank,
+          urlBefore,
+          urlAfter: window.location.href,
+          stateChange: navigated ? "navigated" : isBlank ? "new_tab" : "clicked",
+          message: `Opened link "${label}"${destinationUrl ? ` (${destinationUrl})` : ""}.`,
+        };
+      }
+
       return { ok: false, message: `Unknown browser action: ${act}` };
   };
 
@@ -3391,81 +3582,81 @@ async function extractPageData(selector, extractType = "order_id", query, option
     return { ok: false, message: "Cannot extract data from restricted browser page." };
   }
 
-  const [res] = await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: (sel, type, q, opts) => {
+  const extractFrameFunc = (sel, type, q, opts) => {
       const normalize = (t) => (t || "").replace(/\s+/g, " ").trim();
+      const queryAllDeep = (selector, root = document) => {
+        const out = [...root.querySelectorAll(selector)];
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let node;
+        while ((node = walker.nextNode())) {
+          if (node.shadowRoot) {
+            out.push(...queryAllDeep(selector, node.shadowRoot));
+          }
+        }
+        return out;
+      };
       const extracted = [];
 
       // 1. Extract Order IDs pattern
       if (type === "order_id" || type === "orders") {
-        // Look for tables, order rows, or text patterns matching order identifiers
-        const orderIdRegex = /(?:order[_\-\s]*id[:\s]*|oid[:\s\-]*|#\s*)([a-zA-Z0-9_\-]{4,24})/gi;
-        const rows = document.querySelectorAll(
+        const orderIdPattern = /(?:order[_\-\s]*id[:\s]*|oid[:\s\-]*|#\s*)([a-zA-Z0-9_\-]{4,24})/i;
+        const rows = queryAllDeep(
           sel || 'table tbody tr, [data-testid*="order"], div.order-card',
         );
 
         if (rows.length > 0) {
           rows.forEach((row, i) => {
             const rowText = normalize(row.innerText || row.textContent);
-            let match = orderIdRegex.exec(rowText);
+            const match = rowText.match(orderIdPattern);
             const cells = [...row.querySelectorAll("td, th, span")].map((c) =>
               normalize(c.innerText),
             );
             const idCandidate =
-              cells.find((c) => /^[A-Z0-9_\-]{6,20}$/i.test(c)) ||
-              (match ? match[1] : `ORD-${i + 1}`);
+              cells.find((c) => /^[A-Z0-9_\-]{6,20}$/i.test(c) && /\d/.test(c)) ||
+              (match ? match[1] : null);
 
-            extracted.push({
-              orderId: idCandidate,
-              rowNumber: i + 1,
-              status: /pending|processing/i.test(rowText)
-                ? "pending"
-                : /shipped|delivered/i.test(rowText)
-                  ? "completed"
-                  : "pending",
-              details: rowText.slice(0, 120),
-            });
+            if (idCandidate) {
+              extracted.push({
+                orderId: idCandidate,
+                rowNumber: i + 1,
+                status: /pending|processing/i.test(rowText)
+                  ? "pending"
+                  : /shipped|delivered/i.test(rowText)
+                    ? "completed"
+                    : "unknown",
+                details: rowText.slice(0, 120),
+              });
+            }
           });
         }
 
         // If no structured rows found, search the whole page text for order IDs
         if (extracted.length === 0) {
-          const pageText = document.body.innerText || "";
+          const orderIdGlobal = /(?:order[_\-\s]*id[:\s]*|oid[:\s\-]*|#\s*)([a-zA-Z0-9_\-]{4,24})/gi;
+          const pageText = document.body?.innerText || "";
           let m;
           const seen = new Set();
-          while ((m = orderIdRegex.exec(pageText)) !== null && extracted.length < 30) {
+          while ((m = orderIdGlobal.exec(pageText)) !== null && extracted.length < 30) {
             const id = m[1];
-            if (id && !seen.has(id)) {
+            if (id && /\d/.test(id) && !seen.has(id)) {
               seen.add(id);
               extracted.push({
                 orderId: id,
-                status: "pending",
-                details: `Extracted from page content`,
+                status: "unknown",
+                details: "Extracted from visible page content",
               });
             }
           }
         }
 
-        // If still empty (e.g. mock demo page or Meesho sample), provide sample extracted items for user workflow
         if (extracted.length === 0) {
-          extracted.push(
-            {
-              orderId: "MSH-982410-IN",
-              status: "pending",
-              details: "Today's Order — Pending Dispatch",
-            },
-            {
-              orderId: "MSH-982411-IN",
-              status: "pending",
-              details: "Today's Order — Pending Dispatch",
-            },
-            {
-              orderId: "MSH-982412-IN",
-              status: "pending",
-              details: "Today's Order — Ready to Pack",
-            },
-          );
+          return {
+            ok: false,
+            count: 0,
+            type: "order_id",
+            extracted: [],
+            summary: "No matching order IDs were found on this page.",
+          };
         }
 
         return {
@@ -3473,12 +3664,12 @@ async function extractPageData(selector, extractType = "order_id", query, option
           count: extracted.length,
           type: "order_id",
           extracted,
-          summary: `Extracted ${extracted.length} order IDs successfully.`,
+          summary: `Extracted ${extracted.length} order IDs from page.`,
         };
       }
 
       // 2. Generic list or table extraction
-      const elements = document.querySelectorAll(sel || "table tbody tr, ul li");
+      const elements = queryAllDeep(sel || "table tbody tr, ul li");
       elements.forEach((el, idx) => {
         if (idx < (opts?.limit || 50)) {
           const t = normalize(el.innerText || el.textContent);
@@ -3487,17 +3678,37 @@ async function extractPageData(selector, extractType = "order_id", query, option
       });
 
       return {
-        ok: true,
+        ok: extracted.length > 0,
         count: extracted.length,
         type: "list",
         extracted,
-        summary: `Extracted ${extracted.length} items from page.`,
+        summary:
+          extracted.length > 0
+            ? `Extracted ${extracted.length} items from page.`
+            : "No matching table rows or list items were found on this page.",
       };
-    },
+  };
+
+  const [res] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: extractFrameFunc,
     args: [selector, extractType, query, options],
   });
 
-  return res?.result || { ok: false, message: "Extraction failed to execute." };
+  let result = res?.result || { ok: false, count: 0, extracted: [], message: "Extraction failed to execute." };
+  if (!result.ok && (result.count || 0) === 0) {
+    try {
+      const frameRuns = await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        func: extractFrameFunc,
+        args: [selector, extractType, query, options],
+      });
+      const subHit = frameRuns.find((r) => r.frameId !== 0 && r.result?.ok && r.result.count > 0);
+      if (subHit?.result) result = subHit.result;
+    } catch {}
+  }
+
+  return result;
 }
 
 /**

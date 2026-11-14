@@ -6,7 +6,7 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 
-import { getGeminiKey } from "@/lib/ai/provider-keys.server";
+import { getGeminiKey, isProviderConfigured } from "@/lib/ai/provider-keys.server";
 import { verifyBearer } from "@/lib/supabase-bearer.server";
 
 export const Route = createFileRoute("/api/public/extension/health")({
@@ -15,13 +15,17 @@ export const Route = createFileRoute("/api/public/extension/health")({
       GET: async ({ request }) => {
         const geminiKey = getGeminiKey();
         const hasGemini = Boolean(geminiKey);
-        const hasLovable = Boolean(process.env["LOVABLE_API_KEY"]);
+        const hasLovable = isProviderConfigured("lovable-gateway");
         const hasAnyProvider =
           hasGemini ||
           hasLovable ||
-          Boolean(process.env["GROQ_API_KEY"]) ||
-          Boolean(process.env["OPENROUTER_API_KEY"]) ||
-          Boolean(process.env["OPENAI_API_KEY"]);
+          isProviderConfigured("groq") ||
+          isProviderConfigured("openrouter") ||
+          isProviderConfigured("openai") ||
+          isProviderConfigured("github") ||
+          isProviderConfigured("cloudflare") ||
+          isProviderConfigured("huggingface") ||
+          isProviderConfigured("ollama");
 
         const checks: Record<string, { ok: boolean; detail: string }> = {
           backend: { ok: false, detail: "not checked" },

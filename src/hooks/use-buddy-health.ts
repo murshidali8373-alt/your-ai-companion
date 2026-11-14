@@ -91,6 +91,8 @@ export function useBuddyHealth(options: UseBuddyHealthOptions = {}) {
 
   const logsRef = useRef<HealthLogEntry[]>([]);
   const isRunningRef = useRef(false);
+  const stateRef = useRef<BuddyHealthState>(state);
+  stateRef.current = state;
 
   const addLog = useCallback(
     (
@@ -137,7 +139,7 @@ export function useBuddyHealth(options: UseBuddyHealthOptions = {}) {
 
   const runHealthCheck = useCallback(async (): Promise<BuddyHealthState> => {
     if (isRunningRef.current) {
-      return state;
+      return stateRef.current;
     }
     isRunningRef.current = true;
 
@@ -445,7 +447,7 @@ export function useBuddyHealth(options: UseBuddyHealthOptions = {}) {
     }
 
     return newState;
-  }, [addLog, apiBase, onCheckComplete, state, targetSelectors]);
+  }, [addLog, apiBase, onCheckComplete, targetSelectors]);
 
   const exportLogsAsJson = useCallback((): string => {
     return JSON.stringify(

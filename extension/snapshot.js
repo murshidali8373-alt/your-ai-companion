@@ -6,27 +6,62 @@
     /pass(?:word|wd)?|otp|\bpin\b|cvv|cvc|credit.?card|debit.?card|card.?number|secret|token|ssn|aadhaar/i;
   let n = 0;
 
+  const inViewport = (el) => {
+    const r = el.getBoundingClientRect();
+    return (
+      r.bottom >= 0 &&
+      r.right >= 0 &&
+      r.top <= (window.innerHeight || document.documentElement.clientHeight || 800) &&
+      r.left <= (window.innerWidth || document.documentElement.clientWidth || 1200)
+    );
+  };
+
+  const sortViewportFirst = (els) =>
+    [...els].sort((a, b) => Number(inViewport(b)) - Number(inViewport(a)));
+
   const visible = (el) => {
     if (!el || el.nodeType !== 1) return false;
     const r = el.getBoundingClientRect();
     const s = window.getComputedStyle(el);
-    return (
-      (r.width > 0 || r.height > 0 || el.getClientRects().length > 0) &&
-      s.visibility !== "hidden" &&
-      s.display !== "none" &&
-      s.opacity !== "0"
-    );
+    if (s.display === "none" || s.visibility === "hidden") return false;
+    if (s.opacity === "0" || (r.width === 0 && r.height === 0 && el.getClientRects().length === 0)) {
+      if (
+        el.tagName === "INPUT" &&
+        (el.type === "checkbox" || el.type === "radio")
+      ) {
+        const root = el.getRootNode?.() || document;
+        const assocLabel =
+          (el.id && root.querySelector?.(`label[for="${CSS.escape(el.id)}"]`)) ||
+          el.closest("label");
+        if (assocLabel && assocLabel !== el) {
+          const lr = assocLabel.getBoundingClientRect();
+          const ls = window.getComputedStyle(assocLabel);
+          return (
+            (lr.width > 0 || lr.height > 0) &&
+            ls.visibility !== "hidden" &&
+            ls.display !== "none" &&
+            ls.opacity !== "0"
+          );
+        }
+      }
+      return false;
+    }
+    return true;
   };
 
   const cssPath = (el) => {
-    if (el.id && document.querySelectorAll(`#${CSS.escape(el.id)}`).length === 1) {
+    const root = el.getRootNode?.() || document;
+    const queryRoot = typeof root.querySelectorAll === "function" ? root : document;
+    if (el.id && queryRoot.querySelectorAll(`#${CSS.escape(el.id)}`).length === 1) {
       return `#${CSS.escape(el.id)}`;
     }
     const parts = [];
     let cur = el;
     while (cur && cur.nodeType === 1 && parts.length < 6) {
       let p = cur.tagName.toLowerCase();
-      if (cur.id && document.querySelectorAll(`#${CSS.escape(cur.id)}`).length === 1) {
+      const curRoot = cur.getRootNode?.() || document;
+      const curQueryRoot = typeof curRoot.querySelectorAll === "function" ? curRoot : document;
+      if (cur.id && curQueryRoot.querySelectorAll(`#${CSS.escape(cur.id)}`).length === 1) {
         parts.unshift(`#${CSS.escape(cur.id)}`);
         break;
       }
@@ -44,12 +79,15 @@
   };
 
   const labelOf = (el) => {
+    const root = el.getRootNode?.() || document;
+    const findById = (id) => root.getElementById?.(id) || document.getElementById(id);
+
     // 1. aria-labelledby
     const labelledby = el.getAttribute("aria-labelledby");
     if (labelledby) {
       const parts = labelledby
         .split(/\s+/)
-        .map((id) => document.getElementById(id)?.innerText)
+        .map((id) => findById(id)?.innerText)
         .filter(Boolean);
       if (parts.length) return parts.join(" ");
     }
@@ -59,7 +97,9 @@
 
     // 3. label[for]
     if (el.id) {
-      const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      const l =
+        root.querySelector?.(`label[for="${CSS.escape(el.id)}"]`) ||
+        document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
       if (l) return l.innerText;
     }
     // 4. Closest label
@@ -67,19 +107,25 @@
     if (wrap) return wrap.innerText;
 
     // 5. Preceding sibling label or legend
-    let prev = el.previousElementSibling;
+    const prev = el.previousElementSibling;
     if (prev && (prev.tagName === "LABEL" || prev.tagName === "SPAN" || prev.tagName === "P")) {
       const prevText = prev.innerText?.trim();
       if (prevText && prevText.length < 80) return prevText;
     }
 
-    // 6. Attributes & sibling/parent fallback labels
+    // 6. Attributes, image alt, button value & fallback labels
     const attrLabel =
       el.getAttribute("placeholder") ||
       el.getAttribute("data-placeholder") ||
       el.getAttribute("name") ||
       el.getAttribute("title") ||
-      el.getAttribute("data-testid");
+      el.getAttribute("alt") ||
+      (el.tagName === "INPUT" && ["button", "submit", "reset"].includes((el.type || "").toLowerCase())
+        ? el.value
+        : "") ||
+      el.getAttribute("data-testid") ||
+      el.querySelector?.("img[alt]")?.getAttribute("alt") ||
+      el.querySelector?.("svg title")?.textContent;
     if (attrLabel) return attrLabel;
 
     if (el.nextElementSibling) {
@@ -134,10 +180,11 @@
       return item(h, "heading", { level: lvl });
     });
 
-  const forms = queryAll(
-    'input,textarea,select,[contenteditable="true"],[contenteditable=""],[contenteditable="plaintext-only"],[role=combobox],[role=textbox],[role=searchbox],[role=checkbox],[role=radio],[role=switch]',
+  const forms = sortViewportFirst(
+    queryAll(
+      'input,textarea,select,[contenteditable="true"],[contenteditable=""],[contenteditable="plaintext-only"],[role=combobox],[role=textbox],[role=searchbox],[role=checkbox],[role=radio],[role=switch]',
+    ).filter((el) => el.type !== "hidden" && visible(el)),
   )
-    .filter((el) => el.type !== "hidden" && visible(el))
     .slice(0, MAX_ELEMENTS)
     .map((el) => {
       const type = (el.type || "").toLowerCase();
@@ -164,8 +211,10 @@
         el.classList.contains("error") ||
         Boolean(el.closest(".error, .has-error"));
 
-      const nearbyErrEl = el.getAttribute("aria-errormessage")
-        ? document.getElementById(el.getAttribute("aria-errormessage"))
+      const errId = el.getAttribute("aria-errormessage");
+      const elRoot = el.getRootNode?.() || document;
+      const nearbyErrEl = errId
+        ? elRoot.getElementById?.(errId) || document.getElementById(errId)
         : el.parentElement?.querySelector(
             ".invalid-feedback, .error, .text-danger, .error-message, .field-error",
           );
@@ -190,10 +239,11 @@
       });
     });
 
-  const controls = queryAll(
-    "button,a[href],[role=button],[role=link],[role=tab],[role=menuitem],[role=option],[role=checkbox],[role=radio],[role=switch],input[type=button],input[type=submit],input[type=reset],input[type=checkbox],input[type=radio],summary",
+  const controls = sortViewportFirst(
+    queryAll(
+      "button,a[href],[role=button],[role=link],[role=tab],[role=menuitem],[role=option],[role=checkbox],[role=radio],[role=switch],input[type=button],input[type=submit],input[type=reset],input[type=checkbox],input[type=radio],summary",
+    ).filter(visible),
   )
-    .filter(visible)
     .slice(0, MAX_ELEMENTS)
     .map((el) => item(el, el.tagName === "A" ? "link" : "button"));
 

@@ -139,19 +139,85 @@ export function stripSpokenFiller(reply: string): string {
     .trim();
 }
 
+/** Detects Hindi/Hinglish vs Indian English for more natural TTS voice & pronunciation. */
+export function detectPreferredSpeechLang(text: string): "hi-IN" | "en-IN" {
+  const s = String(text || "");
+  if (/[\u0900-\u097F]/.test(s)) return "hi-IN";
+  const hinglishHits = s.match(
+    /\b(?:karo|karein|kardo|karna|batao|dikhao|dhoondho|dhundo|kaha|kahan|kidhar|naam|pata|bhai|yaar|hain|hai|hoon|mein|main|aapka|aap|kya|kaise|kripya|namaste|neeche|upar|bharo|bharein|chahiye|nahi|tha|raha|rahi|maine|iske|baad|pehle|phir)\b/gi,
+  );
+  if (hinglishHits && hinglishHits.length >= 2) return "hi-IN";
+  return "en-IN";
+}
+
+export function pickBestVoice(
+  synth: Pick<SpeechSynthesis, "speak" | "cancel"> & { getVoices?: () => SpeechSynthesisVoice[] },
+  lang: string,
+): SpeechSynthesisVoice | null {
+  try {
+    const voices = synth?.getVoices?.() || [];
+    if (!voices.length) return null;
+    const normLang = lang.toLowerCase();
+    const langPrefix = normLang.split("-")[0];
+    return (
+      voices.find(
+        (v) =>
+          v.lang?.toLowerCase() === normLang && /natural|google|microsoft|neural/i.test(v.name),
+      ) ||
+      voices.find((v) => v.lang?.toLowerCase() === normLang) ||
+      voices.find((v) => v.lang?.toLowerCase() === "en-in") ||
+      voices.find((v) => v.lang?.toLowerCase().startsWith(`${langPrefix}-`)) ||
+      voices.find((v) => v.lang?.toLowerCase().startsWith("en-")) ||
+      voices[0] ||
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
 /** A single-slot speech queue: speaking anything new cancels whatever is playing. */
 export class SingleSpeaker {
   private active: SpeechSynthesisUtterance | null = null;
-  constructor(private synth: Pick<SpeechSynthesis, "speak" | "cancel"> | null) {}
+  constructor(
+    private synth:
+      | (Pick<SpeechSynthesis, "speak" | "cancel"> & {
+          getVoices?: () => SpeechSynthesisVoice[];
+        })
+      | null,
+  ) {}
 
-  speak(text: string, lang = "en-IN", onEnd?: () => void): boolean {
+  speak(
+    text: string,
+    langOrAuto?: string,
+    onEnd?: () => void,
+    onBoundary?: (intensity: number) => void,
+  ): boolean {
     const clean = stripSpokenFiller(text);
     if (!this.synth || !clean) return false;
     this.cancel();
+    const lang =
+      !langOrAuto || langOrAuto === "auto" ? detectPreferredSpeechLang(clean) : langOrAuto;
     const u = new SpeechSynthesisUtterance(clean);
     u.lang = lang;
+    u.rate = lang === "hi-IN" ? 0.96 : 1.0;
+    const chosenVoice = pickBestVoice(this.synth, lang);
+    if (chosenVoice) {
+      u.voice = chosenVoice;
+    }
+    let pulseToggle = false;
+    u.onboundary = () => {
+      pulseToggle = !pulseToggle;
+      onBoundary?.(pulseToggle ? 0.85 : 0.45);
+    };
     u.onend = () => {
       if (this.active === u) this.active = null;
+      onBoundary?.(0);
+      onEnd?.();
+    };
+    u.onerror = () => {
+      if (this.active === u) this.active = null;
+      onBoundary?.(0);
       onEnd?.();
     };
     this.active = u;

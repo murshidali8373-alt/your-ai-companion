@@ -24,10 +24,10 @@ class WebGLSceneErrorBoundary extends React.Component<
   static getDerivedStateFromError() {
     return { hasError: true };
   }
-  componentDidCatch() {
+  override componentDidCatch() {
     this.props.onError?.();
   }
-  render() {
+  override render() {
     if (this.state.hasError) return this.props.fallback;
     return this.props.children;
   }

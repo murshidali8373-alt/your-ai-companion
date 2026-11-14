@@ -230,6 +230,10 @@ export function createStageViewer(
   let rigBrowR: THREE.Object3D | null = null;
   let rigMouthOpen: THREE.Object3D | null = null;
   let rigMouthSmile: THREE.Object3D | null = null;
+  let rigShoulderL: THREE.Object3D | null = null;
+  let rigShoulderR: THREE.Object3D | null = null;
+  let rigForearmL: THREE.Object3D | null = null;
+  let rigForearmR: THREE.Object3D | null = null;
 
   // Interactive turntable rotation (inspect front / side / back cleanly)
   let dragYaw = 0;
@@ -253,7 +257,29 @@ export function createStageViewer(
     browLift: 0,
     mouthOpenY: 0.05,
     smileScale: 1,
+    shoulderRZ: 0,
+    shoulderLZ: 0,
+    forearmRX: 0,
+    forearmLX: 0,
   };
+  const prevApplied = {
+    headX: 0,
+    headY: 0,
+    headZ: 0,
+    shoulderRZ: 0,
+    shoulderLZ: 0,
+    forearmRX: 0,
+    forearmLX: 0,
+  };
+  function resetPrevApplied() {
+    prevApplied.headX = 0;
+    prevApplied.headY = 0;
+    prevApplied.headZ = 0;
+    prevApplied.shoulderRZ = 0;
+    prevApplied.shoulderLZ = 0;
+    prevApplied.forearmRX = 0;
+    prevApplied.forearmLX = 0;
+  }
 
   // Pre-allocated math helpers outside render loop
   let disposed = false;
@@ -329,6 +355,11 @@ export function createStageViewer(
       rigBrowR = model.getObjectByName("Brow_R") || null;
       rigMouthOpen = model.getObjectByName("MouthOpen") || null;
       rigMouthSmile = model.getObjectByName("MouthSmile") || null;
+      rigShoulderL = model.getObjectByName("Shoulder_L") || null;
+      rigShoulderR = model.getObjectByName("Shoulder_R") || null;
+      rigForearmL = model.getObjectByName("Forearm_L") || null;
+      rigForearmR = model.getObjectByName("Forearm_R") || null;
+      resetPrevApplied();
 
       mixer = new THREE.AnimationMixer(model);
       for (const clip of gltf.animations || []) {
@@ -339,9 +370,9 @@ export function createStageViewer(
       if (actions[targetClip]) {
         activeClipName = targetClip;
         actions[targetClip].play();
-      } else if (actions.Idle) {
+      } else if (actions["Idle"]) {
         activeClipName = "Idle";
-        actions.Idle.play();
+        actions["Idle"].play();
       }
 
       options.onLoaded?.(slug);
@@ -411,6 +442,18 @@ export function createStageViewer(
     lastTime = now;
     const t = now * 0.001;
 
+    // Revert prior frame's additive procedural offsets before mixer updates the skeleton
+    if (rigHead) {
+      rigHead.rotation.x -= prevApplied.headX;
+      rigHead.rotation.y -= prevApplied.headY;
+      rigHead.rotation.z -= prevApplied.headZ;
+    }
+    if (rigShoulderR) rigShoulderR.rotation.z -= prevApplied.shoulderRZ;
+    if (rigShoulderL) rigShoulderL.rotation.z -= prevApplied.shoulderLZ;
+    if (rigForearmR) rigForearmR.rotation.x -= prevApplied.forearmRX;
+    if (rigForearmL) rigForearmL.rotation.x -= prevApplied.forearmLX;
+    resetPrevApplied();
+
     if (mixer) {
       mixer.update(reducedMotion ? 0 : dt);
     }
@@ -434,6 +477,10 @@ export function createStageViewer(
     let targetBrowLift = 0;
     let targetMouthOpen = 0.05;
     let targetSmileScale = 1;
+    let targetShoulderRZ = 0;
+    let targetShoulderLZ = 0;
+    let targetForearmRX = 0;
+    let targetForearmLX = 0;
 
     switch (effective) {
       case "privacy":
@@ -453,6 +500,7 @@ export function createStageViewer(
         targetHeadZ = Math.sin(t * 2.8) * 0.05;
         targetBrowLift = 0.01;
         targetSmileScale = 1.15;
+        targetShoulderLZ = reducedMotion ? 0.12 : 0.16 + Math.sin(t * 5.0) * 0.08;
         break;
       case "excited":
         targetBodyY = reducedMotion ? 0 : Math.abs(Math.sin(t * 7.2)) * 0.055;
@@ -460,6 +508,9 @@ export function createStageViewer(
         targetHeadZ = Math.sin(t * 4.5) * 0.07;
         targetBrowLift = 0.014;
         targetSmileScale = 1.22;
+        targetShoulderLZ = 0.25;
+        targetShoulderRZ = -0.25;
+        targetForearmLX = -0.18;
         break;
       case "thinking":
         targetHeadX = -0.06;
@@ -474,6 +525,8 @@ export function createStageViewer(
         targetHeadX = 0.03;
         targetTorsoZ = -0.05;
         targetBrowLift = 0.008;
+        targetShoulderRZ = -0.35;
+        targetForearmRX = -0.22;
         break;
       case "talking":
         targetHeadX = Math.sin(t * 6.0) * 0.04;
@@ -524,6 +577,10 @@ export function createStageViewer(
     cur.browLift = THREE.MathUtils.damp(cur.browLift, targetBrowLift, dampRate, dt);
     cur.mouthOpenY = THREE.MathUtils.damp(cur.mouthOpenY, targetMouthOpen, 18.0, dt);
     cur.smileScale = THREE.MathUtils.damp(cur.smileScale, targetSmileScale, dampRate, dt);
+    cur.shoulderRZ = THREE.MathUtils.damp(cur.shoulderRZ, targetShoulderRZ, dampRate, dt);
+    cur.shoulderLZ = THREE.MathUtils.damp(cur.shoulderLZ, targetShoulderLZ, dampRate, dt);
+    cur.forearmRX = THREE.MathUtils.damp(cur.forearmRX, targetForearmRX, dampRate, dt);
+    cur.forearmLX = THREE.MathUtils.damp(cur.forearmLX, targetForearmLX, dampRate, dt);
 
     characterAnchor.rotation.y = cur.bodyYaw;
     characterAnchor.position.y = cur.bodyY;
@@ -536,6 +593,25 @@ export function createStageViewer(
       rigHead.rotation.x += cur.headX;
       rigHead.rotation.y += cur.headY;
       rigHead.rotation.z += cur.headZ;
+      prevApplied.headX = cur.headX;
+      prevApplied.headY = cur.headY;
+      prevApplied.headZ = cur.headZ;
+    }
+    if (rigShoulderR && Math.abs(cur.shoulderRZ) > 0.002 && (!actions["Point"] || reducedMotion)) {
+      rigShoulderR.rotation.z += cur.shoulderRZ;
+      prevApplied.shoulderRZ = cur.shoulderRZ;
+    }
+    if (rigShoulderL && Math.abs(cur.shoulderLZ) > 0.002) {
+      rigShoulderL.rotation.z += cur.shoulderLZ;
+      prevApplied.shoulderLZ = cur.shoulderLZ;
+    }
+    if (rigForearmR && Math.abs(cur.forearmRX) > 0.002 && (!actions["Point"] || reducedMotion)) {
+      rigForearmR.rotation.x += cur.forearmRX;
+      prevApplied.forearmRX = cur.forearmRX;
+    }
+    if (rigForearmL && Math.abs(cur.forearmLX) > 0.002) {
+      rigForearmL.rotation.x += cur.forearmLX;
+      prevApplied.forearmLX = cur.forearmLX;
     }
     if (rigEyeL && rigEyeR) {
       if (effective === "privacy") {
@@ -612,7 +688,7 @@ export function createStageViewer(
 
 // Expose self-contained runtime globally for Chrome Extension MV3 sidepanel
 if (typeof window !== "undefined") {
-  (window as unknown as Record<string, unknown>).Buddy3DRuntime = {
+  (window as unknown as Record<string, unknown>)["Buddy3DRuntime"] = {
     COMPANION_EMOTION_STATES,
     isSupported: isWebGLSupported,
     createStageViewer,

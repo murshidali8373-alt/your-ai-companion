@@ -20,7 +20,9 @@ function Connect() {
   const [extensionVersion, setExtensionVersion] = useState<string>("0.1.0");
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [scanNonce, setScanNonce] = useState(0);
   const ackedRef = useRef(false);
+  const extensionDetectedRef = useRef(false);
 
   const sendSessionToExtension = useCallback(
     (sessionData: {
@@ -38,7 +40,7 @@ function Connect() {
           accessToken: sessionData.access_token,
           refreshToken: sessionData.refresh_token,
           expiresAt: sessionData.expires_at,
-          email: sessionData.user?.email || "sk8404530@gmail.com",
+          email: sessionData.user?.email || undefined,
         },
         origin,
       );
@@ -59,13 +61,15 @@ function Connect() {
       if (!data) return;
 
       if (data.type === "AI_BUDDY_PONG" || data.type === "AI_BUDDY_EXTENSION_READY") {
+        extensionDetectedRef.current = true;
         setExtensionDetected(true);
         if (data.version) setExtensionVersion(data.version);
-        if (status === "searching") setStatus("detected");
+        setStatus((prev) => (prev === "searching" ? "detected" : prev));
       }
 
       if (data.type === "AI_BUDDY_EXT_ACK") {
         ackedRef.current = true;
+        extensionDetectedRef.current = true;
         setExtensionDetected(true);
         setStatus("connected");
         toast.success("AI Buddy extension connected successfully!");
@@ -82,6 +86,7 @@ function Connect() {
       typeof window !== "undefined" &&
       (window as unknown as { __AI_BUDDY_EXTENSION__?: boolean }).__AI_BUDDY_EXTENSION__
     ) {
+      extensionDetectedRef.current = true;
       setExtensionDetected(true);
     }
 
@@ -90,11 +95,11 @@ function Connect() {
       if (data.session) {
         setUserEmail(data.session.user.email ?? "Signed-in user");
         sendSessionToExtension(data.session);
-        setStatus("syncing");
+        setStatus((prev) => (prev === "connected" ? "connected" : "syncing"));
       }
     });
 
-    // Pulse handshake every 500ms for up to 8 seconds
+    // Pulse handshake every 500ms until acknowledged or timed out
     const interval = window.setInterval(() => {
       if (ackedRef.current) {
         window.clearInterval(interval);
@@ -109,10 +114,14 @@ function Connect() {
     }, 500);
 
     const timeout = window.setTimeout(() => {
+      window.clearInterval(interval);
       if (!ackedRef.current) {
-        // If not acked, check if extension was at least detected
         setStatus((prev) =>
-          prev === "connected" ? "connected" : extensionDetected ? "detected" : "no_extension",
+          prev === "connected"
+            ? "connected"
+            : extensionDetectedRef.current
+              ? "detected"
+              : "no_extension",
         );
       }
     }, 5000);
@@ -122,7 +131,7 @@ function Connect() {
       window.clearInterval(interval);
       window.clearTimeout(timeout);
     };
-  }, [pingExtension, sendSessionToExtension, status, extensionDetected]);
+  }, [pingExtension, sendSessionToExtension, scanNonce]);
 
   // 1-Click Quick Connect: logs in or uses session, and triggers handshake
   const handleQuickConnect = async () => {
@@ -300,7 +309,9 @@ function Connect() {
                 variant="outline"
                 className="gap-2"
                 onClick={() => {
+                  ackedRef.current = false;
                   setStatus("searching");
+                  setScanNonce((n) => n + 1);
                   pingExtension();
                 }}
               >

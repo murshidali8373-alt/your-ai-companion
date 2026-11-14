@@ -250,16 +250,42 @@ export function validateFieldInteractability(element: HTMLElement): FieldInterac
 function getFieldIdentifiers(el: HTMLElement): string[] {
   const ids: string[] = [];
   const input = el as HTMLInputElement;
+  const root =
+    typeof (el as { getRootNode?: () => unknown }).getRootNode === "function"
+      ? (el.getRootNode() as Document | ShadowRoot)
+      : typeof document !== "undefined"
+        ? document
+        : null;
 
   if (input.name) ids.push(normalizeId(input.name));
   if (input.id) {
     ids.push(normalizeId(input.id));
-    if (typeof document !== "undefined") {
+    if (root && typeof root.querySelector === "function") {
       try {
-        const lbl = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
+        const safeId = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(input.id) : input.id;
+        const lbl =
+          root.querySelector(`label[for="${safeId}"]`) ||
+          (typeof document !== "undefined"
+            ? document.querySelector(`label[for="${safeId}"]`)
+            : null);
         if (lbl && (lbl as HTMLElement).innerText) {
           ids.push(normalizeId((lbl as HTMLElement).innerText));
         }
+      } catch {
+        // ignore selector error
+      }
+    }
+  }
+  const labelledBy = el.getAttribute("aria-labelledby");
+  if (labelledBy && root && typeof root.querySelector === "function") {
+    for (const refId of labelledBy.split(/\s+/).filter(Boolean)) {
+      try {
+        const safeRef = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(refId) : refId;
+        const refEl =
+          root.querySelector(`#${safeRef}`) ||
+          (typeof document !== "undefined" ? document.getElementById?.(refId) : null);
+        const refText = (refEl as HTMLElement | null)?.innerText || refEl?.textContent;
+        if (refText) ids.push(normalizeId(refText));
       } catch {
         // ignore selector error
       }
@@ -325,6 +351,36 @@ async function applyValueWithTimedEvents(
     } else {
       select.value = strVal;
     }
+  } else if (el.getAttribute("role") === "combobox") {
+    el.click();
+    await sleep(Math.max(50, options.eventDelayMs));
+    const rootNode =
+      typeof (el as { getRootNode?: () => unknown }).getRootNode === "function"
+        ? (el.getRootNode() as Document | ShadowRoot)
+        : typeof document !== "undefined"
+          ? document
+          : null;
+    const optionEls =
+      rootNode && typeof rootNode.querySelectorAll === "function"
+        ? ([
+            ...rootNode.querySelectorAll('[role="option"], [role="menuitem"], li'),
+          ] as HTMLElement[])
+        : [];
+    const targetNorm = normalizeId(strVal);
+    const matchedOpt = optionEls.find((o) => {
+      const optNorm = normalizeId(o.innerText || o.textContent || "");
+      return optNorm === targetNorm || optNorm.includes(targetNorm);
+    });
+    if (matchedOpt) {
+      matchedOpt.click();
+      el.setAttribute(
+        "data-selected-value",
+        matchedOpt.innerText || matchedOpt.textContent || strVal,
+      );
+    } else {
+      (el as HTMLInputElement).value = strVal;
+      el.innerText = strVal;
+    }
   } else if ((el as HTMLInputElement).type === "checkbox") {
     (el as HTMLInputElement).checked = Boolean(val);
   } else if ((el as HTMLInputElement).type === "radio") {
@@ -362,6 +418,15 @@ async function applyValueWithTimedEvents(
   // Return verified string
   if ((el as HTMLInputElement).type === "checkbox") {
     return String((el as HTMLInputElement).checked);
+  }
+  if (el.getAttribute("role") === "combobox") {
+    return (
+      el.getAttribute("data-selected-value") ||
+      (el as HTMLInputElement).value ||
+      el.innerText ||
+      el.textContent ||
+      ""
+    );
   }
   return (el as HTMLInputElement).value || el.innerText || "";
 }
@@ -457,7 +522,9 @@ export async function executeFormFill(
 
   // Query interactable inputs in container
   const allFormElements = [
-    ...root.querySelectorAll('input, textarea, select, [contenteditable="true"]'),
+    ...root.querySelectorAll(
+      'input, textarea, select, [contenteditable="true"], [role="combobox"]',
+    ),
   ] as HTMLElement[];
 
   const entries = Object.entries(fields || {}).filter(
@@ -547,6 +614,21 @@ export async function executeFormFill(
       fillResult.filled.push(filledItem);
       successfullyFilledElements.push(candidate);
       opts.onFieldFilled?.(filledItem);
+
+      // Post-fill native/ARIA validation inspection
+      const ariaInvalid = candidate.getAttribute("aria-invalid") === "true";
+      const nativeInvalid =
+        typeof (candidate as HTMLInputElement).checkValidity === "function" &&
+        !(candidate as HTMLInputElement).checkValidity();
+      if (ariaInvalid || nativeInvalid) {
+        const validationMsg =
+          (candidate as HTMLInputElement).validationMessage ||
+          "Field failed page validation after fill.";
+        fillResult.errors.push({
+          key,
+          error: validationMsg,
+        });
+      }
     } catch (err) {
       fillResult.errors.push({
         key,

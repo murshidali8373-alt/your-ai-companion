@@ -21,7 +21,7 @@ import {
   type TalkingBuddyState,
 } from "@/components/talking-buddy-character";
 import { useBuddyStateManager, BUDDY_EMOTION_STATES } from "@/hooks/use-buddy-state-manager";
-import { SingleSpeaker } from "@/shared/voice-turn";
+import { SingleSpeaker, detectPreferredSpeechLang } from "@/shared/voice-turn";
 import { cn } from "@/lib/utils";
 import { quickTalk } from "@/lib/talk.functions";
 
@@ -58,6 +58,7 @@ export function LivingBuddyCompanion({
   const [minimized, setMinimized] = useState(false);
   const [lowGraphics, setLowGraphics] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(true);
+  const [mouthIntensity, setMouthIntensity] = useState(0);
   const statusMessage = buddy.statusMessage;
   const setStatusMessage = (msg: string) => buddy.setEmotion(buddy.emotion, { reason: msg });
   const [inputText, setInputText] = useState("");
@@ -103,18 +104,28 @@ export function LivingBuddyCompanion({
   const speakText = useCallback(
     (text: string, onDone?: () => void) => {
       if (muted || !speaker.current) {
+        setMouthIntensity(0);
         onDone?.();
         return;
       }
 
       setState("speaking");
-      const isHindi = /[\u0900-\u097F]/.test(text);
-      const spoke = speaker.current.speak(text, isHindi ? "hi-IN" : "en-IN", () => {
-        setState("idle");
-        onDone?.();
-      });
+      const lang = detectPreferredSpeechLang(text);
+      const spoke = speaker.current.speak(
+        text,
+        lang,
+        () => {
+          setMouthIntensity(0);
+          setState("idle");
+          onDone?.();
+        },
+        (intensity) => {
+          setMouthIntensity(intensity);
+        },
+      );
 
       if (!spoke) {
+        setMouthIntensity(0);
         setState("idle");
         onDone?.();
       }
@@ -247,6 +258,7 @@ export function LivingBuddyCompanion({
     reqId.current++;
     recognitionRef.current?.abort?.();
     speaker.current?.cancel();
+    setMouthIntensity(0);
     setState("idle");
     setStatusMessage("Idle");
   };
@@ -347,6 +359,7 @@ export function LivingBuddyCompanion({
           slug={initialBuddySlug}
           size={minimized ? 120 : 220}
           lowGraphics={lowGraphics}
+          mouthIntensity={mouthIntensity}
           onTap={() => {
             if (state === "idle") {
               setState("happy");

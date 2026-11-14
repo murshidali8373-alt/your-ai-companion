@@ -1,5 +1,13 @@
 const $ = (id) => document.getElementById(id);
-const DEFAULT_BASE = "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
+const DEFAULT_BASE = "https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app";
+const LEGACY_BROKEN_HOST = "asfavkynho62d5znlmqa5n";
+
+function normalizeBaseUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== "string" || rawUrl.includes(LEGACY_BROKEN_HOST)) {
+    return DEFAULT_BASE;
+  }
+  return rawUrl;
+}
 
 async function render() {
   const { session } = await chrome.storage.local.get("session");
@@ -10,10 +18,7 @@ async function render() {
 
 $("connect").onclick = async () => {
   const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
-  let targetBase = session?.apiBase || lastBase;
-  if (targetBase && (targetBase.includes("5t53lwemhepi") || targetBase.includes("152127168827"))) {
-    targetBase = DEFAULT_BASE;
-  }
+  const targetBase = normalizeBaseUrl(session?.apiBase || lastBase);
   const resolvedBase = targetBase || DEFAULT_BASE;
   await chrome.storage.local.set({ lastBase: resolvedBase });
 
@@ -23,8 +28,9 @@ $("connect").onclick = async () => {
       if (!t.url) return false;
       try {
         const u = new URL(t.url);
+        if (u.hostname.includes("aistudio.google.com")) return false;
         return (
-          u.hostname.includes("run.app") ||
+          (u.hostname.includes("run.app") && !u.hostname.includes(LEGACY_BROKEN_HOST)) ||
           u.hostname === "localhost" ||
           u.hostname === "127.0.0.1" ||
           t.title?.includes("AI Buddy")
@@ -60,14 +66,22 @@ $("connect").onclick = async () => {
   }
   connectUrl.searchParams.set("src", "extension_popup");
 
-  await chrome.storage.local.set({
-    lastBase: resolvedBase,
-    session: {
-      email: "Guest User",
-      isGuest: true,
-      apiBase: resolvedBase,
-    },
-  });
+  try {
+    await chrome.tabs.create({ url: connectUrl.toString() });
+  } catch {}
+
+  if (!session?.accessToken) {
+    await chrome.storage.local.set({
+      lastBase: resolvedBase,
+      session: {
+        email: "Guest User",
+        isGuest: true,
+        apiBase: resolvedBase,
+      },
+    });
+  } else {
+    await chrome.storage.local.set({ lastBase: resolvedBase });
+  }
   render();
 };
 
@@ -115,8 +129,18 @@ $("q").addEventListener("keydown", (e) => {
 document
   .querySelectorAll("[data-q]")
   .forEach((b) => (b.onclick = () => send(b.dataset.q, b.dataset.i)));
-chrome.storage.local.get("session").then(({ session }) => {
-  if (session?.apiBase) chrome.storage.local.set({ lastBase: session.apiBase });
+chrome.storage.local.get(["session", "lastBase"]).then(({ session, lastBase }) => {
+  if (session?.apiBase) {
+    const cleanBase = normalizeBaseUrl(session.apiBase);
+    chrome.storage.local.set({
+      lastBase: cleanBase,
+      ...(cleanBase !== session.apiBase
+        ? { session: { ...session, apiBase: cleanBase } }
+        : {}),
+    });
+  } else if (lastBase && lastBase.includes(LEGACY_BROKEN_HOST)) {
+    chrome.storage.local.set({ lastBase: DEFAULT_BASE });
+  }
 });
 render();
 
