@@ -200,15 +200,26 @@ async function runTabScript({ tabId, target, files, func, args, label = "script"
   }
 }
 
-// Initialize buffer from local storage
-chrome.storage.local
+// Initialize buffer from local storage with deterministic SW wake-up promise
+let conversationBufferHydrated = false;
+const conversationBufferReady = chrome.storage.local
   .get("conversationBuffer")
   .then((data) => {
-    if (Array.isArray(data.conversationBuffer)) {
+    if (!conversationBufferHydrated && Array.isArray(data?.conversationBuffer)) {
       conversationBuffer = data.conversationBuffer.slice(-MAX_CONVERSATION_TURNS);
     }
+    conversationBufferHydrated = true;
   })
-  .catch(() => {});
+  .catch(() => {
+    conversationBufferHydrated = true;
+  });
+
+async function ensureConversationBufferLoaded() {
+  if (!conversationBufferHydrated) {
+    await conversationBufferReady;
+  }
+  return conversationBuffer;
+}
 
 // Tab change and activation listeners for reliable fresh page context
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
@@ -328,8 +339,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     }
   }
   if (msg.type === "ASK") {
-    pendingUploadedDocumentSummary = msg.uploadedDocumentSummary || null;
-    pendingPreferredProvider = msg.preferredProvider || null;
+    pendingAskOptionsQueue.push({
+      uploadedDocumentSummary: msg.uploadedDocumentSummary || null,
+      preferredProvider: msg.preferredProvider || null,
+    });
     ask(
       msg.question,
       msg.intent,
@@ -347,6 +360,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     return true;
   }
   if (msg.type === "SIGN_OUT") {
+    conversationBufferHydrated = true;
     conversationBuffer = [];
     chrome.storage.local
       .remove(["session", "conversationBuffer"])
@@ -355,8 +369,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     return true;
   }
   if (msg.type === "GET_CONVERSATION_BUFFER") {
-    safeReply({ ok: true, buffer: conversationBuffer });
-    return false;
+    ensureConversationBufferLoaded()
+      .then((buf) => safeReply({ ok: true, buffer: buf }))
+      .catch(() => safeReply({ ok: true, buffer: conversationBuffer }));
+    return true;
   }
   if (msg.type === "OPEN_SIDE_PANEL") {
     openSidePanel(sender).then(safeReply, (e) =>
@@ -670,8 +686,9 @@ function getFormattedHistory(incomingHistory) {
   });
 }
 
-function recordTurn(userQuestion, assistantAnswer) {
+async function recordTurn(userQuestion, assistantAnswer) {
   if (!userQuestion || !assistantAnswer) return;
+  await ensureConversationBufferLoaded();
   conversationBuffer.push({ user: userQuestion, assistant: assistantAnswer });
   if (conversationBuffer.length > MAX_CONVERSATION_TURNS) {
     conversationBuffer.shift();
@@ -1571,8 +1588,7 @@ async function extractUploadedDocument(doc) {
   };
 }
 
-let pendingUploadedDocumentSummary = null;
-let pendingPreferredProvider = null;
+const pendingAskOptionsQueue = [];
 
 async function ask(
   question,
@@ -1584,10 +1600,12 @@ async function ask(
   uploadedDocumentSummary,
   preferredProvider,
 ) {
-  const effectiveDocSummary = uploadedDocumentSummary || pendingUploadedDocumentSummary || undefined;
-  pendingUploadedDocumentSummary = null;
-  const requestedPreferredProvider = preferredProvider || pendingPreferredProvider || undefined;
-  pendingPreferredProvider = null;
+  const queuedExtras = pendingAskOptionsQueue.shift() || {};
+  await ensureConversationBufferLoaded();
+  const effectiveDocSummary =
+    uploadedDocumentSummary || queuedExtras.uploadedDocumentSummary || undefined;
+  const requestedPreferredProvider =
+    preferredProvider || queuedExtras.preferredProvider || undefined;
 
   const { session } = await chrome.storage.local.get("session");
   const { lastBase, userApiKey, customBaseUrl, selectedProvider } = await chrome.storage.local.get([
@@ -1973,6 +1991,7 @@ function highlight(selector, title, description, options = {}) {
   let progress = reduce ? 1 : 0;
   let isRetracting = false;
   const startTime = performance.now();
+  let retractStartTime = 0;
   let frame = 0;
 
   const updatePositions = () => {
@@ -1981,6 +2000,11 @@ function highlight(selector, title, description, options = {}) {
       return;
     }
     const r = el.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0 && el.getClientRects().length === 0) {
+      ring.style.display = "none";
+      return;
+    }
+    ring.style.display = "block";
     const vw = window.innerWidth;
     const vh = window.innerHeight;
 
@@ -2002,7 +2026,7 @@ function highlight(selector, title, description, options = {}) {
     const midX = originX - (originX - targetX) * 0.5;
     const midY = Math.min(originY, targetY) - 28;
 
-    const t = isRetracting ? 1 - progress : progress;
+    const t = isRetracting ? Math.max(0, 1 - progress) : progress;
     const ease = 1 - Math.pow(1 - t, 3);
 
     const currentX =
@@ -2023,16 +2047,21 @@ function highlight(selector, title, description, options = {}) {
       `translate(${currentX.toFixed(2)}, ${currentY.toFixed(2)}) rotate(${angleDeg.toFixed(1)})`,
     );
 
-    // Position explanatory callout card
-    const cardWidth = 280;
+    // Position explanatory callout card clamped within viewport
+    const cardWidth = Math.min(280, Math.max(180, vw - 24));
     let cardLeft = r.left;
-    if (cardLeft + cardWidth > vw - 20) cardLeft = vw - cardWidth - 20;
+    if (cardLeft + cardWidth > vw - 16) cardLeft = vw - cardWidth - 16;
     card.style.left = `${Math.max(12, cardLeft)}px`;
 
+    const cardHeight = card.offsetHeight || 74;
     const belowPos = r.bottom + 14;
-    card.style.top = `${belowPos + 80 < vh ? belowPos : Math.max(12, r.top - 85)}px`;
+    const cardTop =
+      belowPos + cardHeight + 12 <= vh
+        ? belowPos
+        : Math.max(12, Math.min(vh - cardHeight - 12, r.top - cardHeight - 14));
+    card.style.top = `${cardTop}px`;
 
-    if (t >= 0.98) {
+    if (t >= 0.98 && !isRetracting) {
       ring.classList.add("pulse");
       card.classList.add("show");
     }
@@ -2055,11 +2084,10 @@ function highlight(selector, title, description, options = {}) {
   const tick = (now) => {
     if (cleanedUp) return;
     if (!reduce) {
-      const elapsed = now - startTime;
       if (!isRetracting) {
-        progress = Math.min(1, elapsed / 550);
+        progress = Math.min(1, (now - startTime) / 550);
       } else {
-        progress = Math.min(1, elapsed / 450);
+        progress = Math.min(1, (now - retractStartTime) / 450);
       }
     }
     updatePositions();
@@ -2070,6 +2098,7 @@ function highlight(selector, title, description, options = {}) {
 
   // Smooth retraction after 10 seconds (long enough to identify)
   setTimeout(() => {
+    retractStartTime = performance.now();
     isRetracting = true;
     ring.classList.remove("pulse");
     card.classList.remove("show");
@@ -2102,8 +2131,9 @@ async function clearHighlightOverlay() {
     return { ok: true };
   }
   const run = await runTabScript({
-    target: { tabId: tab.id },
+    target: { tabId: tab.id, allFrames: true },
     func: () => {
+      document.getElementById("ai-buddy-arm-overlay")?.remove();
       document.getElementById("ai-buddy-highlight-host")?.remove();
     },
     label: "clearHighlight",
@@ -2131,6 +2161,9 @@ async function smartFillForm(fields, options = {}) {
         errors: [],
         pendingSubmission: null,
       };
+      if (opts?.skipTopFrame && window === window.top) {
+        return { ok: false, skippedTopFrame: true, results };
+      }
 
       const SENSITIVE =
         /pass(?:word|wd)?|otp|\bpin\b|cvv|cvc|secret|token|ssn|aadhaar|credit.?card|debit.?card|card.?number/i;
@@ -2199,18 +2232,26 @@ async function smartFillForm(fields, options = {}) {
       const resolveEditableTarget = (el) => {
         if (!el) return null;
         if (isEditableEl(el)) return el;
+        // Resolve <label for="..."> directly instead of guessing other inputs in the form
+        if (el.tagName === "LABEL") {
+          if (el.htmlFor) {
+            const elRoot = el.getRootNode?.() || document;
+            const target = elRoot.getElementById?.(el.htmlFor) || document.getElementById(el.htmlFor);
+            return target && isEditableEl(target) ? target : null;
+          }
+          const nested = el.querySelector?.(
+            'textarea, input:not([type="hidden"]), [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], [role="textbox"], [role="searchbox"], [role="combobox"], select',
+          );
+          return nested || null;
+        }
         // Walk descendants (e.g., wrapper div around textarea/contenteditable like Google AI Studio prompt box)
         const inner = el.querySelector?.(
           'textarea, input:not([type="hidden"]), [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], [role="textbox"], [role="searchbox"], [role="combobox"], select',
         );
         if (inner) return inner;
-        // Walk parent / sibling placeholder overlays
-        const parentEditable = el.parentElement?.querySelector?.(
-          'textarea, input:not([type="hidden"]), [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], [role="textbox"], [role="searchbox"]',
-        );
-        if (parentEditable) return parentEditable;
+        // Walk local field-group container only (never an entire <form>)
         const containerEditable = el
-          .closest?.("form, [role='group'], .input-group, .field, .prompt-box, .composer")
+          .closest?.("[role='group'], .input-group, .field, .prompt-box, .composer")
           ?.querySelector?.(
             'textarea, input:not([type="hidden"]), [contenteditable="true"], [contenteditable=""], [role="textbox"]',
           );
@@ -2223,6 +2264,7 @@ async function smartFillForm(fields, options = {}) {
       );
 
       const getFieldIdentifiers = (el) => {
+        const elRoot = el.getRootNode?.() || document;
         const rawIdentifiers = [
           el.name,
           el.id,
@@ -2236,7 +2278,9 @@ async function smartFillForm(fields, options = {}) {
 
         if (el.id) {
           try {
-            const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+            const l =
+              elRoot.querySelector?.(`label[for="${CSS.escape(el.id)}"]`) ||
+              document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
             if (l?.innerText) rawIdentifiers.push(l.innerText);
           } catch {
             // ignore
@@ -2249,12 +2293,26 @@ async function smartFillForm(fields, options = {}) {
         if (
           prev &&
           (prev.tagName === "LABEL" || prev.tagName === "SPAN" || prev.tagName === "P") &&
-          prev.innerText
+          prev.innerText &&
+          (!prev.htmlFor || prev.htmlFor === el.id)
         ) {
           rawIdentifiers.push(prev.innerText);
         }
+
+        const isCheckOrRadioCtrl =
+          el.type === "checkbox" ||
+          el.type === "radio" ||
+          el.getAttribute?.("role") === "checkbox" ||
+          el.getAttribute?.("role") === "radio" ||
+          el.getAttribute?.("role") === "switch";
         let next = el.nextElementSibling;
-        if (next && (next.tagName === "LABEL" || next.tagName === "SPAN") && next.innerText) {
+        if (
+          next &&
+          (next.tagName === "LABEL" || next.tagName === "SPAN") &&
+          next.innerText &&
+          ((next.tagName === "LABEL" && next.htmlFor && next.htmlFor === el.id) ||
+            (isCheckOrRadioCtrl && (!next.htmlFor || next.htmlFor === el.id)))
+        ) {
           rawIdentifiers.push(next.innerText);
         }
         const parentText = el.parentElement?.getAttribute?.("aria-label");
@@ -2377,6 +2435,36 @@ async function smartFillForm(fields, options = {}) {
         password: ["pass", "passwd", "pwd"],
       };
 
+      const dispatchRealClick = (targetEl) => {
+        const r = targetEl.getBoundingClientRect();
+        const cx = Math.round(r.left + Math.max(1, r.width / 2));
+        const cy = Math.round(r.top + Math.max(1, r.height / 2));
+        const baseEv = {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX: cx,
+          clientY: cy,
+          screenX: cx,
+          screenY: cy,
+          button: 0,
+        };
+        const ptrEv = { ...baseEv, buttons: 1, pointerId: 1, pointerType: "mouse", isPrimary: true };
+        try {
+          targetEl.dispatchEvent(new PointerEvent("pointerover", ptrEv));
+          targetEl.dispatchEvent(new PointerEvent("pointerdown", ptrEv));
+        } catch {}
+        targetEl.dispatchEvent(new MouseEvent("mousedown", { ...baseEv, buttons: 1 }));
+        targetEl.focus?.();
+        try {
+          targetEl.dispatchEvent(new PointerEvent("pointerup", { ...ptrEv, buttons: 0 }));
+        } catch {}
+        targetEl.dispatchEvent(new MouseEvent("mouseup", { ...baseEv, buttons: 0 }));
+        targetEl.click();
+      };
+
+      const claimedElements = new Set();
+
       const findCandidateForKey = (key, explicitSelector) => {
         // 1. Explicit CSS selector override
         if (explicitSelector) {
@@ -2393,6 +2481,8 @@ async function smartFillForm(fields, options = {}) {
           const active = resolveEditableTarget(document.activeElement);
           if (active && active !== document.body && validateInteractability(active).ok) return active;
           const visibleInputs = elements.filter((el) => validateInteractability(el).ok);
+          const firstUnclaimed = visibleInputs.find((el) => !claimedElements.has(el));
+          if (firstUnclaimed) return firstUnclaimed;
           if (visibleInputs.length > 0) return visibleInputs[0];
           return null;
         }
@@ -2401,10 +2491,11 @@ async function smartFillForm(fields, options = {}) {
         if (!normKey) return null;
         const keyCandidates = [normKey, ...(FIELD_SYNONYMS[normKey] || [])].filter((k) => k.length > 0);
 
-        let bestEl = null;
-        let bestScore = 0;
+        let bestUnclaimedEl = null;
+        let bestUnclaimedScore = 0;
 
         for (const el of elements) {
+          if (claimedElements.has(el)) continue;
           const check = validateInteractability(el);
           if (!check.ok) continue;
 
@@ -2412,6 +2503,9 @@ async function smartFillForm(fields, options = {}) {
           let score = 0;
           for (const id of ids) {
             if (!id) continue;
+            if (normKey === "address" && /(?:email|mail|ip|mac|web|url)address/.test(id)) {
+              continue;
+            }
             if (id === normKey) {
               score = Math.max(score, 100);
             } else if (keyCandidates.includes(id)) {
@@ -2426,28 +2520,29 @@ async function smartFillForm(fields, options = {}) {
               }
             }
           }
-          if (score > bestScore) {
-            bestScore = score;
-            bestEl = el;
+          if (score > bestUnclaimedScore) {
+            bestUnclaimedScore = score;
+            bestUnclaimedEl = el;
           }
         }
+
+        if (bestUnclaimedEl) return bestUnclaimedEl;
 
         // Fallback: look for visible text/placeholder overlay element matching the key and resolve to nearby editable
-        if (!bestEl) {
-          const overlays = queryAllDeep("div, span, label, p").filter((node) => {
-            if (node.closest?.("#ai-buddy-arm-overlay")) return false;
-            const txt = normalize(node.innerText || node.getAttribute?.("placeholder") || "");
-            return txt && txt.length < 80 && keyCandidates.some((k) => k.length >= 3 && txt.includes(k));
-          });
-          for (const ov of overlays) {
-            const resolved = resolveEditableTarget(ov);
-            if (resolved && validateInteractability(resolved).ok) {
-              return resolved;
-            }
+        const overlays = queryAllDeep("div, span, label, p").filter((node) => {
+          if (node.closest?.("#ai-buddy-arm-overlay")) return false;
+          const txt = normalize(node.innerText || node.getAttribute?.("placeholder") || "");
+          if (normKey === "address" && /(?:email|mail|ip|mac|web|url)address/.test(txt)) return false;
+          return txt && txt.length < 80 && keyCandidates.some((k) => k.length >= 3 && txt.includes(k));
+        });
+        for (const ov of overlays) {
+          const resolved = resolveEditableTarget(ov);
+          if (resolved && validateInteractability(resolved).ok && !claimedElements.has(resolved)) {
+            return resolved;
           }
         }
 
-        return bestEl;
+        return null;
       };
 
       // Build ordered fill entries from either array (explicitPairs) or object (fieldsToFill)
@@ -2475,6 +2570,7 @@ async function smartFillForm(fields, options = {}) {
           results.skipped.push({ key, value: val, reason: "Field not found on active page" });
           continue;
         }
+        claimedElements.add(candidate);
 
         const check = validateInteractability(candidate);
         if (!check.ok) {
@@ -2511,7 +2607,13 @@ async function smartFillForm(fields, options = {}) {
           candidate.scrollIntoView({ behavior: "smooth", block: "center" });
           candidate.focus();
 
-          const strVal = String(val);
+          let strVal = String(val);
+          if (candidate.tagName === "INPUT" && candidate.type === "date") {
+            const dmy = strVal.trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+            if (dmy) {
+              strVal = `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
+            }
+          }
 
           if (candidate.tagName === "SELECT") {
             const normVal = normalize(strVal);
@@ -2535,19 +2637,57 @@ async function smartFillForm(fields, options = {}) {
             candidate.dispatchEvent(new Event("input", { bubbles: true }));
             candidate.dispatchEvent(new Event("change", { bubbles: true }));
           } else if (candidate.getAttribute?.("role") === "combobox" || candidate.getAttribute?.("role") === "listbox") {
-            candidate.click();
-            await new Promise((r) => setTimeout(r, 150));
-            const optionsList = queryAllDeep('[role="option"], [role="menuitem"], li');
+            const isComboInput = candidate.tagName === "INPUT" || candidate.tagName === "TEXTAREA";
+            if (isComboInput) {
+              const proto =
+                candidate.tagName === "TEXTAREA"
+                  ? window.HTMLTextAreaElement.prototype
+                  : window.HTMLInputElement.prototype;
+              const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+              if (nativeSetter) nativeSetter.call(candidate, strVal);
+              else candidate.value = strVal;
+              if (candidate._valueTracker) candidate._valueTracker.setValue("");
+              candidate.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+            }
+            dispatchRealClick(candidate);
+            const isOptVisible = (o) => {
+              const r = o.getBoundingClientRect();
+              const cs = window.getComputedStyle(o);
+              return (
+                (r.width > 0 || r.height > 0 || o.getClientRects().length > 0) &&
+                cs.display !== "none" &&
+                cs.visibility !== "hidden"
+              );
+            };
+            let roleOptions = [];
+            for (let poll = 0; poll < 6; poll++) {
+              await new Promise((r) => setTimeout(r, 60));
+              roleOptions = queryAllDeep('[role="option"]').filter(isOptVisible);
+              if (roleOptions.length > 0) break;
+            }
+            const allOptions =
+              roleOptions.length > 0
+                ? roleOptions
+                : queryAllDeep('[role="menuitem"], li').filter(isOptVisible);
             const normVal = normalize(strVal);
-            const optEl = optionsList.find((o) => {
-              const t = normalize(o.innerText || o.textContent || "");
-              return t === normVal || t.includes(normVal);
-            });
+            const optEl =
+              allOptions.find(
+                (o) =>
+                  normalize(o.innerText || o.textContent || o.getAttribute?.("data-value") || "") === normVal,
+              ) ||
+              allOptions.find((o) =>
+                normalize(o.innerText || o.textContent || o.getAttribute?.("data-value") || "").includes(normVal),
+              );
             if (optEl) {
-              optEl.click();
-            } else {
+              optEl.scrollIntoView?.({ block: "nearest" });
+              dispatchRealClick(optEl);
+              await new Promise((r) => setTimeout(r, 80));
+            } else if (!isComboInput) {
               candidate.innerText = strVal;
               candidate.dispatchEvent(new InputEvent("input", { bubbles: true, data: strVal }));
+            }
+            if (isComboInput && candidate.value !== strVal) {
+              candidate.dispatchEvent(new Event("change", { bubbles: true }));
             }
           } else if (isCheckbox) {
             const desired =
@@ -2559,7 +2699,7 @@ async function smartFillForm(fields, options = {}) {
                 ? candidate.checked
                 : candidate.getAttribute?.("aria-checked") === "true";
             if (currentlyChecked !== desired) {
-              candidate.click();
+              dispatchRealClick(candidate);
             }
             if (candidate.type === "checkbox" && candidate.checked !== desired) {
               candidate.checked = desired;
@@ -2568,7 +2708,7 @@ async function smartFillForm(fields, options = {}) {
             }
           } else if (isRadio) {
             if (!candidate.checked) {
-              candidate.click();
+              dispatchRealClick(candidate);
             }
             if (candidate.type === "radio" && !candidate.checked) {
               candidate.checked = true;
@@ -2624,8 +2764,6 @@ async function smartFillForm(fields, options = {}) {
             if (candidate._valueTracker) {
               candidate._valueTracker.setValue("");
             }
-            candidate.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
-            candidate.dispatchEvent(new Event("change", { bubbles: true }));
             try {
               candidate.dispatchEvent(
                 new InputEvent("input", {
@@ -2635,7 +2773,10 @@ async function smartFillForm(fields, options = {}) {
                   data: strVal,
                 }),
               );
-            } catch {}
+            } catch {
+              candidate.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+            }
+            candidate.dispatchEvent(new Event("change", { bubbles: true }));
             candidate.dispatchEvent(new Event("blur", { bubbles: true }));
           }
 
@@ -2668,6 +2809,16 @@ async function smartFillForm(fields, options = {}) {
               normalize(candidate.value) === normalize(strVal) ||
               normalize(selText).includes(normalize(strVal)) ||
               candidate.value === strVal;
+          } else if (
+            candidate.getAttribute?.("role") === "combobox" ||
+            candidate.getAttribute?.("role") === "listbox"
+          ) {
+            const comboVal =
+              candidate.value || candidate.innerText || candidate.textContent || "";
+            verified =
+              comboVal === strVal ||
+              comboVal.includes(strVal) ||
+              normalize(comboVal).includes(normalize(strVal));
           } else {
             const verifiedValue = isCe
               ? candidate.innerText || candidate.textContent || ""
@@ -2754,25 +2905,81 @@ async function smartFillForm(fields, options = {}) {
     message: mainRun.error || "Form filling execution failed.",
   };
 
-  // Iframe fallback: if top frame failed or filled/preserved nothing, check subframes
+  // Iframe fallback: if top frame failed, filled/preserved nothing, OR left fields not found, check subframes
+  const topSkippedMissing = (mainResult.results?.skipped || []).filter(
+    (s) => s.reason === "Field not found on active page",
+  );
+  const topFilledCount = mainResult.results?.filled?.length || 0;
+  const topPreservedCount = mainResult.results?.preserved?.length || 0;
+
   if (
     !mainResult.ok ||
-    ((mainResult.results?.filled?.length || 0) === 0 &&
-      (mainResult.results?.preserved?.length || 0) === 0)
+    (topFilledCount === 0 && topPreservedCount === 0) ||
+    topSkippedMissing.length > 0
   ) {
+    let subFieldsArg = fields;
+    let subOptionsArg = options;
+
+    if (mainResult.ok && (topFilledCount > 0 || topPreservedCount > 0) && topSkippedMissing.length > 0) {
+      const missingKeySet = new Set(topSkippedMissing.map((s) => s.key));
+      if (Array.isArray(options?.explicitPairs)) {
+        const filteredPairs = options.explicitPairs.filter((p) =>
+          missingKeySet.has(p.target || p.key || "__CURRENT__"),
+        );
+        subOptionsArg = { ...options, explicitPairs: filteredPairs };
+      } else if (fields && typeof fields === "object") {
+        const filteredFields = {};
+        for (const [k, v] of Object.entries(fields)) {
+          if (missingKeySet.has(k)) filteredFields[k] = v;
+        }
+        subFieldsArg = filteredFields;
+      }
+    }
+
+    subOptionsArg = { ...(subOptionsArg || {}), skipTopFrame: true };
+
     const subRun = await runTabScript({
       target: { tabId: tab.id, allFrames: true },
       func: smartFillFrameFunc,
-      args: [fields, options],
+      args: [subFieldsArg, subOptionsArg],
       label: "smartFill:allFrames",
     });
-    const subMatch = (subRun.results || []).find(
+
+    const subMatches = (subRun.results || []).filter(
       (r) =>
         r.frameId !== 0 &&
         r.result?.ok &&
         ((r.result.results?.filled?.length || 0) > 0 || (r.result.results?.preserved?.length || 0) > 0),
     );
-    if (subMatch?.result) return subMatch.result;
+
+    if (subMatches.length > 0) {
+      if (!mainResult.ok || (topFilledCount === 0 && topPreservedCount === 0)) {
+        return subMatches[0].result;
+      }
+      // Merge subframe results into top-frame result
+      const merged = mainResult.results;
+      const resolvedKeys = new Set();
+      for (const sm of subMatches) {
+        const sr = sm.result.results;
+        for (const f of sr.filled || []) {
+          merged.filled.push(f);
+          resolvedKeys.add(f.key);
+        }
+        for (const p of sr.preserved || []) {
+          merged.preserved.push(p);
+          resolvedKeys.add(p.key);
+        }
+        for (const e of sr.errors || []) {
+          merged.errors.push(e);
+        }
+        if (!merged.pendingSubmission && sr.pendingSubmission) {
+          merged.pendingSubmission = sr.pendingSubmission;
+        }
+      }
+      merged.skipped = merged.skipped.filter(
+        (s) => !(s.reason === "Field not found on active page" && resolvedKeys.has(s.key)),
+      );
+    }
   }
 
   return mainResult;
@@ -2804,14 +3011,22 @@ async function findContentOnPage(query, options = {}) {
       };
 
       const getSelector = (el) => {
-        if (el.id && document.querySelectorAll(`#${CSS.escape(el.id)}`).length === 1) {
+        const elRoot = el.getRootNode?.() || document;
+        const safeQsaCount = (root, s) => {
+          try {
+            return (root.querySelectorAll ? root.querySelectorAll(s) : document.querySelectorAll(s)).length;
+          } catch {
+            return 0;
+          }
+        };
+        if (el.id && safeQsaCount(elRoot, `#${CSS.escape(el.id)}`) === 1) {
           return `#${CSS.escape(el.id)}`;
         }
         const parts = [];
         let cur = el;
-        while (cur && cur.nodeType === 1 && parts.length < 5) {
+        while (cur && cur.nodeType === 1 && cur !== elRoot && parts.length < 5) {
           let p = cur.tagName.toLowerCase();
-          if (cur.id && document.querySelectorAll(`#${CSS.escape(cur.id)}`).length === 1) {
+          if (cur.id && safeQsaCount(elRoot, `#${CSS.escape(cur.id)}`) === 1) {
             parts.unshift(`#${CSS.escape(cur.id)}`);
             break;
           }
@@ -2886,24 +3101,38 @@ async function findContentOnPage(query, options = {}) {
 
       const effectiveQuery = rawTokens.length > 0 ? rawTokens.join(" ") : q;
 
-      const candidates = queryAllDeep(
+      const tokenMatchesText = (text, tok) => {
+        if (text.includes(tok)) return true;
+        if (tok.endsWith("s") && text.includes(tok.slice(0, -1))) return true;
+        if (!tok.endsWith("s") && text.includes(`${tok}s`)) return true;
+        return false;
+      };
+
+      const isFullMatch = (text) => {
+        if (text.includes(effectiveQuery) || text.includes(q)) return true;
+        if (rawTokens.length > 1) {
+          return rawTokens.every((tok) => tokenMatchesText(text, tok));
+        }
+        return rawTokens.length === 1 && tokenMatchesText(text, rawTokens[0]);
+      };
+
+      const rawCandidates = queryAllDeep(
         "input, textarea, select, [contenteditable='true'], [contenteditable=''], [role=textbox], [role=searchbox], [role=combobox], [role=checkbox], [role=radio], button, a, [role=button], [role=tab], [role=link], label, p, span, h1, h2, h3, h4, h5, h6, li, td, th, [role=cell], [role=row], div.badge, div.tag, div.chip, div[aria-label], div[data-placeholder]",
       ).filter((el) => {
         if (!isVisible(el)) return false;
         if (el.closest?.("#ai-buddy-arm-overlay")) return false;
         const text = getElementSearchText(el);
         if (!text) return false;
-        if (text.includes(effectiveQuery) || text.includes(q)) return true;
+        if (isFullMatch(text)) return true;
         if (rawTokens.length > 0) {
-          return rawTokens.some((tok) => {
-            if (text.includes(tok)) return true;
-            if (tok.endsWith("s") && text.includes(tok.slice(0, -1))) return true;
-            if (!tok.endsWith("s") && text.includes(`${tok}s`)) return true;
-            return false;
-          });
+          return rawTokens.some((tok) => tokenMatchesText(text, tok));
         }
         return false;
       });
+
+      const fullMatches = rawCandidates.filter((el) => isFullMatch(getElementSearchText(el)));
+      const allTokensMatched = fullMatches.length > 0;
+      const candidates = allTokensMatched ? fullMatches : rawCandidates;
 
       // Keep specific interactive/form/leaf nodes instead of huge ancestor wrappers
       const leafCandidates = candidates.filter((el) => {
@@ -2926,9 +3155,10 @@ async function findContentOnPage(query, options = {}) {
         const text = getElementSearchText(el);
         let s = 0;
         if (text === effectiveQuery || text === q) s += 100;
+        if (text.includes(effectiveQuery) || text.includes(q)) s += 50;
         if (text.startsWith(effectiveQuery)) s += 30;
         for (const tok of rawTokens) {
-          if (text.includes(tok)) s += 15;
+          if (tokenMatchesText(text, tok)) s += 15;
         }
         if (["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A"].includes(el.tagName)) s += 20;
         if (["textbox", "button", "tab", "combobox"].includes(el.getAttribute?.("role"))) s += 15;
@@ -3016,6 +3246,8 @@ async function findContentOnPage(query, options = {}) {
         ok: true,
         query: searchQuery,
         totalMatches: matches.length,
+        allTokensMatched,
+        topScore: leafCandidates[0] ? scoreEl(leafCandidates[0]) : 0,
         matches,
         targetMatch,
         firstSelector: targetMatch?.selector,
@@ -3037,23 +3269,38 @@ async function findContentOnPage(query, options = {}) {
   };
   let targetFrameId = 0;
 
-  if (!result.ok || result.totalMatches === 0) {
+  if (!result.ok || result.totalMatches === 0 || !result.allTokensMatched) {
     const subRun = await runTabScript({
       target: { tabId: tab.id, allFrames: true },
       func: findFrameFunc,
       args: [query, options],
       label: "findContent:allFrames",
     });
-    const subHit = (subRun.results || []).find(
+    const subHits = (subRun.results || []).filter(
       (r) => r.frameId !== 0 && r.result?.ok && r.result.totalMatches > 0,
     );
-    if (subHit?.result) {
-      result = subHit.result;
-      targetFrameId = subHit.frameId;
+    subHits.sort((a, b) => {
+      const aFull = a.result.allTokensMatched ? 1 : 0;
+      const bFull = b.result.allTokensMatched ? 1 : 0;
+      if (aFull !== bFull) return bFull - aFull;
+      return (b.result.topScore || 0) - (a.result.topScore || 0);
+    });
+    const bestSub = subHits[0];
+    if (
+      bestSub?.result &&
+      (!result.ok ||
+        result.totalMatches === 0 ||
+        (bestSub.result.allTokensMatched && !result.allTokensMatched) ||
+        (bestSub.result.allTokensMatched === result.allTokensMatched &&
+          (bestSub.result.topScore || 0) > (result.topScore || 0)))
+    ) {
+      result = bestSub.result;
+      targetFrameId = bestSub.frameId;
     }
   }
 
   if (result.ok && result.firstSelector && options?.highlight !== false) {
+    await clearHighlightOverlay();
     if (targetFrameId === 0) {
       await highlightElement(
         result.firstSelector,
@@ -3086,6 +3333,9 @@ async function executeAction(action, selector, value, options = {}) {
   }
 
   const executeFrameFunc = async (act, sel, val, opts) => {
+      if (opts?.skipTopFrame && window === window.top) {
+        return { ok: false, skippedTopFrame: true };
+      }
       const normalize = (t) => (t || "").replace(/\s+/g, " ").trim();
       const SENSITIVE =
         /pass(?:word|wd)?|otp|\bpin\b|cvv|cvc|secret|token|ssn|aadhaar|credit.?card|debit.?card|card.?number/i;
@@ -3134,6 +3384,48 @@ async function executeAction(action, selector, value, options = {}) {
         );
       };
 
+      const dispatchRealClick = (targetEl) => {
+        const r = targetEl.getBoundingClientRect();
+        const cx = Math.round(r.left + Math.max(1, r.width / 2));
+        const cy = Math.round(r.top + Math.max(1, r.height / 2));
+        const baseEv = {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX: cx,
+          clientY: cy,
+          screenX: cx,
+          screenY: cy,
+          button: 0,
+        };
+        const ptrEv = { ...baseEv, buttons: 1, pointerId: 1, pointerType: "mouse", isPrimary: true };
+        try {
+          targetEl.dispatchEvent(new PointerEvent("pointerover", ptrEv));
+          targetEl.dispatchEvent(new PointerEvent("pointerdown", ptrEv));
+        } catch {}
+        targetEl.dispatchEvent(new MouseEvent("mousedown", { ...baseEv, buttons: 1 }));
+        targetEl.focus?.();
+        try {
+          targetEl.dispatchEvent(new PointerEvent("pointerup", { ...ptrEv, buttons: 0 }));
+        } catch {}
+        targetEl.dispatchEvent(new MouseEvent("mouseup", { ...baseEv, buttons: 0 }));
+        targetEl.click();
+      };
+
+      const waitForScrollSettle = async (readPos, maxMs = 660) => {
+        let last = readPos();
+        const started = Date.now();
+        await new Promise((r) => setTimeout(r, 120));
+        while (Date.now() - started < maxMs) {
+          const cur = readPos();
+          if (Math.abs(cur.x - last.x) < 1 && Math.abs(cur.y - last.y) < 1) {
+            return;
+          }
+          last = cur;
+          await new Promise((r) => setTimeout(r, 60));
+        }
+      };
+
       // --- 1. SCROLL ACTION (UP, DOWN, LEFT, RIGHT, TOP, BOTTOM, TO_ELEMENT) ---
       if (
         act === "scroll" ||
@@ -3156,16 +3448,52 @@ async function executeAction(action, selector, value, options = {}) {
         if (!targetEl && (direction === "to_element" || opts?.targetText)) {
           const qText = normalize(opts?.targetText || val || "").toLowerCase();
           if (qText) {
-            const candidates = queryAllDeep(
-              "h1, h2, h3, h4, h5, h6, section, footer, header, nav, main, form, button, a, input, textarea, select, label, p, span, div",
-            ).filter(isVisible);
-            targetEl =
-              candidates.find((c) => {
-                const t = normalize(
-                  c.innerText || c.getAttribute?.("aria-label") || c.getAttribute?.("placeholder") || c.id || "",
-                ).toLowerCase();
-                return t === qText || (t.includes(qText) && t.length < 120);
-              }) || null;
+            const getScrollText = (c) =>
+              normalize(
+                c.innerText ||
+                  c.getAttribute?.("aria-label") ||
+                  c.getAttribute?.("placeholder") ||
+                  c.id ||
+                  "",
+              ).toLowerCase();
+
+            const rawMatches = queryAllDeep(
+              "h1, h2, h3, h4, h5, h6, button, a, input, textarea, select, label, p, span, li, section, footer, header, nav, form, main, div",
+            ).filter((c) => {
+              if (!isVisible(c)) return false;
+              const t = getScrollText(c);
+              return t && (t === qText || (t.includes(qText) && t.length < 240));
+            });
+
+            // Exclude wrapper containers that enclose a more specific matching descendant
+            const specificMatches = rawMatches.filter(
+              (c) => !rawMatches.some((other) => other !== c && c.contains(other)),
+            );
+            const pool = specificMatches.length > 0 ? specificMatches : rawMatches;
+
+            const scoreScrollTarget = (c) => {
+              const t = getScrollText(c);
+              let s = 0;
+              if (t === qText) s += 100;
+              else if (t.startsWith(qText)) s += 60;
+              else if (t.includes(qText)) s += 30;
+              if (["H1", "H2", "H3", "H4", "H5", "H6", "BUTTON", "A", "INPUT", "LABEL"].includes(c.tagName)) {
+                s += 35;
+              }
+              const cs = window.getComputedStyle(c);
+              if (
+                (cs.overflowY === "auto" || cs.overflowY === "scroll") &&
+                c.scrollHeight > c.clientHeight + 20 &&
+                c.children.length > 0
+              ) {
+                s -= 80;
+              }
+              s -= Math.min(40, Math.floor(t.length / 8));
+              return s;
+            };
+
+            pool.sort((a, b) => scoreScrollTarget(b) - scoreScrollTarget(a));
+            targetEl = pool[0] || null;
           }
           if (!targetEl && direction === "to_element") {
             return {
@@ -3178,81 +3506,130 @@ async function executeAction(action, selector, value, options = {}) {
 
         if (targetEl) {
           const beforeTop = targetEl.getBoundingClientRect().top;
+          const beforeWinY = window.scrollY || document.documentElement.scrollTop || 0;
+          let scrollParent = targetEl.parentElement;
+          while (scrollParent && scrollParent !== document.body && scrollParent !== document.documentElement) {
+            const cs = window.getComputedStyle(scrollParent);
+            if (
+              (cs.overflowY === "auto" || cs.overflowY === "scroll") &&
+              scrollParent.scrollHeight > scrollParent.clientHeight + 20
+            ) {
+              break;
+            }
+            scrollParent = scrollParent.parentElement;
+          }
+          const hasScrollParent =
+            scrollParent &&
+            scrollParent !== document.body &&
+            scrollParent !== document.documentElement;
+          const beforeParentY = hasScrollParent ? scrollParent.scrollTop : 0;
+
+          if (hasScrollParent) {
+            const elRect = targetEl.getBoundingClientRect();
+            const pRect = scrollParent.getBoundingClientRect();
+            scrollParent.scrollBy({
+              top: elRect.top - pRect.top - scrollParent.clientHeight / 2 + elRect.height / 2,
+              behavior: "smooth",
+            });
+          }
           targetEl.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
-          await new Promise((r) => setTimeout(r, 320));
+          await new Promise((r) => setTimeout(r, 420));
           const afterTop = targetEl.getBoundingClientRect().top;
+          const afterWinY = window.scrollY || document.documentElement.scrollTop || 0;
+          const afterParentY = hasScrollParent ? scrollParent.scrollTop : 0;
+          const movedPx = Math.round(
+            Math.max(
+              Math.abs(afterTop - beforeTop),
+              Math.abs(afterWinY - beforeWinY),
+              Math.abs(afterParentY - beforeParentY),
+            ),
+          );
           return {
             ok: true,
             action: "scroll",
             direction: "to_element",
-            movedPx: Math.round(Math.abs(afterTop - beforeTop)),
+            movedPx,
             message: `Scrolled to "${normalize(targetEl.innerText || targetEl.tagName).slice(0, 40)}" successfully.`,
           };
         }
 
         let container = opts?.containerSelector ? queryDeepSelector(opts.containerSelector) : null;
 
-        // Auto-detect primary scrollable container in SPAs when window itself is not scrollable
-        if (!container) {
-          const docScrollableY =
-            (document.documentElement.scrollHeight || 0) > window.innerHeight + 20;
-          const docScrollableX =
-            (document.documentElement.scrollWidth || 0) > window.innerWidth + 20;
-          const wantHoriz = direction === "left" || direction === "right";
-
-          if ((wantHoriz && !docScrollableX) || (!wantHoriz && !docScrollableY)) {
-            const scrollCands = queryAllDeep(
-              "main, [role='main'], div, section, ul, table, tbody",
-            ).filter((el) => {
-              if (!isVisible(el)) return false;
-              const cs = window.getComputedStyle(el);
-              if (wantHoriz) {
-                return (
-                  (cs.overflowX === "auto" || cs.overflowX === "scroll") &&
-                  el.scrollWidth > el.clientWidth + 20
-                );
-              }
+        const findBestScrollContainer = (wantHoriz) => {
+          const scrollCands = queryAllDeep(
+            "main, [role='main'], div, section, ul, table, tbody",
+          ).filter((el) => {
+            if (!isVisible(el) || el === document.body || el === document.documentElement) return false;
+            const cs = window.getComputedStyle(el);
+            if (wantHoriz) {
               return (
-                (cs.overflowY === "auto" || cs.overflowY === "scroll") &&
-                el.scrollHeight > el.clientHeight + 20
+                (cs.overflowX === "auto" || cs.overflowX === "scroll") &&
+                el.scrollWidth > el.clientWidth + 20
               );
-            });
-            scrollCands.sort(
-              (a, b) =>
-                b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight,
+            }
+            return (
+              (cs.overflowY === "auto" || cs.overflowY === "scroll") &&
+              el.scrollHeight > el.clientHeight + 20
             );
-            if (scrollCands[0]) container = scrollCands[0];
+          });
+          scrollCands.sort(
+            (a, b) =>
+              b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight,
+          );
+          return scrollCands[0] || null;
+        };
+
+        const wantHoriz = direction === "left" || direction === "right";
+        // Auto-detect primary scrollable container in SPAs when window is locked (overflow:hidden) or not scrollable
+        if (!container) {
+          const bodyCs = document.body ? window.getComputedStyle(document.body) : null;
+          const docCs = window.getComputedStyle(document.documentElement);
+          const docLockedY =
+            bodyCs?.overflowY === "hidden" ||
+            docCs.overflowY === "hidden" ||
+            (document.documentElement.scrollHeight || 0) <= window.innerHeight + 20;
+          const docLockedX =
+            bodyCs?.overflowX === "hidden" ||
+            docCs.overflowX === "hidden" ||
+            (document.documentElement.scrollWidth || 0) <= window.innerWidth + 20;
+
+          if ((wantHoriz && docLockedX) || (!wantHoriz && docLockedY)) {
+            container = findBestScrollContainer(wantHoriz);
           }
         }
 
-        if (container) {
-          const beforeY = container.scrollTop;
-          const beforeX = container.scrollLeft;
-          if (direction === "top") container.scrollTo({ top: 0, behavior: "smooth" });
-          else if (direction === "bottom") container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
-          else if (direction === "up") container.scrollBy({ top: -amount, behavior: "smooth" });
-          else if (direction === "left") container.scrollBy({ left: -amount, behavior: "smooth" });
-          else if (direction === "right") container.scrollBy({ left: amount, behavior: "smooth" });
-          else container.scrollBy({ top: amount, behavior: "smooth" });
+        const scrollContainerObj = async (c) => {
+          const beforeY = c.scrollTop;
+          const beforeX = c.scrollLeft;
+          if (direction === "top") c.scrollTo({ top: 0, behavior: "smooth" });
+          else if (direction === "bottom") c.scrollTo({ top: c.scrollHeight, behavior: "smooth" });
+          else if (direction === "up") c.scrollBy({ top: -amount, behavior: "smooth" });
+          else if (direction === "left") c.scrollBy({ left: -amount, behavior: "smooth" });
+          else if (direction === "right") c.scrollBy({ left: amount, behavior: "smooth" });
+          else c.scrollBy({ top: amount, behavior: "smooth" });
 
-          await new Promise((r) => setTimeout(r, 320));
+          await waitForScrollSettle(() => ({ x: c.scrollLeft, y: c.scrollTop }));
           const movedPx = Math.round(
             Math.max(
-              Math.abs(container.scrollTop - beforeY),
-              Math.abs(container.scrollLeft - beforeX),
+              Math.abs(c.scrollTop - beforeY),
+              Math.abs(c.scrollLeft - beforeX),
             ),
           );
           const hasMore =
-            container.scrollHeight > container.scrollTop + container.clientHeight + 20;
+            c.scrollHeight > c.scrollTop + c.clientHeight + 20;
           return {
             ok: true,
             action: "scroll",
-            container: container.tagName.toLowerCase(),
+            container: c.tagName.toLowerCase(),
             direction,
             movedPx,
             hasMoreBelow: hasMore,
-            message: `Scrolled container (${container.tagName.toLowerCase()}) ${direction}${movedPx ? ` (${movedPx}px)` : ""}.`,
+            message: `Scrolled container (${c.tagName.toLowerCase()}) ${direction}${movedPx ? ` (${movedPx}px)` : ""}.`,
           };
+        };
+
+        if (container) {
+          return await scrollContainerObj(container);
         }
 
         // Window scroll
@@ -3265,13 +3642,25 @@ async function executeAction(action, selector, value, options = {}) {
         else if (direction === "right") window.scrollBy({ left: amount, behavior: "smooth" });
         else window.scrollBy({ top: amount, behavior: "smooth" });
 
-        await new Promise((r) => setTimeout(r, 320));
+        await waitForScrollSettle(() => ({
+          x: window.scrollX || document.documentElement.scrollLeft || 0,
+          y: window.scrollY || document.documentElement.scrollTop || 0,
+        }));
 
         const scrollH = document.documentElement.scrollHeight || document.body.scrollHeight || 0;
         const scrollT = window.scrollY || document.documentElement.scrollTop || 0;
         const scrollL = window.scrollX || document.documentElement.scrollLeft || 0;
         const clientH = window.innerHeight || document.documentElement.clientHeight || 0;
         const movedPx = Math.round(Math.max(Math.abs(scrollT - beforeY), Math.abs(scrollL - beforeX)));
+
+        // Runtime fallback: if window barely moved (0px) and an inner scrollable container exists, scroll that container
+        if (movedPx === 0) {
+          const fallbackContainer = findBestScrollContainer(wantHoriz);
+          if (fallbackContainer) {
+            return await scrollContainerObj(fallbackContainer);
+          }
+        }
+
         const hasMore = scrollH > scrollT + clientH + 40;
 
         return {
@@ -3475,36 +3864,42 @@ async function executeAction(action, selector, value, options = {}) {
         const ariaCheckedBefore = el.getAttribute?.("aria-checked");
         const ariaSelectedBefore = el.getAttribute?.("aria-selected");
         const ariaExpandedBefore = el.getAttribute?.("aria-expanded");
-        const dialogsBefore = document.querySelectorAll(
-          'dialog[open], [role="dialog"], .modal.show, .modal-open',
-        ).length;
+        const dialogSelector = 'dialog[open], [role="dialog"], [role="alertdialog"], .modal.show, .modal-open';
+        const dialogsBefore = queryAllDeep(dialogSelector).filter(isVisible).length;
 
         el.scrollIntoView({ behavior: "smooth", block: "center" });
 
-        const optsEv = { bubbles: true, cancelable: true, view: window };
-        try {
-          el.dispatchEvent(new PointerEvent("pointerdown", optsEv));
-        } catch {}
-        el.dispatchEvent(new MouseEvent("mousedown", optsEv));
-        el.focus?.();
-        try {
-          el.dispatchEvent(new PointerEvent("pointerup", optsEv));
-        } catch {}
-        el.dispatchEvent(new MouseEvent("mouseup", optsEv));
-        el.click();
-
-        if (
-          (act === "submit" || act === "click_submit") &&
-          el.form &&
-          typeof el.form.requestSubmit === "function"
-        ) {
-          try {
-            el.form.requestSubmit();
-          } catch {}
+        let formSubmittedByClick = false;
+        const targetForm = el.form || el.closest?.("form");
+        const onFormSubmit = () => {
+          formSubmittedByClick = true;
+        };
+        if (targetForm && (act === "submit" || act === "click_submit")) {
+          targetForm.addEventListener("submit", onFormSubmit, { once: true });
         }
 
-        // Wait briefly for SPA state change / navigation / modal
-        await new Promise((r) => setTimeout(r, 250));
+        dispatchRealClick(el);
+
+        if (targetForm && (act === "submit" || act === "click_submit")) {
+          targetForm.removeEventListener("submit", onFormSubmit);
+          if (!formSubmittedByClick && typeof targetForm.requestSubmit === "function") {
+            try {
+              targetForm.requestSubmit();
+            } catch {}
+          }
+        }
+
+        // Wait briefly for SPA state change / navigation / modal (resolve immediately if full-page navigation starts)
+        await new Promise((r) => {
+          const done = () => {
+            window.removeEventListener("pagehide", done);
+            window.removeEventListener("beforeunload", done);
+            r();
+          };
+          window.addEventListener("pagehide", done, { once: true });
+          window.addEventListener("beforeunload", done, { once: true });
+          setTimeout(done, 250);
+        });
 
         const clickedText = normalize(
           el.innerText || el.value || el.getAttribute?.("aria-label") || el.tagName,
@@ -3514,9 +3909,7 @@ async function executeAction(action, selector, value, options = {}) {
         if (window.location.href !== urlBefore) {
           stateChange = "navigated";
         } else {
-          const dialogsAfter = document.querySelectorAll(
-            'dialog[open], [role="dialog"], .modal.show, .modal-open',
-          ).length;
+          const dialogsAfter = queryAllDeep(dialogSelector).filter(isVisible).length;
           if (dialogsAfter > dialogsBefore) {
             stateChange = "modal_opened";
           } else if (
@@ -3532,13 +3925,18 @@ async function executeAction(action, selector, value, options = {}) {
           }
         }
 
+        const isNowChecked =
+          typeof el.checked === "boolean"
+            ? el.checked
+            : el.getAttribute?.("aria-checked") === "true";
+
         let outcomeMsg = `Successfully clicked "${clickedText}".`;
         if (stateChange === "navigated") {
           outcomeMsg += ` Navigated to ${window.location.pathname}.`;
         } else if (stateChange === "modal_opened") {
           outcomeMsg += " Modal dialog appeared.";
         } else if (stateChange === "toggled") {
-          outcomeMsg += ` State changed to ${el.checked ? "checked" : "unchecked"}.`;
+          outcomeMsg += ` State changed to ${isNowChecked ? "checked" : "unchecked"}.`;
         } else if (stateChange === "selected") {
           outcomeMsg += " Selection updated.";
         }
@@ -3709,7 +4107,7 @@ async function executeAction(action, selector, value, options = {}) {
 
       // --- 5. SELECT / DROPDOWN ACTION ---
       if (act === "select") {
-        const strVal = String(val || opts?.text || "");
+        let desiredValue = String(val || opts?.text || "");
         let el = sel ? queryDeepSelector(sel) : null;
         if (!el && opts?.targetField) {
           const tf = opts.targetField.toLowerCase();
@@ -3722,32 +4120,58 @@ async function executeAction(action, selector, value, options = {}) {
             const id = `${s.id || ""} ${s.name || ""} ${s.getAttribute?.("aria-label") || ""} ${labelTxt}`.toLowerCase();
             return id.includes(tf);
           });
-        }
-        if (!el && strVal) {
-          const target = strVal.toLowerCase();
-          const selects = queryAllDeep("select, [role=listbox], [role=combobox]").filter(isVisible);
-          el = selects.find((s) => {
-            if (s.tagName === "SELECT") {
-              return [...s.options].some((o) => o.text.toLowerCase().includes(target) || o.value.toLowerCase() === target);
+          // Fallback for multi-word option like "Pro Plan select karo" where word 0 wasn't a field name
+          if (!el && desiredValue) {
+            const combinedPhrase = `${opts.targetField} ${desiredValue}`.trim().toLowerCase();
+            const phraseMatch = selects.find((s) => {
+              if (s.tagName === "SELECT") {
+                return [...s.options].some(
+                  (o) => o.text.toLowerCase().includes(combinedPhrase) || o.value.toLowerCase() === combinedPhrase,
+                );
+              }
+              return false;
+            });
+            if (phraseMatch) {
+              el = phraseMatch;
+              desiredValue = `${opts.targetField} ${desiredValue}`.trim();
             }
-            const id = (s.id || s.name || s.getAttribute?.("aria-label") || "").toLowerCase();
-            return id.includes(target);
-          });
+          }
         }
-        if (!el) return { ok: false, message: `Target dropdown matching "${opts?.targetField || strVal}" was not found on this page.` };
+        if (!el && desiredValue) {
+          const searchCandidates = [
+            opts?.targetField ? `${opts.targetField} ${desiredValue}`.trim() : "",
+            desiredValue,
+          ].filter(Boolean);
+          const selects = queryAllDeep("select, [role=listbox], [role=combobox]").filter(isVisible);
+          for (const candText of searchCandidates) {
+            const target = candText.toLowerCase();
+            el = selects.find((s) => {
+              if (s.tagName === "SELECT") {
+                return [...s.options].some((o) => o.text.toLowerCase().includes(target) || o.value.toLowerCase() === target);
+              }
+              const id = (s.id || s.name || s.getAttribute?.("aria-label") || "").toLowerCase();
+              return id.includes(target);
+            });
+            if (el) {
+              desiredValue = candText;
+              break;
+            }
+          }
+        }
+        if (!el) return { ok: false, message: `Target dropdown matching "${opts?.targetField || desiredValue}" was not found on this page.` };
 
         el.scrollIntoView({ behavior: "smooth", block: "center" });
         el.focus();
 
         let verified = false;
-        let selectedLabel = strVal;
+        let selectedLabel = desiredValue;
 
         if (el.tagName === "SELECT") {
           const opt = [...el.options].find(
             (o) =>
-              o.value.toLowerCase() === strVal.toLowerCase() ||
-              o.text.toLowerCase() === strVal.toLowerCase() ||
-              o.text.toLowerCase().includes(strVal.toLowerCase()),
+              o.value.toLowerCase() === desiredValue.toLowerCase() ||
+              o.text.toLowerCase() === desiredValue.toLowerCase() ||
+              o.text.toLowerCase().includes(desiredValue.toLowerCase()),
           );
           if (opt) {
             const nativeSelectSetter = Object.getOwnPropertyDescriptor(
@@ -3763,13 +4187,26 @@ async function executeAction(action, selector, value, options = {}) {
           el.dispatchEvent(new Event("input", { bubbles: true }));
           el.dispatchEvent(new Event("change", { bubbles: true }));
         } else {
-          el.click();
-          await new Promise((r) => setTimeout(r, 150));
-          const optEl = queryAllDeep('[role="option"], [role="menuitem"], li').find((o) =>
-            normalize(o.innerText || o.textContent || "").toLowerCase().includes(strVal.toLowerCase()),
-          );
+          dispatchRealClick(el);
+          let roleOpts = [];
+          for (let poll = 0; poll < 6; poll++) {
+            await new Promise((r) => setTimeout(r, 60));
+            roleOpts = queryAllDeep('[role="option"]').filter(isVisible);
+            if (roleOpts.length > 0) break;
+          }
+          const optsPool = roleOpts.length > 0 ? roleOpts : queryAllDeep('[role="menuitem"], li').filter(isVisible);
+          const dvLower = desiredValue.toLowerCase();
+          const optEl =
+            optsPool.find(
+              (o) =>
+                normalize(o.innerText || o.textContent || o.getAttribute?.("data-value") || "").toLowerCase() === dvLower,
+            ) ||
+            optsPool.find((o) =>
+              normalize(o.innerText || o.textContent || o.getAttribute?.("data-value") || "").toLowerCase().includes(dvLower),
+            );
           if (optEl) {
-            optEl.click();
+            optEl.scrollIntoView?.({ block: "nearest" });
+            dispatchRealClick(optEl);
             verified = true;
           }
         }
@@ -3780,7 +4217,7 @@ async function executeAction(action, selector, value, options = {}) {
           action: "select",
           message: verified
             ? `Selected "${selectedLabel}" in dropdown.`
-            : `Option "${strVal}" was not found in dropdown.`,
+            : `Option "${desiredValue}" was not found in dropdown.`,
         };
       }
 
@@ -3809,7 +4246,7 @@ async function executeAction(action, selector, value, options = {}) {
             : el.getAttribute?.("aria-checked") === "true";
 
         if (currentChecked !== shouldCheck) {
-          el.click();
+          dispatchRealClick(el);
         }
         if ((el.type === "checkbox" || el.type === "radio") && el.checked !== shouldCheck) {
           el.checked = shouldCheck;
@@ -3865,12 +4302,34 @@ async function executeAction(action, selector, value, options = {}) {
         }
         const urlBefore = window.location.href;
         const rawHref = el.getAttribute?.("href") || el.href || "";
-        const resolvedHref = rawHref && !/^\s*javascript:/i.test(rawHref) ? new URL(rawHref, urlBefore).href : "";
+        let resolvedHref = "";
+        if (rawHref && !/^\s*javascript:/i.test(rawHref)) {
+          try {
+            resolvedHref = new URL(rawHref, urlBefore).href;
+          } catch {
+            if (el.tagName === "A") {
+              return {
+                ok: false,
+                action: "open_link",
+                message: `Cannot open malformed link URL "${rawHref.slice(0, 80)}".`,
+              };
+            }
+          }
+        }
         const label = normalize(el.innerText || el.getAttribute?.("aria-label") || resolvedHref || "link").slice(0, 60);
         const isBlank = el.target === "_blank" || el.getAttribute?.("target") === "_blank";
         el.scrollIntoView({ behavior: "smooth", block: "center" });
-        el.click();
-        await new Promise((r) => setTimeout(r, 250));
+        dispatchRealClick(el);
+        await new Promise((r) => {
+          const done = () => {
+            window.removeEventListener("pagehide", done);
+            window.removeEventListener("beforeunload", done);
+            r();
+          };
+          window.addEventListener("pagehide", done, { once: true });
+          window.addEventListener("beforeunload", done, { once: true });
+          setTimeout(done, 250);
+        });
         const navigated = window.location.href !== urlBefore;
         const destinationUrl = (navigated ? window.location.href : resolvedHref) || undefined;
         return {
@@ -3889,6 +4348,7 @@ async function executeAction(action, selector, value, options = {}) {
       return { ok: false, message: `Unknown browser action: ${act}` };
   };
 
+  const tabUrlBefore = tab.url;
   const execRun = await runTabScript({
     target: { tabId: tab.id },
     func: executeFrameFunc,
@@ -3901,10 +4361,33 @@ async function executeAction(action, selector, value, options = {}) {
     message: execRun.error || "Action failed to execute.",
   };
   if (!mainResult.ok) {
+    // Full-page navigation may destroy the top frame execution context slightly before tab.url updates
+    if (
+      !execRun.results?.[0]?.result &&
+      ["click", "click_submit", "submit", "open_link", "open", "press_button", "press"].includes(
+        String(action || "").toLowerCase(),
+      )
+    ) {
+      for (let i = 0; i < 8; i++) {
+        const updatedTab = await chrome.tabs.get(tab.id).catch(() => null);
+        if (updatedTab?.url && updatedTab.url !== tabUrlBefore) {
+          return {
+            ok: true,
+            action: String(action || "").toLowerCase(),
+            stateChange: "navigated",
+            urlBefore: tabUrlBefore,
+            urlAfter: updatedTab.url,
+            newUrl: updatedTab.url,
+            message: `Navigated to ${updatedTab.url}.`,
+          };
+        }
+        await new Promise((r) => setTimeout(r, 45));
+      }
+    }
     const subRun = await runTabScript({
       target: { tabId: tab.id, allFrames: true },
       func: executeFrameFunc,
-      args: [action, selector, value, options],
+      args: [action, selector, value, { ...(options || {}), skipTopFrame: true }],
       label: `executeAction:${action}:allFrames`,
     });
     const subHit = (subRun.results || []).find((r) => r.frameId !== 0 && r.result?.ok);
@@ -4082,13 +4565,13 @@ async function navigateTab(url, tabId) {
   await new Promise((resolve) => {
     const listener = (id, changeInfo) => {
       if (id === targetTabId && changeInfo.status === "complete") {
-        chrome.tabs.onUpdated.removeListener(listener);
+        chrome.tabs.onUpdated?.removeListener?.(listener);
         resolve(true);
       }
     };
-    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.onUpdated?.addListener?.(listener);
     setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(listener);
+      chrome.tabs.onUpdated?.removeListener?.(listener);
       resolve(true);
     }, 5000);
   });

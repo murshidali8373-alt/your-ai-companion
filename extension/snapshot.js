@@ -106,9 +106,13 @@
     const wrap = el.closest("label");
     if (wrap) return wrap.innerText;
 
-    // 5. Preceding sibling label or legend
+    // 5. Preceding sibling label or legend (guard against mismatched <label for="..."> on flat forms)
     const prev = el.previousElementSibling;
-    if (prev && (prev.tagName === "LABEL" || prev.tagName === "SPAN" || prev.tagName === "P")) {
+    if (
+      prev &&
+      (prev.tagName === "LABEL" || prev.tagName === "SPAN" || prev.tagName === "P") &&
+      (!prev.htmlFor || prev.htmlFor === el.id)
+    ) {
       const prevText = prev.innerText?.trim();
       if (prevText && prevText.length < 80) return prevText;
     }
@@ -128,9 +132,21 @@
       el.querySelector?.("svg title")?.textContent;
     if (attrLabel) return attrLabel;
 
+    const isCheckOrRadio =
+      el.type === "checkbox" ||
+      el.type === "radio" ||
+      el.getAttribute?.("role") === "checkbox" ||
+      el.getAttribute?.("role") === "radio" ||
+      el.getAttribute?.("role") === "switch";
     if (el.nextElementSibling) {
-      const nextText = el.nextElementSibling.innerText?.trim();
-      if (nextText && nextText.length < 80) return nextText;
+      const next = el.nextElementSibling;
+      const isMatchingNext =
+        (next.tagName === "LABEL" && next.htmlFor && next.htmlFor === el.id) ||
+        (isCheckOrRadio && (!next.htmlFor || next.htmlFor === el.id));
+      if (isMatchingNext) {
+        const nextText = next.innerText?.trim();
+        if (nextText && nextText.length < 80) return nextText;
+      }
     }
 
     return el.innerText || "";

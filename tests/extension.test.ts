@@ -417,4 +417,68 @@ describe("MV3 Chrome Extension and Side Panel", () => {
     expect(bgCode).toContain("urlAfter");
     expect(bgCode).toContain("Successfully clicked");
   });
+
+  it("handles real-browser edge cases: single submit, all-frames highlight cleanup, mixed iframe fill, cross-frame find, SPA scroll, comboboxes, and URL navigation", () => {
+    const spCode = fs.readFileSync(sidepanelJsPath, "utf-8");
+    const bgCode = fs.readFileSync(path.join(extDir, "background.js"), "utf-8");
+
+    // Single submit guard prevents double form submission on click_submit
+    expect(bgCode).toContain("formSubmittedByClick");
+    expect(bgCode).toContain('addEventListener("submit", onFormSubmit, { once: true })');
+
+    // Overlay cleanup clears actual pointer overlay ID across all frames
+    expect(bgCode).toContain("target: { tabId: tab.id, allFrames: true }");
+    expect(bgCode).toContain('document.getElementById("ai-buddy-arm-overlay")?.remove()');
+
+    // Highlight retraction uses dedicated retractStartTime after 10s
+    expect(bgCode).toContain("let retractStartTime = 0;");
+    expect(bgCode).toContain("retractStartTime = performance.now();");
+
+    // Mixed top-frame + iframe form fill retries missing keys in subframes & prevents next-label pollution
+    expect(bgCode).toContain("topSkippedMissing");
+    expect(bgCode).toContain("subMatches");
+    expect(bgCode).toContain("isCheckOrRadioCtrl");
+    expect(bgCode).toContain("!prev.htmlFor || prev.htmlFor === el.id");
+
+    // Combobox verified check reads innerText/textContent/value & ShadowRoot getSelector uses getRootNode()
+    expect(bgCode).toContain('candidate.getAttribute?.("role") === "combobox"');
+    expect(bgCode).toContain("const elRoot = el.getRootNode?.() || document;");
+    expect(bgCode).toContain("allTokensMatched");
+
+    // Sidepanel parses NAVIGATE URL commands, 'and/aur' multi-field clauses, leading SELECT, and checkout confirmation
+    expect(spCode).toContain('return { type: "NAVIGATE", url: fullUrl };');
+    expect(spCode).toContain('if (intent.type === "NAVIGATE")');
+    expect(spCode).toContain("leadingSelectMatch");
+    expect(spCode).toContain("place\\s*order|checkout|confirm\\s*order");
+  });
+
+  it("hardens MV3 SW hibernation hydration, Radix pointer coordinates, batch collision isolation, navigation unload recovery, snapshot labelOf, and sidepanel/popup tab queries", () => {
+    const bgCode = fs.readFileSync(path.join(extDir, "background.js"), "utf-8");
+    const spCode = fs.readFileSync(sidepanelJsPath, "utf-8");
+    const snapCode = fs.readFileSync(path.join(extDir, "snapshot.js"), "utf-8");
+    const popupCode = fs.readFileSync(path.join(extDir, "popup.js"), "utf-8");
+
+    // MV3 SW hibernation buffer hydration & concurrency-safe ask() params
+    expect(bgCode).toContain("ensureConversationBufferLoaded");
+    expect(bgCode).not.toContain("pendingUploadedDocumentSummary");
+
+    // Coordinate-backed pointer/mouse events + visible dialog counting + batch field isolation + skipTopFrame
+    expect(bgCode).toContain("const dispatchRealClick = (targetEl) =>");
+    expect(bgCode).toContain("isPrimary: true");
+    expect(bgCode).toContain("const claimedElements = new Set()");
+    expect(bgCode).toContain("skipTopFrame");
+    expect(bgCode).toContain("queryAllDeep(dialogSelector).filter(isVisible).length");
+    expect(bgCode).toContain("Cannot open malformed link URL");
+    expect(bgCode).toContain("waitForScrollSettle");
+
+    // snapshot.js flat-form htmlFor sibling guards
+    expect(snapCode).toContain("!prev.htmlFor || prev.htmlFor === el.id");
+    expect(snapCode).toContain("isCheckOrRadio");
+
+    // sidepanel.js & popup.js normal-window tab queries & listener safety
+    expect(spCode).toContain("async function queryActiveWebTab()");
+    expect(spCode).toContain("SpeechSynthesisUtterance");
+    expect(spCode).toContain("chrome.storage?.onChanged?.addListener?.");
+    expect(popupCode).toContain('windowType: "normal"');
+  });
 });

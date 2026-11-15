@@ -1235,53 +1235,64 @@ function cleanTextForSpeech(text) {
 
 function speakResponse(text, finishEmotion = "idle") {
   const spokenText = cleanTextForSpeech(text);
-  if (isMuted || !window.speechSynthesis || !spokenText) {
+  if (
+    isMuted ||
+    !window.speechSynthesis ||
+    typeof SpeechSynthesisUtterance === "undefined" ||
+    !spokenText
+  ) {
     buddy3dViewer?.setSpeaking(false);
     setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
     return;
   }
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(spokenText);
-  const lang = detectSpeechLanguageForExtension(spokenText);
-  utterance.lang = lang;
-  const preferredVoice = pickExtensionVoice(lang);
-  if (preferredVoice) utterance.voice = preferredVoice;
-  utterance.rate = lang === "hi-IN" ? 0.96 : 1.0;
+  try {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(spokenText);
+    const lang = detectSpeechLanguageForExtension(spokenText);
+    utterance.lang = lang;
+    const preferredVoice = pickExtensionVoice(lang);
+    if (preferredVoice) utterance.voice = preferredVoice;
+    utterance.rate = lang === "hi-IN" ? 0.96 : 1.0;
 
-  const boundaryShapes = ["open_a", "open_o", "open_e", "wide_smile", "open_a", "rest"];
-  let boundaryIdx = 0;
+    const boundaryShapes = ["open_a", "open_o", "open_e", "wide_smile", "open_a", "rest"];
+    let boundaryIdx = 0;
 
-  utterance.onstart = () => {
-    if (currentEmotion !== "privacy") {
-      setRigEmotion("talking", "Talking");
-      buddy3dViewer?.setSpeaking(true);
-    }
-    startSpeechMouthCycle();
-  };
-  utterance.onboundary = () => {
-    if (speechMouthInterval) {
-      clearInterval(speechMouthInterval);
-      speechMouthInterval = null;
-    }
-    boundaryIdx = (boundaryIdx + 1) % boundaryShapes.length;
-    setMouthShape(boundaryShapes[boundaryIdx]);
-  };
-  utterance.onend = () => {
+    utterance.onstart = () => {
+      if (currentEmotion !== "privacy") {
+        setRigEmotion("talking", "Talking");
+        buddy3dViewer?.setSpeaking(true);
+      }
+      startSpeechMouthCycle();
+    };
+    utterance.onboundary = () => {
+      if (speechMouthInterval) {
+        clearInterval(speechMouthInterval);
+        speechMouthInterval = null;
+      }
+      boundaryIdx = (boundaryIdx + 1) % boundaryShapes.length;
+      setMouthShape(boundaryShapes[boundaryIdx]);
+    };
+    utterance.onend = () => {
+      stopSpeechMouthCycle();
+      buddy3dViewer?.setSpeaking(false);
+      if (currentEmotion !== "privacy") {
+        setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
+      }
+    };
+    utterance.onerror = () => {
+      stopSpeechMouthCycle();
+      buddy3dViewer?.setSpeaking(false);
+      if (currentEmotion !== "privacy") {
+        setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
+      }
+    };
+
+    window.speechSynthesis.speak(utterance);
+  } catch {
     stopSpeechMouthCycle();
     buddy3dViewer?.setSpeaking(false);
-    if (currentEmotion !== "privacy") {
-      setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
-    }
-  };
-  utterance.onerror = () => {
-    stopSpeechMouthCycle();
-    buddy3dViewer?.setSpeaking(false);
-    if (currentEmotion !== "privacy") {
-      setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
-    }
-  };
-
-  window.speechSynthesis.speak(utterance);
+    setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
+  }
 }
 
 let pointTimerId = null;
@@ -1733,7 +1744,7 @@ function extractFillDetails(text) {
 
   // 1. Explicit key: value or key = value
   const keyValRegex =
-    /\b(name|naam|fullname|legal_name|trade_name|email|phone|mobile|mobilenumber|city|state|country|pincode|pin|zip|gstin|pan|address|pata|search|describe|description|prompt|message|comment|company|subject|title|username|password)\s*[:=]\s*([^,;\n]+)/gi;
+    /\b(name|naam|fullname|legal_name|trade_name|email|phone|mobile|mobilenumber|city|state|country|pincode|pin|zip|gstin|pan|dob|gender|father_name|category|bio|notes?|address|pata|search|describe|description|prompt|message|comment|company|subject|title|username|password)\s*[:=]\s*([^,;\n]+)/gi;
   let m;
   while ((m = keyValRegex.exec(cleaned)) !== null) {
     const key = m[1].toLowerCase();
@@ -1747,14 +1758,14 @@ function extractFillDetails(text) {
     return { fields, explicitPairs, overwrite, explicitUserProvided: true };
   }
 
-  // Split multi-field instructions cleanly (e.g. "Pehle naam Murshad fill karo, phir mobile 9876543210 fill karo")
+  // Split multi-field instructions cleanly (e.g. "Pehle naam Murshad fill karo, phir mobile 9876543210 fill karo" or "fill name X and fill email Y")
   const clauses = cleaned
-    .split(/\s*(?:,|;|\bphir\b|\bfir\b|\bthen\b|\band then\b|\buske baad\b)\s*/i)
+    .split(/\s*(?:,|;|\bphir\b|\bfir\b|\bthen\b|\band then\b|\buske baad\b|\b(?:and|aur)\b(?=\s+(?:fill|type|enter|write|set|likh|likho|daal|daalo|bhar|bharo|naam|name|full\s*name|email|phone|mobile|address|pata|city|state|country|pincode|pin|zip|gstin|gst|pan|dob|date\s*of\s*birth|father\s*name|gender|company|category|bio|message|comment|subject|title|username)\b))\s*/i)
     .map((c) => c.replace(/^(?:pehle|first|aur|and|also|next)\s+/i, "").trim())
     .filter(Boolean);
 
   const KNOWN_FIELD_ALIASES =
-    "(?:full\\s*name|legal\\s*name|trade\\s*name|first\\s*name|last\\s*name|user\\s*name|mobile\\s*(?:number|no)?|phone\\s*(?:number|no)?|pin\\s*code|zip\\s*code|email\\s*(?:id|address)?|naam|name|mail|email|phone|mobile|address|pata|city|state|country|pincode|pin|zip|gstin|gst|pan|search|describe|description|prompt|message|comment|comments|company|subject|title|username|password)";
+    "(?:full\\s*name|legal\\s*name|trade\\s*name|first\\s*name|last\\s*name|father\\s*name|user\\s*name|date\\s*of\\s*birth|dob|gender|category|bio|mobile\\s*(?:number|no)?|phone\\s*(?:number|no)?|pin\\s*code|zip\\s*code|email\\s*(?:id|address)?|aadhaar\\s*(?:number|no)?|aadhar\\s*(?:number|no)?|naam|name|mail|email|phone|mobile|address|pata|city|state|country|pincode|pin|zip|gstin|gst|pan|search|describe|description|prompt|message|comment|comments|note|notes|company|subject|title|username|password)";
 
   for (const clause of clauses) {
     // Pattern A: "<field> (box|field|input)? mein/me/main/in/into <value> (fill|type|likh|daal|bhar|enter|set|kar)?"
@@ -1818,6 +1829,7 @@ function extractFillDetails(text) {
       const keyMap = {
         naam: "name",
         fullname: "name",
+        dateofbirth: "dob",
         mobilenumber: "phone",
         mobileno: "phone",
         mobile: "phone",
@@ -1831,6 +1843,9 @@ function extractFillDetails(text) {
         pin: "pincode",
         zipcode: "pincode",
         zip: "pincode",
+        aadhaar: "aadhaarnumber",
+        aadhar: "aadhaarnumber",
+        aadharnumber: "aadhaarnumber",
       };
       const mappedKey = keyMap[rawT] || rawT;
       const cleanVal = match[2]
@@ -2080,7 +2095,7 @@ function parseActionIntent(text) {
       return { type: "SELECT", targetField, value: val };
     }
   }
-  const simpleSelectMatch = lower.match(/^(.+?)\s+(?:select\s+karo|choose\s+karo|chuno)[.!?\s]*$/i);
+  const simpleSelectMatch = lower.match(/^(.+?)\s+(?:select\s+karo|select\s+kar\s*do|choose\s+karo|chuno)[.!?\s]*$/i);
   if (simpleSelectMatch && !/\bradio\b/i.test(lower)) {
     const words = simpleSelectMatch[1].trim().split(/\s+/);
     if (words.length >= 2) {
@@ -2091,6 +2106,26 @@ function parseActionIntent(text) {
       };
     }
     return { type: "SELECT", targetField: "", value: simpleSelectMatch[1].trim() };
+  }
+  const leadingSelectMatch = lower.match(/^(?:select|choose|chuno)\s+(?:the\s+)?["']?(.+?)["']?(?:\s+option)?[.!?\s]*$/i);
+  if (leadingSelectMatch && !/\bradio\b/i.test(lower)) {
+    const optVal = leadingSelectMatch[1].trim();
+    if (optVal) {
+      return { type: "SELECT", targetField: "", value: optVal };
+    }
+  }
+
+  // 8b. DIRECT URL NAVIGATION ("Open https://example.com", "https://example.com kholo", "go to www.google.com")
+  const urlNavMatch = stripped.match(/(https?:\/\/[^\s"'<>]+|www\.[^\s"'<>]+\.[a-z]{2,})/i);
+  if (
+    urlNavMatch &&
+    (/\b(?:open|go\s+to|navigate|visit|kholo|khol\s+do|jao|le\s+jao)\b/i.test(lower) ||
+      lower.replace(urlNavMatch[0].toLowerCase(), "").trim().length === 0) &&
+    !/\b(?:fill|type|find|point|click|extract|copy)\b/i.test(lower)
+  ) {
+    const rawUrl = urlNavMatch[1];
+    const fullUrl = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+    return { type: "NAVIGATE", url: fullUrl };
   }
 
   // 9. CHECKBOX / RADIO COMMAND
@@ -2151,9 +2186,10 @@ function parseActionIntent(text) {
       .trim();
 
     if (clean.length > 0) {
-      const isConsequential = /purchase|buy|pay|delete|remove account|confirm payment/i.test(
-        clean,
-      );
+      const isConsequential =
+        /purchase|buy|pay|delete|remove account|confirm payment|place\s*order|checkout|confirm\s*order|transfer\s*money|send\s*money/i.test(
+          clean,
+        );
       return { type: "CLICK", target: clean, isConsequential };
     }
   }
@@ -2230,6 +2266,29 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     appendHistory("user", trimmed);
     $("promptInput").value = "";
     await executeScroll(intent.direction, 450, intent.target || null, true);
+    return true;
+  }
+
+  if (intent.type === "NAVIGATE") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    setRigEmotion("working", "Navigating…");
+    $("statusText").textContent = `Opening ${intent.url}…`;
+    const res = await sendRuntimeMessage({ type: "NAVIGATE_TAB", url: intent.url });
+    if (res?.ok) {
+      setRigEmotion("happy", "Opened!");
+      const msg = isHindi
+        ? `🌐 Tab ko ${res.url || intent.url} par navigate kar diya hai.`
+        : `🌐 Navigated to ${res.url || intent.url}.`;
+      $("statusText").textContent = msg;
+      appendHistory("buddy", msg);
+      speakResponse(msg, "happy");
+    } else {
+      setRigEmotion("error", "Blocked");
+      const failMsg = res?.message || `Could not open ${intent.url}.`;
+      $("statusText").textContent = failMsg;
+      appendHistory("buddy", `⚠️ ${failMsg}`);
+    }
     return true;
   }
 
@@ -2380,7 +2439,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     // Consequential actions approval gate (payment, purchase, deletion, government form submission)
     let needsConfirm = Boolean(intent.isConsequential);
     try {
-      const [activeT] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      const activeT = await queryActiveWebTab();
       const activeUrl = (activeT?.url || "").toLowerCase();
       const isGovSite = /\.gov(?:\.in)?|uidai|incometax|gst\.gov|parivahan|passportindia/i.test(activeUrl);
       if (isGovSite && /submit|final|apply|file\s+return|confirm|proceed/i.test(intent.target)) {
@@ -3817,29 +3876,48 @@ if ($("pageContextToggle")) {
   };
 }
 
+async function queryActiveWebTab() {
+  if (typeof chrome === "undefined" || !chrome.tabs?.query) return null;
+  try {
+    const [normTab] = await chrome.tabs.query({
+      active: true,
+      windowType: "normal",
+      lastFocusedWindow: true,
+    });
+    if (normTab?.url && !RESTRICTED.test(normTab.url)) return normTab;
+  } catch {}
+  try {
+    const normTabs = await chrome.tabs.query({ active: true, windowType: "normal" });
+    const webTab = normTabs.find((t) => t?.url && !RESTRICTED.test(t.url));
+    if (webTab) return webTab;
+  } catch {}
+  try {
+    const [fallbackTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return fallbackTab || null;
+  } catch {
+    return null;
+  }
+}
+
 // Contextual Greeting & Domain Tracker
-function updateGreetingContext() {
+async function updateGreetingContext() {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   if ($("greetingTime")) $("greetingTime").textContent = greeting;
   try {
-    if (typeof chrome !== "undefined" && chrome.tabs && chrome.tabs.query) {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        const tab = tabs?.[0];
-        if (tab?.url && !RESTRICTED.test(tab.url)) {
-          try {
-            const u = new URL(tab.url);
-            if ($("greetingContext")) {
-              $("greetingContext").textContent =
-                `Active on ${u.hostname} · ${tab.title ? tab.title.slice(0, 32) + (tab.title.length > 32 ? "…" : "") : "Current Tab"}`;
-            }
-          } catch {
-            if ($("greetingContext")) $("greetingContext").textContent = "Active in browser";
-          }
-        } else if ($("greetingContext")) {
-          $("greetingContext").textContent = "Workspace ready · Send a command to start";
+    const tab = await queryActiveWebTab();
+    if (tab?.url && !RESTRICTED.test(tab.url)) {
+      try {
+        const u = new URL(tab.url);
+        if ($("greetingContext")) {
+          $("greetingContext").textContent =
+            `Active on ${u.hostname} · ${tab.title ? tab.title.slice(0, 32) + (tab.title.length > 32 ? "…" : "") : "Current Tab"}`;
         }
-      });
+      } catch {
+        if ($("greetingContext")) $("greetingContext").textContent = "Active in browser";
+      }
+    } else if ($("greetingContext")) {
+      $("greetingContext").textContent = "Workspace ready · Send a command to start";
     }
   } catch {
     // Non-fatal
@@ -3967,10 +4045,29 @@ if ($("rejectConsequentialBtn")) {
 }
 
 if ($("copyExtractedBtn")) {
-  $("copyExtractedBtn").onclick = () => {
+  $("copyExtractedBtn").onclick = async () => {
     const text = $("extractedContent")?.textContent || "";
-    if (text && navigator.clipboard) {
-      navigator.clipboard.writeText(text);
+    if (!text) return;
+    let copied = false;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        copied = true;
+      }
+    } catch {}
+    if (!copied) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        copied = document.execCommand("copy");
+        ta.remove();
+      } catch {}
+    }
+    if (copied) {
       $("copyExtractedBtn").textContent = "✅ Copied!";
       setTimeout(() => {
         if ($("copyExtractedBtn")) $("copyExtractedBtn").textContent = "📋 Copy List";
@@ -4977,7 +5074,7 @@ if ($("settingsSaveApiBaseBtn")) {
 if ($("settingsDetectHostBtn")) {
   $("settingsDetectHostBtn").onclick = async () => {
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tab = await queryActiveWebTab();
       if (tab?.url && !RESTRICTED.test(tab.url)) {
         const u = new URL(tab.url);
         if (u.protocol.startsWith("http")) {
@@ -5071,7 +5168,7 @@ if ($("settingsOpenDashboardBtn")) {
 }
 
 // Listen for tab switch, step progress, and session changes
-chrome.runtime.onMessage.addListener((msg) => {
+chrome.runtime?.onMessage?.addListener?.((msg) => {
   if (!msg || typeof msg !== "object" || typeof msg.type !== "string") {
     spLog("warn", "onMessage:invalid_payload");
     return false;
@@ -5113,7 +5210,7 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-chrome.storage.onChanged.addListener((changes, area) => {
+chrome.storage?.onChanged?.addListener?.((changes, area) => {
   if (area === "local" && (changes.session || changes.selectedBuddySlug)) {
     render();
   }

@@ -159,29 +159,49 @@ document
 chrome.storage.local.get(["session", "lastBase"]).then(({ session, lastBase }) => {
   if (session?.apiBase) {
     const cleanBase = normalizeBaseUrl(session.apiBase);
-    chrome.storage.local.set({
-      lastBase: cleanBase,
-      ...(cleanBase !== session.apiBase
-        ? { session: { ...session, apiBase: cleanBase } }
-        : {}),
-    });
+    chrome.storage.local
+      .set({
+        lastBase: cleanBase,
+        ...(cleanBase !== session.apiBase
+          ? { session: { ...session, apiBase: cleanBase } }
+          : {}),
+      })
+      .catch(() => {});
   } else if (lastBase && lastBase.includes(LEGACY_BROKEN_HOST)) {
-    chrome.storage.local.set({ lastBase: DEFAULT_BASE });
+    chrome.storage.local.set({ lastBase: DEFAULT_BASE }).catch(() => {});
   }
-});
+}).catch(() => {});
 render();
 
 if ($("openSidePanel")) {
   $("openSidePanel").onclick = async () => {
-    if (chrome.sidePanel && typeof chrome.sidePanel.open === "function") {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab?.windowId) {
-        chrome.sidePanel.open({ windowId: tab.windowId });
-        window.close();
-        return;
+    try {
+      if (chrome.sidePanel && typeof chrome.sidePanel.open === "function") {
+        let [tab] = await chrome.tabs.query({
+          active: true,
+          windowType: "normal",
+          lastFocusedWindow: true,
+        });
+        if (!tab) {
+          [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        }
+        if (tab?.id) {
+          try {
+            await chrome.sidePanel.open({ tabId: tab.id });
+            window.close();
+            return;
+          } catch {}
+        }
+        if (tab?.windowId) {
+          try {
+            await chrome.sidePanel.open({ windowId: tab.windowId });
+            window.close();
+            return;
+          } catch {}
+        }
       }
-    }
-    sendPopupRuntimeMessage({ type: "OPEN_SIDE_PANEL" }).catch(() => {});
+    } catch {}
+    await sendPopupRuntimeMessage({ type: "OPEN_SIDE_PANEL" }).catch(() => {});
     window.close();
   };
 }
