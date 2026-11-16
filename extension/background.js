@@ -2,8 +2,9 @@
 const RESTRICTED =
   /^(chrome|edge|about|chrome-extension|devtools|view-source):|chromewebstore\.google\.com|chrome\.google\.com\/webstore/;
 
-const DEFAULT_HOST = "https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app";
-const LEGACY_BROKEN_HOST = "asfavkynho62d5znlmqa5n";
+const DEFAULT_HOST = "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
+const FALLBACK_PRE_HOST = "https://ais-pre-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
+const LEGACY_BROKEN_HOST = "5t53lwemhepi2nbkqb2reo";
 const MAX_CONVERSATION_TURNS = 3;
 let conversationBuffer = [];
 
@@ -856,24 +857,51 @@ async function generateAutonomousCompanionReply({
   );
 
   // 1. Direct Google Gemini API call if user provided API key
+  let directAuthError = null;
   if (userApiKey) {
     try {
-      const geminiModels = ["gemini-3.8-flash", "gemini-3.1-flash-lite"];
+      const geminiModels = ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
       const systemInstruction = `You are ${activeBuddy.name}, an expert AI browser companion. Personality: ${activeBuddy.personality}. Language: ${activeBuddy.defaultLanguage || "hinglish"}.
-You understand the user's active webpage and help them inspect, navigate, fill forms, verify data, and complete tasks.
-Return your answer in clear, helpful, natural speech. Ground your observations strictly in the page content.`;
+You observe the user's active webpage (elements have refs like "e1", "f1") and plan real browser actions or answer clearly.
+RULES:
+- NEVER click when the user only asks where something is ("kahan hai", "point", "show"); use actionType "point" and set "highlight".
+- For real actions (click, open_link, type, select, check, uncheck, scroll, form_fill, multi_step), populate exact JSON fields so the Side Panel executes them.
+- NEVER invent missing personal info (names, Aadhaar, PAN, GSTIN, prices, order IDs).
+Return strictly valid JSON with keys:
+{"answer": string, "highlight": string|null, "emotion": "neutral"|"thinking"|"happy"|"concerned"|"curious"|"celebrate", "calloutTitle": string|null, "calloutDescription": string|null, "actionType": "point"|"click"|"open_link"|"type"|"select"|"check"|"uncheck"|"scroll"|"form_fill"|"multi_step"|"inspect"|null, "targetText": string|null, "targetField": string|null, "targetValue": string|null, "fields": object|null, "scrollDirection": "up"|"down"|"left"|"right"|"top"|"bottom"|null, "scrollTarget": string|null, "steps": [{"title": string, "action": "click"|"type"|"select"|"scroll"|"point"|"fill_from_document", "textTarget": string|null, "value": string|null, "selector": string|null, "isConsequential": boolean}]|null}`;
 
       let promptText = "";
+      const refMap = new Map();
       if (snapshot) {
         promptText += `ACTIVE WEBPAGE CONTEXT:\nURL: ${snapshot.url}\nTitle: ${snapshot.title}\n`;
+        const allItems = [
+          ...(snapshot.alerts || []),
+          ...(snapshot.forms || []),
+          ...(snapshot.controls || []),
+          ...(snapshot.headings || []),
+        ];
+        allItems.forEach((el) => {
+          if (el?.ref) refMap.set(el.ref, el);
+        });
         if (snapshot.headings?.length) {
-          promptText += `Headings: ${snapshot.headings.slice(0, 10).map((h) => h.name || h.text).filter(Boolean).join(" | ")}\n`;
+          promptText += `Headings: ${snapshot.headings
+            .slice(0, 10)
+            .map((h) => `[${h.ref || "h"}] ${h.name || h.text}`)
+            .filter(Boolean)
+            .join(" | ")}\n`;
         }
         if (snapshot.forms?.length) {
-          promptText += `Form Fields: ${snapshot.forms.slice(0, 15).map((f) => `${f.name || f.placeholder || f.role} (${f.tag})`).join(", ")}\n`;
+          promptText += `Form Fields: ${snapshot.forms
+            .slice(0, 18)
+            .map((f) => `[${f.ref || "f"}] ${f.name || f.placeholder || f.role} (${f.tag}${f.value ? `, val="${String(f.value).slice(0, 30)}"` : ""})`)
+            .join(", ")}\n`;
         }
         if (snapshot.controls?.length) {
-          promptText += `Buttons & Links: ${snapshot.controls.slice(0, 20).map((c) => c.name || c.text).filter(Boolean).join(", ")}\n`;
+          promptText += `Buttons & Links: ${snapshot.controls
+            .slice(0, 25)
+            .map((c) => `[${c.ref || "c"}] ${c.name || c.text} (${c.role || c.tag})`)
+            .filter(Boolean)
+            .join(", ")}\n`;
         }
         if (snapshot.text) {
           promptText += `Page Content: ${snapshot.text.slice(0, 3000)}\n`;
@@ -883,7 +911,8 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
 
       const parts = [];
       if (screenshotBase64) {
-        parts.push({ inlineData: { mimeType: "image/jpeg", data: screenshotBase64 } });
+        const cleanShot = String(screenshotBase64).replace(/^data:image\/[^;]+;base64,/, "");
+        parts.push({ inlineData: { mimeType: "image/jpeg", data: cleanShot } });
       }
       parts.push({ text: promptText });
 
@@ -908,11 +937,19 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
             body: JSON.stringify({
               systemInstruction: { parts: [{ text: systemInstruction }] },
               contents,
-              generationConfig: { maxOutputTokens: 1000, temperature: 0.7 },
+              generationConfig: {
+                responseMimeType: "application/json",
+                maxOutputTokens: 1200,
+                temperature: 0.4,
+              },
             }),
           },
         );
         if (geminiRes.ok) break;
+        if (geminiRes.status === 401 || geminiRes.status === 403) {
+          directAuthError = `Google Gemini API rejected your key (${geminiRes.status}). Check your key in Settings.`;
+          break;
+        }
         if (geminiRes.status !== 404 && geminiRes.status !== 400 && geminiRes.status !== 503) {
           break;
         }
@@ -922,29 +959,67 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
         const candidateText =
           geminiJson.candidates?.[0]?.content?.parts?.[0]?.text;
         if (candidateText) {
-          let highlightSelector = null;
-          if (
+          let parsedPlan = null;
+          try {
+            const cleanJson = candidateText
+              .replace(/^```(?:json)?\s*/i, "")
+              .replace(/```\s*$/, "")
+              .trim();
+            parsedPlan = JSON.parse(cleanJson);
+          } catch {
+            const braced = candidateText.match(/\{[\s\S]*\}/);
+            if (braced) {
+              try {
+                parsedPlan = JSON.parse(braced[0]);
+              } catch {}
+            }
+          }
+
+          const answerText =
+            (parsedPlan && typeof parsedPlan.answer === "string" && parsedPlan.answer.trim()) ||
+            candidateText;
+          let matchedEl = null;
+          if (parsedPlan?.highlight && refMap.has(parsedPlan.highlight)) {
+            matchedEl = refMap.get(parsedPlan.highlight);
+          } else if (snapshot && (parsedPlan?.targetText || parsedPlan?.highlight)) {
+            matchedEl = findBestMatchingElement(
+              snapshot,
+              String(parsedPlan.targetText || parsedPlan.highlight),
+            );
+          } else if (
             snapshot &&
             (qLower.includes("where") ||
               qLower.includes("button") ||
               qLower.includes("find") ||
               qLower.includes("click") ||
-              qLower.includes("dhoondho"))
+              qLower.includes("dhoondho") ||
+              qLower.includes("kahan"))
           ) {
-            const matchEl = findBestMatchingElement(snapshot, question);
-            if (matchEl) highlightSelector = matchEl.selector;
+            matchedEl = findBestMatchingElement(snapshot, question);
           }
+          const highlightSelector = matchedEl?.selector || null;
 
           return {
             taskId: null,
             reply: {
-              answer: candidateText,
-              highlight: null,
+              answer: answerText,
+              highlight: parsedPlan?.highlight || matchedEl?.ref || null,
               confidence: "high",
               needs: null,
-              emotion: "happy",
+              emotion: parsedPlan?.emotion || "happy",
             },
             highlightSelector,
+            targetSelector: highlightSelector,
+            calloutTitle: parsedPlan?.calloutTitle || matchedEl?.name?.slice(0, 50) || null,
+            calloutDescription: parsedPlan?.calloutDescription || null,
+            actionType: parsedPlan?.actionType || null,
+            targetText: parsedPlan?.targetText || matchedEl?.name || null,
+            targetField: parsedPlan?.targetField || null,
+            targetValue: parsedPlan?.targetValue || null,
+            fields: parsedPlan?.fields || null,
+            scrollDirection: parsedPlan?.scrollDirection || null,
+            scrollTarget: parsedPlan?.scrollTarget || null,
+            steps: Array.isArray(parsedPlan?.steps) ? parsedPlan.steps : null,
             buddyName: activeBuddy.name,
             permission: "explain",
             guest: true,
@@ -1294,6 +1369,17 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
       answer += `Let me know what you would like to do on this page—I can highlight elements, auto-fill forms, or answer specific questions!`;
     }
 
+    const effectiveWarning = directAuthError
+      ? {
+          requestedProvider: "gemini",
+          requestedProviderName: "Google Gemini",
+          status: "auth_error",
+          missingKey: "GEMINI_API_KEY",
+          fallbackUsed: "Local Grounded Companion",
+          message: directAuthError,
+        }
+      : providerWarning;
+
     return {
       taskId: null,
       reply: {
@@ -1307,7 +1393,7 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
       buddyName: activeBuddy.name,
       permission: "explain",
       guest: true,
-      providerWarning,
+      providerWarning: effectiveWarning,
     };
   }
 
@@ -1316,6 +1402,17 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
   const fallbackAnswer = isHindi
     ? `Main aapka ${activeBuddy.name} hoon. Main is browser window mein active hoon! Aap kisi bhi webpage par jakar mujhse page explain karne, buttons dhundhne, ya form bharne ko keh sakte hain.`
     : `I am ${activeBuddy.name}, your browser companion! I am active and ready. Open any website and ask me to explain the page, find buttons, or automate actions.`;
+
+  const effectiveWarning = directAuthError
+    ? {
+        requestedProvider: "gemini",
+        requestedProviderName: "Google Gemini",
+        status: "auth_error",
+        missingKey: "GEMINI_API_KEY",
+        fallbackUsed: "Local Grounded Companion",
+        message: directAuthError,
+      }
+    : providerWarning;
 
   return {
     taskId: null,
@@ -1330,7 +1427,7 @@ Return your answer in clear, helpful, natural speech. Ground your observations s
     buddyName: activeBuddy.name,
     permission: "explain",
     guest: true,
-    providerWarning,
+    providerWarning: effectiveWarning,
   };
 }
 
@@ -1486,7 +1583,13 @@ async function extractUploadedDocument(doc) {
 
     if (!data) {
       const allTabs = await chrome.tabs.query({});
-      const buddyTab = allTabs.find((t) => t.url && (t.url.includes("run.app") || t.url.includes("localhost")));
+      const buddyTab = allTabs.find(
+        (t) =>
+          t.url &&
+          !t.url.includes("aistudio.google.com") &&
+          !t.url.includes(LEGACY_BROKEN_HOST) &&
+          (t.url.includes("run.app") || t.url.includes("localhost")),
+      );
       if (buddyTab?.id && buddyTab.url) {
         const origin = new URL(buddyTab.url).origin;
         const proxyRes = await sendTabMessageToBridge(
@@ -1517,7 +1620,7 @@ async function extractUploadedDocument(doc) {
       const cleanBase64 = String(doc.base64Data).replace(/^data:[^;]+;base64,/, "");
       const mimeType = doc.mimeType === "image/jpg" ? "image/jpeg" : (doc.mimeType || "image/png");
       let geminiRes = null;
-      for (const modelName of ["gemini-3.8-flash", "gemini-3.1-flash-lite"]) {
+      for (const modelName of ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.1-flash-lite"]) {
         geminiRes = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(userApiKey)}`,
           {
@@ -1630,13 +1733,20 @@ async function ask(
     snapshotError = snapRes.error;
   }
 
-  // Visual fallback: capture visible tab screenshot if DOM access failed or yielded sparse content
+  // Visual fallback: capture visible tab screenshot if DOM access failed, yielded sparse content, or user asks visually
   const isDomSparse =
     !snapshot ||
     ((snapshot.controls?.length || 0) === 0 &&
       (snapshot.forms?.length || 0) === 0 &&
       (snapshot.text || "").trim().length < 80);
-  if ((isDomSparse || intent === "visual_inspect") && tab?.id && tab.url && !RESTRICTED.test(tab.url)) {
+  const asksVisually =
+    /\b(screen|screenshot|image|photo|layout|color|look|dikha|dekho|captcha)\b/i.test(question);
+  if (
+    (isDomSparse || intent === "visual_inspect" || asksVisually) &&
+    tab?.id &&
+    tab.url &&
+    !RESTRICTED.test(tab.url)
+  ) {
     screenshotBase64 = await captureTabScreenshot(tab.windowId);
   }
 
@@ -1664,28 +1774,27 @@ async function ask(
 
   try {
     let res;
-    try {
-      res = await fetch(`${apiBase}/api/public/extension/ask`, {
-        method: "POST",
-        headers,
-        body: payload,
-        credentials: "include",
-      });
-    } catch (networkErr) {
-      if (apiBase !== DEFAULT_HOST) {
-        try {
-          res = await fetch(`${DEFAULT_HOST}/api/public/extension/ask`, {
-            method: "POST",
-            headers,
-            body: payload,
-            credentials: "include",
-          });
-        } catch {
-          throw networkErr;
-        }
-      } else {
-        throw networkErr;
+    const candidateHosts = [apiBase, DEFAULT_HOST, FALLBACK_PRE_HOST].filter(
+      (h, idx, arr) => h && !h.includes(LEGACY_BROKEN_HOST) && arr.indexOf(h) === idx,
+    );
+    let lastNetErr = null;
+    for (const host of candidateHosts) {
+      try {
+        res = await fetch(`${host}/api/public/extension/ask`, {
+          method: "POST",
+          headers,
+          body: payload,
+          credentials: "include",
+        });
+        apiBase = host;
+        lastNetErr = null;
+        break;
+      } catch (err) {
+        lastNetErr = err;
       }
+    }
+    if (!res && lastNetErr) {
+      throw lastNetErr;
     }
 
     let body = null;

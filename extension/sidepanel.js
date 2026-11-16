@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id);
-const DEFAULT_BASE = "https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app";
-const LEGACY_BROKEN_HOST = "asfavkynho62d5znlmqa5n";
+const DEFAULT_BASE = "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
+const FALLBACK_PRE_BASE = "https://ais-pre-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
+const LEGACY_BROKEN_HOST = "5t53lwemhepi2nbkqb2reo";
 const RESTRICTED =
   /^(chrome|edge|about|chrome-extension|devtools|view-source):|chromewebstore\.google\.com|chrome\.google\.com\/webstore/;
 
@@ -420,14 +421,27 @@ function getActiveBuddy() {
 
 function ensureNonBlankState() {
   const stage = $("characterStage");
-  if (stage && stage.style.display === "none" && $("sizeSelect")?.value !== "hidden") {
+  const wantHidden = $("sizeSelect")?.value === "hidden";
+  if (stage && stage.style.display === "none" && !wantHidden) {
     stage.style.display = "flex";
   }
   const active = getActiveBuddy();
   if ($("activeBuddyName") && !$("activeBuddyName").textContent) {
     switchBuddy(selectedBuddySlug || "friendly");
   }
-  applyRenderMode(currentRenderMode || "rigged");
+  const targetMode = currentRenderMode || "rigged";
+  const wrap3d = $("buddy3dCanvasWrap");
+  const svg = $("characterSvg");
+  const img = $("buddy3dImg");
+  const alreadySynced =
+    (targetMode === "3d" && !webglFallbackActive && buddy3dViewer && wrap3d && !wrap3d.hidden) ||
+    (targetMode === "artwork" && img && !img.hidden) ||
+    (targetMode === "rigged" && svg && svg.style.display === "block");
+  if (!alreadySynced) {
+    applyRenderMode(targetMode);
+  } else if (targetMode === "3d") {
+    buddy3dViewer?.setPaused?.(wantHidden);
+  }
   return active;
 }
 
@@ -1233,7 +1247,22 @@ function cleanTextForSpeech(text) {
     .trim();
 }
 
+let speechWatchdogTimer = null;
+let speechKeepAliveInterval = null;
+
 function speakResponse(text, finishEmotion = "idle") {
+  const clearSpeechTimers = () => {
+    if (speechWatchdogTimer) {
+      clearTimeout(speechWatchdogTimer);
+      speechWatchdogTimer = null;
+    }
+    if (speechKeepAliveInterval) {
+      clearInterval(speechKeepAliveInterval);
+      speechKeepAliveInterval = null;
+    }
+  };
+
+  clearSpeechTimers();
   const spokenText = cleanTextForSpeech(text);
   if (
     isMuted ||
@@ -1241,10 +1270,24 @@ function speakResponse(text, finishEmotion = "idle") {
     typeof SpeechSynthesisUtterance === "undefined" ||
     !spokenText
   ) {
+    stopSpeechMouthCycle();
     buddy3dViewer?.setSpeaking(false);
     setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
     return;
   }
+
+  let settled = false;
+  const cleanupSpeech = () => {
+    if (settled) return;
+    settled = true;
+    clearSpeechTimers();
+    stopSpeechMouthCycle();
+    buddy3dViewer?.setSpeaking(false);
+    if (currentEmotion !== "privacy") {
+      setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
+    }
+  };
+
   try {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(spokenText);
@@ -1272,26 +1315,34 @@ function speakResponse(text, finishEmotion = "idle") {
       boundaryIdx = (boundaryIdx + 1) % boundaryShapes.length;
       setMouthShape(boundaryShapes[boundaryIdx]);
     };
-    utterance.onend = () => {
-      stopSpeechMouthCycle();
-      buddy3dViewer?.setSpeaking(false);
-      if (currentEmotion !== "privacy") {
-        setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
+    utterance.onend = cleanupSpeech;
+    utterance.onerror = cleanupSpeech;
+
+    // Chromium SpeechSynthesis can pause/stall silently on long utterances; keep-alive + watchdog prevent Talking freeze
+    speechKeepAliveInterval = setInterval(() => {
+      try {
+        if (window.speechSynthesis?.speaking && !window.speechSynthesis.paused) {
+          window.speechSynthesis.pause();
+          window.speechSynthesis.resume();
+        } else if (!window.speechSynthesis?.speaking) {
+          cleanupSpeech();
+        }
+      } catch {
+        cleanupSpeech();
       }
-    };
-    utterance.onerror = () => {
-      stopSpeechMouthCycle();
-      buddy3dViewer?.setSpeaking(false);
-      if (currentEmotion !== "privacy") {
-        setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
-      }
-    };
+    }, 9000);
+
+    const maxSpeechMs = Math.min(45000, Math.max(9000, spokenText.length * 140));
+    speechWatchdogTimer = setTimeout(() => {
+      try {
+        window.speechSynthesis?.cancel();
+      } catch {}
+      cleanupSpeech();
+    }, maxSpeechMs);
 
     window.speechSynthesis.speak(utterance);
   } catch {
-    stopSpeechMouthCycle();
-    buddy3dViewer?.setSpeaking(false);
-    setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
+    cleanupSpeech();
   }
 }
 
@@ -1434,16 +1485,21 @@ function applyRenderMode(mode) {
   const img = $("buddy3dImg");
   if (!svg || !img) return;
 
+  const stageHidden = $("sizeSelect")?.value === "hidden";
+
   if (currentRenderMode === "3d" && !webglFallbackActive && buddy3dViewer) {
     if (wrap3d) wrap3d.hidden = false;
     svg.style.display = "none";
     img.hidden = true;
-    buddy3dViewer.resize();
+    buddy3dViewer.setPaused?.(stageHidden);
+    if (!stageHidden) buddy3dViewer.resize();
   } else if (currentRenderMode === "artwork") {
+    buddy3dViewer?.setPaused?.(true);
     if (wrap3d) wrap3d.hidden = true;
     svg.style.display = "none";
     img.hidden = false;
   } else {
+    buddy3dViewer?.setPaused?.(true);
     if (wrap3d) wrap3d.hidden = true;
     svg.style.display = "block";
     img.hidden = true;
@@ -2845,36 +2901,138 @@ async function sendQuery(question, intent) {
       appendModeRecommendationNotice(modeRec);
     }
 
-    // If AI planned an action, actually execute it instead of only explaining!
-    if ((res.actionType === "click" || res.actionType === "open_link") && (res.targetSelector || res.targetText)) {
-      setRigEmotion("working", res.actionType === "open_link" ? "Opening" : "Acting");
-      const execActionName = res.actionType === "open_link" ? "open_link" : "click";
-      const clickRes = await sendRuntimeMessage({
-        type: "EXECUTE_ACTION",
-        action: execActionName,
-        selector: res.targetSelector,
-        value: res.targetText,
+    // If AI planned real action(s), execute them instead of only explaining!
+    const CONSEQUENTIAL_RE =
+      /pay|checkout|purchase|\bbuy\b|place\s*order|delete|remove\s*account|confirm\s*order|\bsubmit\b|file\s*return/i;
+    const { requireConsent } = await chrome.storage.local
+      .get("requireConsent")
+      .catch(() => ({ requireConsent: true }));
+    const consentRequired = requireConsent !== false;
+
+    if (Array.isArray(res.steps) && res.steps.length > 0) {
+      const planId = `plan_ai_${Date.now()}`;
+      activePlan = {
+        id: planId,
+        title: trimmed.length > 45 ? trimmed.slice(0, 42) + "..." : trimmed,
+        originalInstruction: trimmed,
+        steps: res.steps.map((s, idx) => ({
+          id: `${planId}_${idx + 1}`,
+          stepNumber: idx + 1,
+          title: s.title || `${s.action || "step"} ${s.textTarget || ""}`.trim(),
+          action: s.action || "click",
+          textTarget: s.textTarget || undefined,
+          value: s.value || undefined,
+          selector: s.selector || undefined,
+          requiresApproval:
+            consentRequired &&
+            (Boolean(s.isConsequential) ||
+              CONSEQUENTIAL_RE.test(`${s.title || ""} ${s.textTarget || ""}`)),
+          status: "pending",
+        })),
+        currentStepIndex: 0,
+        status: "pending",
+        extractedData: [],
+      };
+      isPlanPaused = false;
+      pendingApprovalStep = null;
+      if ($("consequentialApprovalCard")) $("consequentialApprovalCard").hidden = true;
+      if ($("planRetryBtn")) $("planRetryBtn").hidden = true;
+      renderTaskPlanUI();
+      await runPlanLoop();
+    } else if (res.actionType === "point") {
+      // Strictly highlight/point without clicking
+      lastHighlightSelector = res.highlightSelector || res.targetSelector || null;
+    } else if (
+      (res.actionType === "click" || res.actionType === "open_link") &&
+      (res.targetSelector || res.targetText)
+    ) {
+      const actionLabel = res.targetText || res.targetSelector || "target";
+      if (consentRequired && CONSEQUENTIAL_RE.test(actionLabel)) {
+        pendingAction = {
+          type: res.actionType === "open_link" ? "open_link" : "click",
+          selector: res.targetSelector || undefined,
+          value: res.targetText || undefined,
+          text: actionLabel,
+        };
+        if ($("confirmDesc")) {
+          $("confirmDesc").textContent = isHindi
+            ? `Kripya confirm karein: Buddy "${actionLabel}" execute karne ja raha hai. Proceed?`
+            : `Confirmation required: Buddy is about to execute "${actionLabel}". Proceed?`;
+        }
+        if ($("confirmCard")) $("confirmCard").hidden = false;
+        setRigEmotion("concerned", "Confirm");
+        $("statusText").textContent = `Awaiting confirmation for ${actionLabel}…`;
+      } else {
+        setRigEmotion("working", res.actionType === "open_link" ? "Opening" : "Acting");
+        const execActionName = res.actionType === "open_link" ? "open_link" : "click";
+        const clickRes = await sendRuntimeMessage({
+          type: "EXECUTE_ACTION",
+          action: execActionName,
+          selector: res.targetSelector || undefined,
+          value: res.targetText || undefined,
+        });
+        if (clickRes?.ok) {
+          setRigEmotion("happy", execActionName === "open_link" ? "Opened!" : "Clicked!");
+          const clickedMsg =
+            execActionName === "open_link"
+              ? isHindi
+                ? `Maine link "${clickRes.text || res.targetText}" khol diya hai${clickRes.newUrl ? ` (${clickRes.newUrl})` : ""}!`
+                : `Opened link "${clickRes.text || res.targetText}"${clickRes.newUrl ? ` -> ${clickRes.newUrl}` : ""}!`
+              : isHindi
+                ? `Maine page par "${clickRes.text || res.targetText}" click kar diya hai!`
+                : `Clicked "${clickRes.text || res.targetText}"!`;
+          $("statusText").textContent = clickedMsg;
+          appendHistory("buddy", `✅ ${clickedMsg}`);
+        } else if (clickRes && !clickRes.ok) {
+          setRigEmotion("confused", "Blocked");
+          const failMsg = clickRes.message || `Could not ${execActionName} "${res.targetText || "target"}".`;
+          $("statusText").textContent = failMsg;
+          appendHistory("buddy", `⚠️ ${failMsg}`);
+        }
+      }
+    } else if (res.actionType === "type" && (res.targetValue !== null && res.targetValue !== undefined)) {
+      await startSmartFormFill(null, {
+        explicitPairs: [
+          {
+            target: res.targetField || res.targetText || "__CURRENT__",
+            value: String(res.targetValue),
+            selector: res.targetSelector || undefined,
+            overwrite: true,
+          },
+        ],
+        explicitUserProvided: true,
+        fromChatCommand: true,
       });
-      if (clickRes?.ok) {
-        setRigEmotion("happy", execActionName === "open_link" ? "Opened!" : "Clicked!");
-        const clickedMsg =
-          execActionName === "open_link"
-            ? isHindi
-              ? `Maine link "${clickRes.text || res.targetText}" khol diya hai${clickRes.newUrl ? ` (${clickRes.newUrl})` : ""}!`
-              : `Opened link "${clickRes.text || res.targetText}"${clickRes.newUrl ? ` -> ${clickRes.newUrl}` : ""}!`
-            : isHindi
-              ? `Maine page par "${clickRes.text || res.targetText}" click kar diya hai!`
-              : `Clicked "${clickRes.text || res.targetText}"!`;
-        $("statusText").textContent = clickedMsg;
-        appendHistory("buddy", `✅ ${clickedMsg}`);
-      } else if (clickRes && !clickRes.ok) {
+    } else if (
+      (res.actionType === "select" || res.actionType === "check" || res.actionType === "uncheck") &&
+      (res.targetSelector || res.targetText || res.targetField)
+    ) {
+      setRigEmotion("working", "Updating");
+      const actRes = await sendRuntimeMessage({
+        type: "EXECUTE_ACTION",
+        action: res.actionType,
+        selector: res.targetSelector || undefined,
+        value: res.targetValue || res.targetText || res.targetField || undefined,
+        options: { text: res.targetText || res.targetField || undefined },
+      });
+      if (actRes?.ok) {
+        setRigEmotion("happy", "Done!");
+        const doneMsg = actRes.message || `Executed ${res.actionType} on page.`;
+        $("statusText").textContent = doneMsg;
+        appendHistory("buddy", `✅ ${doneMsg}`);
+      } else if (actRes && !actRes.ok) {
         setRigEmotion("confused", "Blocked");
-        const failMsg = clickRes.message || `Could not ${execActionName} "${res.targetText || "target"}".`;
+        const failMsg = actRes.message || `Could not ${res.actionType} target element.`;
         $("statusText").textContent = failMsg;
         appendHistory("buddy", `⚠️ ${failMsg}`);
       }
     } else if (res.actionType === "form_fill") {
-      if (res.targetField && res.targetValue) {
+      if (res.fields && typeof res.fields === "object" && Object.keys(res.fields).length > 0) {
+        await startSmartFormFill(res.fields, {
+          explicitUserProvided: true,
+          fromChatCommand: true,
+        });
+      } else if (res.targetField && res.targetValue) {
         await startSmartFormFill(
           { [res.targetField]: res.targetValue },
           { explicitUserProvided: true, selector: res.targetSelector || undefined, fromChatCommand: true },
@@ -2900,10 +3058,15 @@ async function sendQuery(question, intent) {
       $("pageCompletenessBanner").hidden = false;
     }
 
-    if ($("confirmCard")) $("confirmCard").hidden = true;
-    pendingAction = null;
+    if (!pendingAction) {
+      if ($("confirmCard")) $("confirmCard").hidden = true;
+    }
 
-    const emotion = lastHighlightSelector ? "pointing" : res.reply?.emotion || "idle";
+    const emotion = pendingAction
+      ? "concerned"
+      : lastHighlightSelector
+        ? "pointing"
+        : res.reply?.emotion || "idle";
     setRigEmotion(emotion, emotion.toUpperCase());
     speakResponse(currentAnswer, emotion);
 
@@ -3742,6 +3905,44 @@ if ($("qaAutomateTask")) {
   $("qaAutomateTask").onclick = () => sendQuery("Automate task: ", "workflow");
 }
 
+// Downscale oversized document photos on client Canvas so Chrome IPC + OCR stay fast and under payload limits
+async function compressImageFileForOcr(file) {
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Could not read image."));
+    reader.readAsDataURL(file);
+  });
+  if (file.size <= 800 * 1024 && typeof Image === "undefined") {
+    return { base64Data: dataUrl, mimeType: file.type || "image/png" };
+  }
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = dataUrl;
+    });
+    const maxDim = 1600;
+    const scale = Math.min(1, maxDim / Math.max(img.width || 1, img.height || 1));
+    if (scale === 1 && file.size <= 800 * 1024) {
+      return { base64Data: dataUrl, mimeType: file.type || "image/png" };
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(img.width * scale));
+    canvas.height = Math.max(1, Math.round(img.height * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return { base64Data: dataUrl, mimeType: file.type || "image/png" };
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return {
+      base64Data: canvas.toDataURL("image/jpeg", 0.82),
+      mimeType: "image/jpeg",
+    };
+  } catch {
+    return { base64Data: dataUrl, mimeType: file.type || "image/png" };
+  }
+}
+
 // File / Document Attachment & OCR Understanding (Aadhaar, PAN, Invoices, PDFs, Images, CSV)
 async function handleUploadedDocumentFile(file) {
   if (!file) return;
@@ -3766,9 +3967,14 @@ async function handleUploadedDocumentFile(file) {
   try {
     let base64Data = undefined;
     let textContent = undefined;
+    let resolvedMime = file.type || (isPdf ? "application/pdf" : "image/png");
 
     if (isTextLike) {
       textContent = await file.text();
+    } else if (isImage) {
+      const compressed = await compressImageFileForOcr(file);
+      base64Data = compressed.base64Data;
+      resolvedMime = compressed.mimeType;
     } else {
       const dataUrl = await new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -3794,7 +4000,7 @@ async function handleUploadedDocumentFile(file) {
       type: "EXTRACT_DOCUMENT",
       document: {
         fileName: file.name,
-        mimeType: file.type || (isPdf ? "application/pdf" : "image/png"),
+        mimeType: resolvedMime,
         base64Data,
         textContent,
       },
@@ -4271,9 +4477,6 @@ if ($("connectBtn")) {
     setRigEmotion("celebrate", "Connected!");
     $("statusText").textContent = "✓ Connected in Guest Mode! Complete web sign-in on /connect anytime.";
     await render();
-
-    // 3. Switch smoothly to Settings tab for optional API key / custom server settings
-    switchTab("settings");
   };
 }
 
@@ -4836,10 +5039,10 @@ async function loadModelHubStatus() {
       if ($("activeModelRecommendation")) {
         const recText =
           currentActiveMode === "research"
-            ? "Gemini 3.8 Flash / Pro recommended for high-accuracy claim verification and web synthesis."
+            ? "Gemini 4 Hydrogen / 3.8 Flash recommended for high-accuracy claim verification and web synthesis."
             : currentActiveMode === "file"
-              ? "Gemini 3.8 Flash recommended for multi-tab spreadsheets, document OCR, and structured forms."
-              : "Gemini 3.8 Flash recommended for fast DOM grounding, pointing animations, and browser tasks.";
+              ? "Gemini 4 Hydrogen recommended for multi-tab spreadsheets, document OCR, and structured forms."
+              : "Gemini 4 Hydrogen recommended for fast DOM grounding, pointing animations, and browser tasks.";
         $("activeModelRecommendation").textContent = recText;
       }
     }
@@ -4949,6 +5152,7 @@ if ($("sizeSelect")) {
     const img = $("buddy3dImg");
     if (e.target.value === "hidden") {
       stage.style.display = "none";
+      buddy3dViewer?.setPaused?.(true);
     } else if (e.target.value === "compact") {
       stage.style.display = "flex";
       if (wrap3d) {
@@ -4963,7 +5167,10 @@ if ($("sizeSelect")) {
         img.style.width = "90px";
         img.style.height = "90px";
       }
-      buddy3dViewer?.resize();
+      if (currentRenderMode === "3d") {
+        buddy3dViewer?.setPaused?.(false);
+        buddy3dViewer?.resize();
+      }
     } else {
       stage.style.display = "flex";
       if (wrap3d) {
@@ -4978,7 +5185,10 @@ if ($("sizeSelect")) {
         img.style.width = "110px";
         img.style.height = "110px";
       }
-      buddy3dViewer?.resize();
+      if (currentRenderMode === "3d") {
+        buddy3dViewer?.setPaused?.(false);
+        buddy3dViewer?.resize();
+      }
     }
   };
 }
@@ -5073,23 +5283,61 @@ if ($("settingsSaveApiBaseBtn")) {
 
 if ($("settingsDetectHostBtn")) {
   $("settingsDetectHostBtn").onclick = async () => {
+    const feedbackEl = $("settingsHostFeedback");
+    if (feedbackEl) {
+      feedbackEl.textContent = "🔍 Probing healthy AI Buddy backend…";
+      feedbackEl.style.display = "block";
+    }
     try {
+      const candidates = [];
       const tab = await queryActiveWebTab();
       if (tab?.url && !RESTRICTED.test(tab.url)) {
-        const u = new URL(tab.url);
-        if (u.protocol.startsWith("http")) {
-          if ($("settingsApiBaseInput")) $("settingsApiBaseInput").value = u.origin;
-          await chrome.storage.local.set({ lastBase: u.origin });
-          if ($("settingsHostFeedback")) {
-            $("settingsHostFeedback").textContent = `✓ Auto-detected: ${u.origin}`;
-            $("settingsHostFeedback").style.display = "block";
-            setTimeout(() => {
-              if ($("settingsHostFeedback")) $("settingsHostFeedback").style.display = "none";
-            }, 2500);
+        try {
+          const u = new URL(tab.url);
+          if (
+            u.protocol.startsWith("http") &&
+            !u.hostname.includes("aistudio.google.com") &&
+            !u.hostname.includes(LEGACY_BROKEN_HOST)
+          ) {
+            candidates.push(u.origin);
           }
-        }
+        } catch {}
       }
-    } catch {}
+      candidates.push(DEFAULT_BASE, FALLBACK_PRE_BASE, "http://localhost:3000");
+      const uniqueCandidates = [...new Set(candidates)];
+      let verifiedOrigin = null;
+      for (const origin of uniqueCandidates) {
+        try {
+          const r = await fetchWithTimeout(`${origin}/api/public/extension/health`, {}, 3500);
+          if (r.ok) {
+            const j = await r.json().catch(() => null);
+            if (j && (j.ok !== undefined || j.checks)) {
+              verifiedOrigin = origin;
+              break;
+            }
+          }
+        } catch {}
+      }
+      if (verifiedOrigin) {
+        if ($("settingsApiBaseInput")) $("settingsApiBaseInput").value = verifiedOrigin;
+        await chrome.storage.local.set({ lastBase: verifiedOrigin });
+        if (feedbackEl) {
+          feedbackEl.textContent = `✓ Verified AI Buddy server: ${verifiedOrigin}`;
+        }
+      } else if (feedbackEl) {
+        feedbackEl.textContent = "⚠️ No live AI Buddy backend responded cleanly. Keeping current server.";
+      }
+    } catch {
+      if (feedbackEl) {
+        feedbackEl.textContent = "⚠️ Could not probe backend right now.";
+      }
+    } finally {
+      if (feedbackEl) {
+        setTimeout(() => {
+          if ($("settingsHostFeedback")) $("settingsHostFeedback").style.display = "none";
+        }, 3000);
+      }
+    }
   };
 }
 

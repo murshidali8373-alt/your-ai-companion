@@ -74,6 +74,16 @@ export interface ModelEntry {
 
 export const MODELS: ModelEntry[] = [
   {
+    id: "gemini-4-hydrogen",
+    provider: "gemini",
+    api: "chat",
+    vision: true,
+    contextTokens: 1_000_000,
+    cost: 2,
+    speed: 1,
+    providerModelId: "gemini-4-hydrogen",
+  },
+  {
     id: "gemini-3.8-flash",
     provider: "gemini",
     api: "chat",

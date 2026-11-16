@@ -16,7 +16,7 @@ describe("AI Buddy System Repair Verification", () => {
     expect(connectTsx).toContain("Signed-in user");
   });
 
-  it("eliminates legacy broken host URLs and 5t53lwemhepi host blocking in extension", () => {
+  it("uses live asfavkynho Cloud Run host and blocks stale 5t53lwemhepi host in extension", () => {
     const files = [
       path.join(root, "extension/background.js"),
       path.join(root, "extension/sidepanel.js"),
@@ -24,13 +24,10 @@ describe("AI Buddy System Repair Verification", () => {
     ];
     for (const f of files) {
       const src = fs.readFileSync(f, "utf-8");
-      expect(src).toContain(
-        "https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app",
+      expect(src).toMatch(
+        /DEFAULT_(?:HOST|BASE)\s*=\s*"https:\/\/ais-dev-asfavkynho62d5znlmqa5n-711254288483\.asia-southeast1\.run\.app"/,
       );
-      expect(src).not.toMatch(
-        /DEFAULT_(?:HOST|BASE)\s*=\s*"https:\/\/ais-dev-asfavkynho62d5znlmqa5n/,
-      );
-      expect(src).not.toMatch(/includes\("5t53lwemhepi"\)/);
+      expect(src).toMatch(/LEGACY_BROKEN_HOST\s*=\s*"5t53lwemhepi2nbkqb2reo"/);
       expect(src).toContain("aistudio.google.com");
     }
   });
@@ -47,6 +44,7 @@ describe("AI Buddy System Repair Verification", () => {
 
   it("uses updated Gemini models, passes conversation history, and handles missing elements honestly", () => {
     const bg = fs.readFileSync(path.join(root, "extension/background.js"), "utf-8");
+    expect(bg).toContain("gemini-4-hydrogen");
     expect(bg).toContain("gemini-3.8-flash");
     expect(bg).toContain("gemini-3.1-flash-lite");
     expect(bg).toContain("historyContents");
@@ -325,6 +323,42 @@ describe("AI Buddy System Repair Verification", () => {
       expect(sp).toContain("msg.active !== false");
       expect(popup).toContain("sendPopupRuntimeMessage");
       expect(popup).toContain("chrome.runtime?.lastError");
+    });
+
+    it("supports full AI action planning, TTS watchdog, 3D pause/resume, OCR compression, and verified host detection", () => {
+      const promptSrc = fs.readFileSync(path.join(root, "src/lib/ai/prompt.ts"), "utf-8");
+      const serviceSrc = fs.readFileSync(
+        path.join(root, "src/lib/buddy-service.server.ts"),
+        "utf-8",
+      );
+      const runtimeSrc = fs.readFileSync(
+        path.join(root, "src/lib/extension-buddy-3d-runtime.ts"),
+        "utf-8",
+      );
+      const vendorSrc = fs.readFileSync(
+        path.join(root, "extension/vendor/buddy-3d-runtime.js"),
+        "utf-8",
+      );
+      const sp = fs.readFileSync(path.join(root, "extension/sidepanel.js"), "utf-8");
+
+      // Prompt & server support real action planning without defaulting Q&A to click
+      expect(promptSrc).toContain('"open_link"');
+      expect(promptSrc).toContain('"multi_step"');
+      expect(promptSrc).not.toContain("you cannot act in this phase beyond pointing at things");
+      expect(serviceSrc).toContain("scrollDirection");
+      expect(serviceSrc).toContain("steps");
+
+      // SidePanel executes point/select/check/uncheck/type/form_fill/steps & gates consequential actions
+      expect(sp).toContain('res.actionType === "point"');
+      expect(sp).toContain('res.actionType === "select"');
+      expect(sp).toContain("speechWatchdogTimer");
+      expect(sp).toContain("compressImageFileForOcr");
+      expect(sp).toContain("/api/public/extension/health");
+      expect(sp).toContain("setPaused");
+
+      // 3D runtime + rebuilt bundle expose setPaused
+      expect(runtimeSrc).toContain("function setPaused(paused: boolean)");
+      expect(vendorSrc).toContain("setPaused");
     });
   });
 });

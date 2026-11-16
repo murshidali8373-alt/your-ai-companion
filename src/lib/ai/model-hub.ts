@@ -200,6 +200,20 @@ export const MODEL_CATALOG: ModelEntry[] = [
     isDefault: true,
   },
   {
+    id: "gemini-4-hydrogen",
+    name: "Gemini 4 Hydrogen (Multimodal)",
+    provider: "gemini",
+    providerModelId: "gemini-4-hydrogen",
+    tier: "free",
+    contextWindow: 1_048_576,
+    maxOutputTokens: 8192,
+    capabilities: ["vision", "reasoning", "code", "function_calling", "streaming"],
+    speedRating: 5,
+    costRating: 1,
+    recommendedUse:
+      "Primary multimodal runtime for live screen inspection, document OCR, and action planning.",
+  },
+  {
     id: "gemini-3.1-flash-lite",
     name: "Gemini 3.1 Flash Lite",
     provider: "gemini",

@@ -67,19 +67,25 @@ export async function callGemini(model: ModelEntry, opts: ProviderCallOptions): 
     },
   });
 
-  // Protect against deprecated model IDs
+  // Map deprecated or generic default IDs to verified active multimodal runtime first
   let targetModelId = model.providerModelId || model.id;
   if (
     targetModelId.includes("2.5-flash") ||
     targetModelId.includes("1.5-flash") ||
     targetModelId.includes("2.0-flash") ||
-    targetModelId.includes("3.5-flash")
+    targetModelId.includes("3.5-flash") ||
+    targetModelId === "gemini-3.8-flash"
   ) {
-    targetModelId = "gemini-3.8-flash";
+    targetModelId = "gemini-4-hydrogen";
   }
 
-  // Model trial sequence: target model first, then verified active models (gemini-3.8-flash, gemini-3.1-flash-lite)
-  const candidateModels = [targetModelId, "gemini-3.8-flash", "gemini-3.1-flash-lite"];
+  // Model trial sequence: target model first, then verified active fallbacks
+  const candidateModels = [
+    targetModelId,
+    "gemini-4-hydrogen",
+    "gemini-3.8-flash",
+    "gemini-3.1-flash-lite",
+  ];
   const trialModels = candidateModels.filter((m, idx, arr) => arr.indexOf(m) === idx);
 
   let lastErr: unknown;
@@ -455,16 +461,21 @@ export async function verifyProviderConnection(
           apiKey: key,
           httpOptions: { headers: { "User-Agent": "aistudio-build" } },
         });
-        let pingModel = "gemini-3.8-flash";
-        try {
-          await ai.models.get({
-            model: pingModel,
-          });
-        } catch {
-          pingModel = "gemini-3.1-flash-lite";
-          await ai.models.get({
-            model: pingModel,
-          });
+        const pingCandidates = ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
+        let pingModel = pingCandidates[0]!;
+        let pingErr: unknown = null;
+        for (const candidate of pingCandidates) {
+          try {
+            await ai.models.get({ model: candidate });
+            pingModel = candidate;
+            pingErr = null;
+            break;
+          } catch (err) {
+            pingErr = err;
+          }
+        }
+        if (pingErr) {
+          throw pingErr;
         }
         return {
           providerId,

@@ -25,6 +25,7 @@ export interface StageViewerHandle {
   setSpeaking: (speaking: boolean) => void;
   lookAt: (nx: number, ny: number) => void;
   setReducedMotion: (reduced: boolean) => void;
+  setPaused: (paused: boolean) => void;
   getState: () => { variant: string; emotion: CompanionEmotionState };
   resize: () => void;
   destroy: () => void;
@@ -284,6 +285,7 @@ export function createStageViewer(
   // Pre-allocated math helpers outside render loop
   let disposed = false;
   let contextLost = false;
+  let isPaused = false;
   let rafId = 0;
   let swTimerId: ReturnType<typeof setTimeout> | null = null;
   let lastTime = typeof performance !== "undefined" ? performance.now() : 0;
@@ -460,7 +462,7 @@ export function createStageViewer(
         clearTimeout(swTimerId);
         swTimerId = null;
       }
-    } else if (!contextLost) {
+    } else if (!contextLost && !isPaused) {
       lastTime = typeof performance !== "undefined" ? performance.now() : 0;
       cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(tick);
@@ -472,8 +474,23 @@ export function createStageViewer(
     document.addEventListener("visibilitychange", onVisibilityChange);
   }
 
+  function setPaused(paused: boolean) {
+    const next = Boolean(paused);
+    if (next === isPaused || disposed) return;
+    isPaused = next;
+    cancelAnimationFrame(rafId);
+    if (swTimerId) {
+      clearTimeout(swTimerId);
+      swTimerId = null;
+    }
+    if (!isPaused && !contextLost && (typeof document === "undefined" || !document.hidden)) {
+      lastTime = typeof performance !== "undefined" ? performance.now() : 0;
+      rafId = requestAnimationFrame(tick);
+    }
+  }
+
   function tick(now: number) {
-    if (disposed || contextLost) return;
+    if (disposed || contextLost || isPaused) return;
     if (typeof document !== "undefined" && document.hidden) return;
     const dt = Math.min(0.05, Math.max(0.001, (now - lastTime) / 1000));
     lastTime = now;
@@ -703,6 +720,7 @@ export function createStageViewer(
     setSpeaking,
     lookAt,
     setReducedMotion,
+    setPaused,
     getState: () => ({ variant: currentVariant, emotion: currentEmotion }),
     resize,
     destroy: () => {

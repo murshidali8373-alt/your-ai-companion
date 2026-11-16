@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
-const DEFAULT_BASE = "https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app";
-const LEGACY_BROKEN_HOST = "asfavkynho62d5znlmqa5n";
+const DEFAULT_BASE = "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
+const LEGACY_BROKEN_HOST = "5t53lwemhepi2nbkqb2reo";
 
 function normalizeBaseUrl(rawUrl) {
   if (!rawUrl || typeof rawUrl !== "string" || rawUrl.includes(LEGACY_BROKEN_HOST)) {

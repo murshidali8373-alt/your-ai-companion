@@ -12,7 +12,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import { AiError } from "./ai/errors";
 import { generate } from "./ai/orchestrator.server";
-import { buildSystemPrompt, parseBuddyReply, type BuddyReply } from "./ai/prompt";
+import {
+  buildSystemPrompt,
+  parseBuddyReply,
+  type BuddyActionType,
+  type BuddyReply,
+  type PlannedActionStep,
+} from "./ai/prompt";
 import { getBuddyPreset } from "./ai/buddy-personas";
 import { recommendSpecialistBuddy, type BuddyModeRecommendation } from "./ai/mode-recommendations";
 import { PROVIDERS, type ProviderId } from "./ai/model-hub";
@@ -96,9 +102,17 @@ export interface AskOutput {
   reply: BuddyReply;
   /** The element to highlight, re-resolved against the snapshot we were given. */
   highlightSelector: string | null;
+  targetSelector?: string | null;
   calloutTitle?: string | null;
   calloutDescription?: string | null;
-  actionType?: "click" | "type" | "scroll" | "inspect" | null;
+  actionType?: BuddyActionType | null;
+  targetText?: string | null;
+  targetField?: string | null;
+  targetValue?: string | null;
+  fields?: Record<string, string> | null;
+  scrollDirection?: "up" | "down" | "left" | "right" | "top" | "bottom" | null;
+  scrollTarget?: string | null;
+  steps?: PlannedActionStep[] | null;
   targetRect?: SnapshotElement["rect"] | null;
   buddyName: string;
   permission: PermissionLevel;
@@ -927,9 +941,12 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
     const calloutTitle = reply.calloutTitle || (element?.name ? element.name.slice(0, 50) : null);
     const calloutDescription =
       reply.calloutDescription || (element?.errorMessage ? element.errorMessage : null);
-    const actionType =
-      reply.actionType ||
-      (element?.role === "textbox" || element?.role === "textarea" ? "type" : "click");
+    const actionType: BuddyActionType | null =
+      reply.actionType ??
+      (reply.highlight &&
+      /^(?:locate|find|point|where|kahan|kidhar|show|dikhao)/i.test(`${input.intent} ${question}`)
+        ? "point"
+        : null);
 
     if (result.fellBack && input.preferredModel) {
       await event(
@@ -970,9 +987,17 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       taskId,
       reply,
       highlightSelector,
+      targetSelector: highlightSelector,
       calloutTitle,
       calloutDescription,
       actionType,
+      targetText: reply.targetText ?? element?.name ?? null,
+      targetField: reply.targetField ?? null,
+      targetValue: reply.targetValue ?? null,
+      fields: reply.fields ?? null,
+      scrollDirection: reply.scrollDirection ?? null,
+      scrollTarget: reply.scrollTarget ?? null,
+      steps: reply.steps ?? null,
       targetRect,
       buddyName: persona.name,
       permission,
@@ -1198,17 +1223,28 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
     const calloutTitle = reply.calloutTitle || (resolved?.name ? resolved.name.slice(0, 50) : null);
     const calloutDescription =
       reply.calloutDescription || (resolved?.errorMessage ? resolved.errorMessage : null);
-    const actionType =
-      reply.actionType ||
-      (resolved?.role === "textbox" || resolved?.role === "textarea" ? "type" : "click");
+    const actionType: BuddyActionType | null =
+      reply.actionType ??
+      (reply.highlight &&
+      /^(?:locate|find|point|where|kahan|kidhar|show|dikhao)/i.test(`${input.intent} ${question}`)
+        ? "point"
+        : null);
 
     return {
       taskId: null,
       reply,
       highlightSelector,
+      targetSelector: highlightSelector,
       calloutTitle,
       calloutDescription,
       actionType,
+      targetText: reply.targetText ?? resolved?.name ?? null,
+      targetField: reply.targetField ?? null,
+      targetValue: reply.targetValue ?? null,
+      fields: reply.fields ?? null,
+      scrollDirection: reply.scrollDirection ?? null,
+      scrollTarget: reply.scrollTarget ?? null,
+      steps: reply.steps ?? null,
       targetRect,
       buddyName: persona.name,
       permission,

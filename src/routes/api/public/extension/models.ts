@@ -76,6 +76,7 @@ export const Route = createFileRoute("/api/public/extension/models")({
         }));
 
         const fallbackSequence = [
+          "gemini-4-hydrogen",
           "gemini-3.8-flash",
           "groq-llama-3.3-70b",
           "openrouter-free-gemini-2.0-flash",
