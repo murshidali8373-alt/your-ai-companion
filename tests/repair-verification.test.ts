@@ -360,5 +360,85 @@ describe("AI Buddy System Repair Verification", () => {
       expect(runtimeSrc).toContain("function setPaused(paused: boolean)");
       expect(vendorSrc).toContain("setPaused");
     });
+
+    it("persists mute/stageSize/conversationBuffer, honors permission ladder, and keeps Tasks/Models resilient offline", () => {
+      const html = fs.readFileSync(path.join(root, "extension/sidepanel.html"), "utf-8");
+      const sp = fs.readFileSync(path.join(root, "extension/sidepanel.js"), "utf-8");
+      const bg = fs.readFileSync(path.join(root, "extension/background.js"), "utf-8");
+
+      // State hydration & persistence
+      expect(sp).toContain("hasBootHydrated");
+      expect(sp).toContain("persistMutedState");
+      expect(sp).toContain("applyStageSize");
+      expect(sp).toContain("getPermissionSettings");
+
+      // Guest / offline Tasks & Memories resilience
+      expect(sp).toContain("getLocalMemoriesStore");
+      expect(sp).toContain("recordTaskExecution");
+      expect(sp).toContain("localTaskHistory");
+
+      // Models tab offline fallback + userApiKey ping forwarding + Gemini 4 Hydrogen copy
+      expect(sp).toContain("bodyPayload.userApiKey = userApiKey");
+      expect(html).toContain("Gemini 4 Hydrogen recommended for fast DOM grounding");
+
+      // Semantic table/list clipboard copy and non-duplicating copy_list plan step
+      expect(bg).toContain('queryAllDeep("table tr")');
+      expect(bg).toContain("copyExtractedList");
+    });
+
+    it("enforces extension CORS preflight, stops buddy-switch storage loop, respects read-only form fill guard, and grounds table Q&A", async () => {
+      const { buildExtensionCorsHeadersForOrigin, handleExtensionOptions } =
+        await import("../src/lib/extension-cors.server");
+
+      const extHeaders = buildExtensionCorsHeadersForOrigin("chrome-extension://abcdefghijklmnop");
+      expect(extHeaders["access-control-allow-origin"]).toBe("chrome-extension://abcdefghijklmnop");
+      expect(extHeaders["access-control-allow-credentials"]).toBe("true");
+      expect(extHeaders["access-control-allow-methods"]).toContain("OPTIONS");
+
+      const optsRes = handleExtensionOptions(
+        new Request("http://localhost:3000/api/public/extension/ask", {
+          method: "OPTIONS",
+          headers: { Origin: "chrome-extension://abcdefghijklmnop" },
+        }),
+      );
+      expect(optsRes.status).toBe(204);
+      expect(optsRes.headers.get("access-control-allow-origin")).toBe(
+        "chrome-extension://abcdefghijklmnop",
+      );
+
+      const extensionRoutes = [
+        "ask.ts",
+        "buddies.ts",
+        "extract-document.ts",
+        "health.ts",
+        "memories.ts",
+        "models.ts",
+        "tasks.ts",
+        "test-model.ts",
+      ];
+      for (const routeFile of extensionRoutes) {
+        const routeSrc = fs.readFileSync(
+          path.join(root, "src/routes/api/public/extension", routeFile),
+          "utf-8",
+        );
+        expect(routeSrc).toContain("OPTIONS:");
+        expect(routeSrc).toContain("extensionJsonResponse");
+      }
+
+      const sp = fs.readFileSync(path.join(root, "extension/sidepanel.js"), "utf-8");
+      const bg = fs.readFileSync(path.join(root, "extension/background.js"), "utf-8");
+      const snap = fs.readFileSync(path.join(root, "extension/snapshot.js"), "utf-8");
+
+      expect(sp).toContain("function switchBuddy(slugOrId, { persist = true, silent = false }");
+      expect(sp).toContain("normalizeExtensionAssetUrl");
+      expect(sp).toContain("probeBuddyHealthOrigin");
+      expect(sp).toContain("localMemories");
+      expect(sp).toContain("let planLoopRunning = false;");
+      expect(sp).toContain('activePlan.status === "cancelled"');
+      expect(sp).toContain(String.raw`\bsubmit\b|file\s*return`);
+      expect(bg).toContain('credentials: "omit"');
+      expect(bg).toContain("snapshot.tables");
+      expect(snap).toContain("tables,");
+    });
   });
 });

@@ -423,6 +423,35 @@
 
   const raw = (document.body?.innerText || "").replace(/\s+/g, " ");
 
+  const tables = [];
+  try {
+    const tableEls = queryAll("table").filter(visible).slice(0, 6);
+    for (const tbl of tableEls) {
+      const headerCells = [...tbl.querySelectorAll("thead th, thead td")].map((c) =>
+        (c.innerText || "").trim().replace(/\s+/g, " ").slice(0, 100),
+      );
+      let rows = [];
+      const bodyRows = tbl.querySelectorAll("tbody tr");
+      const rowEls = bodyRows.length > 0 ? [...bodyRows] : [...tbl.querySelectorAll("tr")];
+      for (const tr of rowEls.slice(0, 25)) {
+        const cells = [...tr.querySelectorAll("th, td")].map((c) =>
+          (c.innerText || "").trim().replace(/\s+/g, " ").slice(0, 160),
+        );
+        if (cells.some(Boolean) && !SENSITIVE.test(cells.join(" "))) {
+          rows.push(cells);
+        }
+      }
+      if (headerCells.length && rows.length && rows[0].join("|") === headerCells.join("|")) {
+        rows = rows.slice(1);
+      }
+      if (headerCells.length || rows.length) {
+        tables.push({ headers: headerCells, rows });
+      }
+    }
+  } catch {
+    // Non-fatal
+  }
+
   return {
     url: location.href.slice(0, 2000),
     origin: location.origin,
@@ -433,6 +462,7 @@
     forms,
     controls,
     alerts,
+    tables,
     text: raw.slice(0, 8000),
     truncated: raw.length > 8000,
     pageCompleteness,

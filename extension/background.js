@@ -1332,6 +1332,104 @@ Return strictly valid JSON with keys:
     }
   }
 
+  // Specific question lookup across visible tables and page text before falling back to generic summary
+  const isSummaryQuery =
+    /\b(?:explain\s+(?:this\s+)?page|summarize|summary|what\s+is\s+this\s+page|page\s+kya\s+hai|overview)\b/i.test(
+      qLower,
+    );
+  if (snapshot && !isSummaryQuery) {
+    const STOPWORDS = new Set([
+      "what", "is", "are", "the", "of", "in", "on", "for", "to", "a", "an", "and", "or",
+      "this", "that", "page", "tell", "me", "about", "check", "show", "give", "find",
+      "kya", "hai", "ka", "ki", "ke", "mein", "me", "par", "batao", "bata", "kitna", "kitni",
+    ]);
+    const rawTokens = qLower
+      .replace(/[^\w\s-]/g, " ")
+      .split(/\s+/)
+      .filter((t) => t.length >= 2 && !STOPWORDS.has(t));
+    // Prefer specific alphanumeric/identifier tokens (like ord-9001, 9001, aarav)
+    const idTokens = rawTokens.filter((t) => /\d|-/.test(t) || t.length >= 4);
+    const searchTokens = idTokens.length > 0 ? idTokens : rawTokens;
+
+    if (searchTokens.length > 0 && Array.isArray(snapshot.tables) && snapshot.tables.length > 0) {
+      const matchedRows = [];
+      for (const tbl of snapshot.tables) {
+        const headers = Array.isArray(tbl.headers) ? tbl.headers : [];
+        for (const row of tbl.rows || []) {
+          const rowText = row.join(" ").toLowerCase();
+          const score = searchTokens.reduce((acc, tok) => acc + (rowText.includes(tok) ? (/\d/.test(tok) ? 3 : 1) : 0), 0);
+          if (score > 0) {
+            const formatted = headers.length === row.length
+              ? row.map((cell, idx) => `${headers[idx]}: ${cell}`).join(" | ")
+              : row.join(" | ");
+            matchedRows.push({ score, formatted });
+          }
+        }
+      }
+      matchedRows.sort((a, b) => b.score - a.score);
+      if (matchedRows.length > 0) {
+        const isHindi = activeBuddy.defaultLanguage !== "english";
+        const topMatches = matchedRows.slice(0, 3).map((m) => `• ${m.formatted}`).join("\n");
+        const answer = isHindi
+          ? `Active page ("${snapshot.title || "Current Page"}") par matching details mile hain:\n${topMatches}`
+          : `Found matching details on "${snapshot.title || "Current Page"}":\n${topMatches}`;
+        return {
+          taskId: null,
+          reply: {
+            answer,
+            highlight: null,
+            confidence: "high",
+            needs: null,
+            emotion: "happy",
+          },
+          highlightSelector: null,
+          buddyName: activeBuddy.name,
+          permission: "explain",
+          guest: true,
+          providerWarning,
+        };
+      }
+    }
+
+    if (searchTokens.length > 0 && snapshot.text) {
+      const textLower = snapshot.text.toLowerCase();
+      let bestTok = null;
+      let bestIdx = -1;
+      for (const tok of [...searchTokens].sort((a, b) => (/\d/.test(b) ? 1 : 0) - (/\d/.test(a) ? 1 : 0) || b.length - a.length)) {
+        const idx = textLower.indexOf(tok);
+        if (idx >= 0) {
+          bestTok = tok;
+          bestIdx = idx;
+          break;
+        }
+      }
+      if (bestIdx >= 0) {
+        const start = Math.max(0, bestIdx - 80);
+        const end = Math.min(snapshot.text.length, bestIdx + 180);
+        const excerpt = snapshot.text.slice(start, end).trim();
+        const isHindi = activeBuddy.defaultLanguage !== "english";
+        const answer = isHindi
+          ? `Page par "${bestTok}" ke paas yeh detail visible hai:\n"${excerpt}"`
+          : `Visible on "${snapshot.title || "Current Page"}" near "${bestTok}":\n"${excerpt}"`;
+        return {
+          taskId: null,
+          reply: {
+            answer,
+            highlight: null,
+            confidence: "high",
+            needs: null,
+            emotion: "happy",
+          },
+          highlightSelector: null,
+          buddyName: activeBuddy.name,
+          permission: "explain",
+          guest: true,
+          providerWarning,
+        };
+      }
+    }
+  }
+
   // Page Explanation / Summary / General Page Analysis
   if (snapshot) {
     const title = snapshot.title || "active page";
@@ -1431,33 +1529,80 @@ Return strictly valid JSON with keys:
   };
 }
 
+let verifiedExtensionOriginCache = null;
+
+async function isHealthyBuddyOrigin(origin) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1800);
+    try {
+      const res = await fetch(`${origin}/api/public/extension/health`, { signal: controller.signal });
+      if (!res.ok) return false;
+      const data = await res.json().catch(() => null);
+      return Boolean(data && (data.ok !== undefined || data.checks));
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return false;
+  }
+}
+
 async function resolveExtensionApiBase(session, lastBase) {
   let apiBase = session?.apiBase || lastBase;
+  if (!apiBase) {
+    try {
+      const stored = await chrome.storage.local.get("buddyApiBaseUrl");
+      if (stored?.buddyApiBaseUrl) apiBase = stored.buddyApiBaseUrl;
+    } catch {}
+  }
   if (apiBase && apiBase.includes(LEGACY_BROKEN_HOST)) {
     apiBase = DEFAULT_HOST;
     chrome.storage.local.set({ lastBase: DEFAULT_HOST }).catch(() => {});
   }
 
   if (!apiBase) {
+    if (verifiedExtensionOriginCache) return verifiedExtensionOriginCache;
     try {
       const allTabs = await chrome.tabs.query({});
+      const candidateOrigins = [];
+      let sawLocalDevTab = false;
       for (const t of allTabs) {
         if (t?.url && !RESTRICTED.test(t.url)) {
-          const u = new URL(t.url);
-          if (
-            u.protocol.startsWith("http") &&
-            !u.hostname.includes("aistudio.google.com") &&
-            !u.hostname.includes(LEGACY_BROKEN_HOST) &&
-            (u.hostname.includes("run.app") ||
-              u.hostname === "localhost" ||
-              u.hostname === "127.0.0.1" ||
+          try {
+            const u = new URL(t.url);
+            if (u.hostname === "localhost" || u.hostname === "127.0.0.1") {
+              sawLocalDevTab = true;
+            }
+            const isBuddyTab =
               t.title?.includes("AI Buddy") ||
-              t.title?.includes("your-ai-companion"))
-          ) {
-            apiBase = u.origin;
-            chrome.storage.local.set({ lastBase: apiBase }).catch(() => {});
-            break;
-          }
+              t.title?.includes("your-ai-companion") ||
+              u.port === "3000" ||
+              u.hostname.includes("run.app");
+            if (
+              u.protocol.startsWith("http") &&
+              !u.hostname.includes("aistudio.google.com") &&
+              !u.hostname.includes(LEGACY_BROKEN_HOST) &&
+              isBuddyTab
+            ) {
+              if (t.title?.includes("AI Buddy") || t.title?.includes("your-ai-companion")) {
+                candidateOrigins.unshift(u.origin);
+              } else {
+                candidateOrigins.push(u.origin);
+              }
+            }
+          } catch {}
+        }
+      }
+      if (sawLocalDevTab) {
+        candidateOrigins.push("http://localhost:3000");
+      }
+      for (const origin of [...new Set(candidateOrigins)]) {
+        if (await isHealthyBuddyOrigin(origin)) {
+          apiBase = origin;
+          verifiedExtensionOriginCache = origin;
+          chrome.storage.local.set({ lastBase: origin }).catch(() => {});
+          break;
         }
       }
     } catch {}
@@ -1576,7 +1721,7 @@ async function extractUploadedDocument(doc) {
       method: "POST",
       headers,
       body: reqBody,
-      credentials: "include",
+      credentials: "omit",
     });
     const ct = res.headers.get("content-type") || "";
     let data = ct.includes("application/json") ? await res.json().catch(() => null) : null;
@@ -1784,7 +1929,7 @@ async function ask(
           method: "POST",
           headers,
           body: payload,
-          credentials: "include",
+          credentials: "omit",
         });
         apiBase = host;
         lastNetErr = null;
@@ -4068,19 +4213,36 @@ async function executeAction(action, selector, value, options = {}) {
         let textsToCopy = [];
 
         if (sel) {
-          const els = queryAllDeep(sel).slice(0, opts?.limit || 10);
+          const els = queryAllDeep(sel).slice(0, opts?.limit || 25);
           textsToCopy = els
             .map((el) => normalize(el.innerText || el.value || el.textContent))
             .filter(Boolean);
         } else if (query) {
           const q = query.toLowerCase();
-          const cand = queryAllDeep("td, span, div, li, p").filter((el) => {
-            const t = normalize(el.innerText || el.textContent).toLowerCase();
-            return t.includes(q) && (!el.children.length || el.children.length < 3);
-          });
-          textsToCopy = cand
-            .slice(0, opts?.limit || 10)
-            .map((el) => normalize(el.innerText || el.textContent));
+          if (/^(?:table|tables|rows|table\s+rows)$/.test(q)) {
+            const rows = queryAllDeep("table tr").slice(0, opts?.limit || 40);
+            textsToCopy = rows
+              .map((tr) =>
+                [...tr.querySelectorAll("th, td")]
+                  .map((c) => normalize(c.innerText || c.textContent))
+                  .filter(Boolean)
+                  .join(" | "),
+              )
+              .filter(Boolean);
+          } else if (/^(?:data|list|items|order_id|orders)$/.test(q)) {
+            const items = queryAllDeep("table tbody tr, ul li").slice(0, opts?.limit || 30);
+            textsToCopy = items
+              .map((el) => normalize(el.innerText || el.textContent))
+              .filter(Boolean);
+          } else {
+            const cand = queryAllDeep("td, span, div, li, p").filter((el) => {
+              const t = normalize(el.innerText || el.textContent).toLowerCase();
+              return t.includes(q) && (!el.children.length || el.children.length < 3);
+            });
+            textsToCopy = cand
+              .slice(0, opts?.limit || 10)
+              .map((el) => normalize(el.innerText || el.textContent));
+          }
         }
 
         if (textsToCopy.length === 0) {
@@ -4872,6 +5034,47 @@ async function executePlanStepInTab(step, options = {}) {
 
   // 2. Data extraction
   if (step.action === "extract") {
+    if (step.value === "copy_list" && Array.isArray(options?.extractedDataStore) && options.extractedDataStore.length > 0) {
+      const formattedText = options.extractedDataStore
+        .map((d) =>
+          typeof d === "string"
+            ? d
+            : d?.orderId
+              ? `${d.orderId} (${d.status || "pending"}) — ${d.details || ""}`
+              : JSON.stringify(d),
+        )
+        .join("\n");
+      const tab = await activeTab();
+      if (tab?.id && tab.url && !RESTRICTED.test(tab.url)) {
+        await runTabScript({
+          target: { tabId: tab.id },
+          func: (txt) => {
+            try {
+              if (navigator.clipboard?.writeText) {
+                navigator.clipboard.writeText(txt).catch(() => {});
+              }
+            } catch {}
+            try {
+              const ta = document.createElement("textarea");
+              ta.value = txt;
+              ta.style.position = "fixed";
+              ta.style.opacity = "0";
+              document.body.appendChild(ta);
+              ta.select();
+              document.execCommand("copy");
+              ta.remove();
+            } catch {}
+          },
+          args: [formattedText],
+          label: "copyExtractedList",
+        });
+      }
+      return {
+        ok: true,
+        verified: true,
+        result: `Prepared & copied ${options.extractedDataStore.length} extracted item(s).`,
+      };
+    }
     const extractRes = await extractPageData(
       step.selector,
       step.value || "order_id",

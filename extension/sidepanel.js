@@ -5,32 +5,79 @@ const LEGACY_BROKEN_HOST = "5t53lwemhepi2nbkqb2reo";
 const RESTRICTED =
   /^(chrome|edge|about|chrome-extension|devtools|view-source):|chromewebstore\.google\.com|chrome\.google\.com\/webstore/;
 
+let verifiedBackendBaseCache = null;
+
+function normalizeExtensionAssetUrl(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "./assets/buddy-general-3d.webp";
+  if (s.startsWith("/assets/")) return `.${s}`;
+  return s;
+}
+
+async function probeBuddyHealthOrigin(origin, timeoutMs = 1800) {
+  try {
+    const res = await fetchWithTimeout(`${origin}/api/public/extension/health`, {}, timeoutMs);
+    if (!res.ok) return false;
+    const j = await res.json().catch(() => null);
+    return Boolean(j && (j.ok !== undefined || j.checks));
+  } catch {
+    return false;
+  }
+}
+
 async function getResolvedBackendBase() {
-  const { lastBase, session } = await chrome.storage.local.get(["lastBase", "session"]);
-  let base = session?.apiBase || lastBase;
+  const { lastBase, session, buddyApiBaseUrl } = await chrome.storage.local.get([
+    "lastBase",
+    "session",
+    "buddyApiBaseUrl",
+  ]);
+  let base = session?.apiBase || lastBase || buddyApiBaseUrl;
   if (base && base.includes(LEGACY_BROKEN_HOST)) {
     base = DEFAULT_BASE;
     chrome.storage.local.set({ lastBase: DEFAULT_BASE }).catch(() => {});
   }
   if (!base) {
+    if (verifiedBackendBaseCache) return verifiedBackendBaseCache;
     try {
       const allTabs = await chrome.tabs.query({});
+      const candidateOrigins = [];
+      let sawLocalDevTab = false;
       for (const t of allTabs) {
         if (t?.url && !RESTRICTED.test(t.url)) {
-          const u = new URL(t.url);
-          if (
-            u.protocol.startsWith("http") &&
-            !u.hostname.includes("aistudio.google.com") &&
-            !u.hostname.includes(LEGACY_BROKEN_HOST) &&
-            (u.hostname.includes("run.app") ||
-              u.hostname === "localhost" ||
-              u.hostname === "127.0.0.1" ||
-              t.title?.includes("AI Buddy"))
-          ) {
-            base = u.origin;
-            chrome.storage.local.set({ lastBase: base }).catch(() => {});
-            break;
-          }
+          try {
+            const u = new URL(t.url);
+            if (u.hostname === "localhost" || u.hostname === "127.0.0.1") {
+              sawLocalDevTab = true;
+            }
+            const isBuddyTab =
+              t.title?.includes("AI Buddy") ||
+              t.title?.includes("your-ai-companion") ||
+              u.port === "3000" ||
+              u.hostname.includes("run.app");
+            if (
+              u.protocol.startsWith("http") &&
+              !u.hostname.includes("aistudio.google.com") &&
+              !u.hostname.includes(LEGACY_BROKEN_HOST) &&
+              isBuddyTab
+            ) {
+              if (t.title?.includes("AI Buddy") || t.title?.includes("your-ai-companion")) {
+                candidateOrigins.unshift(u.origin);
+              } else {
+                candidateOrigins.push(u.origin);
+              }
+            }
+          } catch {}
+        }
+      }
+      if (sawLocalDevTab) {
+        candidateOrigins.push("http://localhost:3000");
+      }
+      for (const origin of [...new Set(candidateOrigins)]) {
+        if (await probeBuddyHealthOrigin(origin)) {
+          base = origin;
+          verifiedBackendBaseCache = origin;
+          chrome.storage.local.set({ lastBase: origin }).catch(() => {});
+          break;
         }
       }
     } catch {}
@@ -735,17 +782,21 @@ function updateSpecialistProp(cue, outfitColor) {
  * Transitions active character, updates outfit gradient, props, artwork image,
  * updates persona banner, and persists the choice in local storage.
  */
-function switchBuddy(slugOrId) {
+function switchBuddy(slugOrId, { persist = true, silent = false } = {}) {
   const target = allBuddies.find((b) => b.slug === slugOrId || b.id === slugOrId);
   if (!target) return;
 
+  const prevSlug = selectedBuddySlug;
+  const prevCustomId = selectedCustomBuddyId;
   selectedBuddySlug = target.slug;
   selectedCustomBuddyId = target.isCustom ? target.id || target.slug.replace("custom:", "") : null;
 
-  chrome.storage.local.set({
-    selectedBuddySlug,
-    selectedCustomBuddyId,
-  });
+  if (persist && (prevSlug !== selectedBuddySlug || prevCustomId !== selectedCustomBuddyId)) {
+    chrome.storage.local.set({
+      selectedBuddySlug,
+      selectedCustomBuddyId,
+    }).catch(() => {});
+  }
 
   // 1. Update Carousel selection highlight
   document.querySelectorAll(".buddy-card").forEach((card) => {
@@ -781,18 +832,24 @@ function switchBuddy(slugOrId) {
   // 5. Update Pre-rendered 3D Artwork & Real-time 3D GLB Variant
   const img3d = $("buddy3dImg");
   if (img3d) {
-    img3d.src = target.image || "./assets/buddy-general-3d.webp";
+    img3d.onerror = () => {
+      img3d.onerror = null;
+      img3d.src = "./assets/buddy-general-3d.webp";
+    };
+    img3d.src = normalizeExtensionAssetUrl(target.image);
     img3d.alt = target.name;
   }
   if (buddy3dViewer) {
     buddy3dViewer.loadVariant(target.slug);
   }
 
-  // 6. Natural greeting feedback on switch
-  setRigEmotion("happy", target.name.split(" ")[0]);
-  setTimeout(() => {
-    if (currentEmotion === "happy") setRigEmotion("idle", "Ready");
-  }, 900);
+  // 6. Natural greeting feedback on interactive switch
+  if (!silent) {
+    setRigEmotion("happy", target.name.split(" ")[0]);
+    setTimeout(() => {
+      if (currentEmotion === "happy") setRigEmotion("idle", "Ready");
+    }, 900);
+  }
 }
 
 /**
@@ -813,10 +870,11 @@ function renderBuddyCarousel() {
     const thumb = document.createElement("div");
     thumb.className = "buddy-thumb";
     const img = document.createElement("img");
-    img.src = buddy.image || "./assets/buddy-general-3d.webp";
+    img.src = normalizeExtensionAssetUrl(buddy.image);
     img.alt = buddy.name;
     img.loading = "lazy";
     img.onerror = () => {
+      img.onerror = null;
       img.src = "./assets/buddy-general-3d.webp";
     };
     thumb.appendChild(img);
@@ -1395,6 +1453,85 @@ async function pointArmAtElement() {
   }, 4000);
 }
 
+let hasBootHydrated = false;
+
+async function getPermissionSettings() {
+  try {
+    const { permissionLevel, requireConsent } = await chrome.storage.local.get([
+      "permissionLevel",
+      "requireConsent",
+    ]);
+    return {
+      permissionLevel: permissionLevel || "assist",
+      requireConsent: requireConsent !== false,
+    };
+  } catch {
+    return { permissionLevel: "assist", requireConsent: true };
+  }
+}
+
+function applyStageSize(sizeVal) {
+  const stage = $("characterStage");
+  if (!stage) return;
+  const val = sizeVal || "normal";
+  if ($("sizeSelect")) $("sizeSelect").value = val;
+  const wrap3d = $("buddy3dCanvasWrap");
+  const svg = $("characterSvg");
+  const img = $("buddy3dImg");
+  if (val === "hidden") {
+    stage.style.display = "none";
+    buddy3dViewer?.setPaused?.(true);
+  } else if (val === "compact") {
+    stage.style.display = "flex";
+    if (wrap3d) {
+      wrap3d.style.width = "102px";
+      wrap3d.style.height = "102px";
+    }
+    if (svg) {
+      svg.style.width = "90px";
+      svg.style.height = "100px";
+    }
+    if (img) {
+      img.style.width = "90px";
+      img.style.height = "90px";
+    }
+    if (currentRenderMode === "3d") {
+      buddy3dViewer?.setPaused?.(false);
+      buddy3dViewer?.resize();
+    }
+  } else {
+    stage.style.display = "flex";
+    if (wrap3d) {
+      wrap3d.style.width = "132px";
+      wrap3d.style.height = "132px";
+    }
+    if (svg) {
+      svg.style.width = "120px";
+      svg.style.height = "120px";
+    }
+    if (img) {
+      img.style.width = "110px";
+      img.style.height = "110px";
+    }
+    if (currentRenderMode === "3d") {
+      buddy3dViewer?.setPaused?.(false);
+      buddy3dViewer?.resize();
+    }
+  }
+}
+
+async function persistMutedState(muted) {
+  isMuted = Boolean(muted);
+  if (isMuted && window.speechSynthesis) window.speechSynthesis.cancel();
+  if ($("muteToggle")) $("muteToggle").checked = isMuted;
+  if ($("settingsVoiceToggleBtn")) {
+    $("settingsVoiceToggleBtn").textContent = isMuted ? "🔇 Muted" : "🔊 Unmuted";
+  }
+  try {
+    await chrome.storage.local.set({ isMuted });
+  } catch {}
+}
+
 async function render() {
   const {
     session,
@@ -1402,20 +1539,48 @@ async function render() {
     selectedCustomBuddyId: savedCustomId,
     avatarRenderMode: savedMode,
     selectedProvider: savedProvider,
+    isMuted: savedMuted,
+    stageSize: savedStageSize,
+    conversationBuffer: savedBuffer,
+    preferredModel,
   } = await chrome.storage.local.get([
     "session",
     "selectedBuddySlug",
     "selectedCustomBuddyId",
     "avatarRenderMode",
     "selectedProvider",
+    "isMuted",
+    "stageSize",
+    "conversationBuffer",
+    "preferredModel",
   ]);
 
   if (savedSlug) selectedBuddySlug = savedSlug;
   if (savedCustomId) selectedCustomBuddyId = savedCustomId;
   if (savedMode) currentRenderMode = savedMode;
   if (savedProvider) selectedProvider = savedProvider;
+  if (typeof savedMuted === "boolean") {
+    isMuted = savedMuted;
+    if ($("muteToggle")) $("muteToggle").checked = isMuted;
+    if ($("settingsVoiceToggleBtn")) {
+      $("settingsVoiceToggleBtn").textContent = isMuted ? "🔇 Muted" : "🔊 Unmuted";
+    }
+  }
   if ($("providerSelector")) $("providerSelector").value = selectedProvider;
   updateProviderNoticeUI(selectedProvider);
+
+  if (!hasBootHydrated) {
+    hasBootHydrated = true;
+    if (Array.isArray(savedBuffer) && savedBuffer.length > 0 && conversationBuffer.length === 0) {
+      for (const turn of savedBuffer.slice(-MAX_CONVERSATION_TURNS)) {
+        if (turn?.user && turn?.assistant) {
+          conversationBuffer.push({ user: turn.user, assistant: turn.assistant });
+          appendHistory("user", turn.user);
+          appendHistory("buddy", turn.assistant);
+        }
+      }
+    }
+  }
 
   const isAuth = Boolean(session);
   if ($("signoutBtn")) $("signoutBtn").hidden = !isAuth;
@@ -1445,6 +1610,7 @@ async function render() {
             ...BUDDIES_REGISTRY.filter((b) => !b.isCustom),
             ...customItems.map((c) => ({
               ...c,
+              image: normalizeExtensionAssetUrl(c.image || "./assets/buddy-ecommerce-3d.webp"),
               outfitColors: ["#0d9488", "#0f766e"],
             })),
           ];
@@ -1458,21 +1624,23 @@ async function render() {
     initBuddy3DStage();
   }
   renderBuddyCarousel();
-  switchBuddy(selectedBuddySlug);
+  switchBuddy(selectedBuddySlug, { persist: false, silent: true });
   applyRenderMode(currentRenderMode);
   if ($("avatarRenderMode")) $("avatarRenderMode").value = currentRenderMode;
+  if (savedStageSize) applyStageSize(savedStageSize);
   checkPageForErrors();
+  checkSavedCheckpoint();
   updateGreetingContext();
   startRotatingPlaceholders();
   loadModelHubStatus();
-  chrome.storage.local
-    .get("preferredModel")
-    .then(({ preferredModel }) => {
-      if ($("headerModelLabel") && preferredModel && preferredModel !== "auto") {
-        $("headerModelLabel").textContent = preferredModel;
-      }
-    })
-    .catch(() => {});
+  if ($("headerModelLabel") && preferredModel && preferredModel !== "auto") {
+    const matchedOpt = Array.from($("modelSelector")?.options || []).find(
+      (o) => o.value === preferredModel,
+    );
+    $("headerModelLabel").textContent = matchedOpt
+      ? matchedOpt.text.split(" (")[0]
+      : preferredModel;
+  }
 }
 
 function applyRenderMode(mode) {
@@ -2243,7 +2411,7 @@ function parseActionIntent(text) {
 
     if (clean.length > 0) {
       const isConsequential =
-        /purchase|buy|pay|delete|remove account|confirm payment|place\s*order|checkout|confirm\s*order|transfer\s*money|send\s*money/i.test(
+        /purchase|buy|pay|delete|remove account|confirm payment|place\s*order|checkout|confirm\s*order|\bsubmit\b|file\s*return|transfer\s*money|send\s*money/i.test(
           clean,
         );
       return { type: "CLICK", target: clean, isConsequential };
@@ -2291,6 +2459,24 @@ function parseActionIntent(text) {
 async function executeNaturalBrowserAction(intent, trimmed) {
   const active = getActiveBuddy();
   const isHindi = active.defaultLanguage !== "english";
+  const mutatingIntents = new Set(["NAVIGATE", "MULTI_STEP", "SELECT", "CHECK", "CLICK", "FORM_FILL"]);
+  if (mutatingIntents.has(intent.type)) {
+    const { permissionLevel } = await getPermissionSettings();
+    if (permissionLevel === "observe" || permissionLevel === "explain") {
+      appendHistory("user", trimmed);
+      $("promptInput").value = "";
+      if (permissionLevel === "explain" && (intent.target || intent.value)) {
+        await executeFind(intent.target || intent.value, "point");
+      }
+      const blockedMsg = isHindi
+        ? `🛡️ Settings mein abhi "${permissionLevel === "observe" ? "Level 1: Observe" : "Level 2: Explain"}" mode active hai, isliye main page par action execute nahi kar raha hoon. Actions chalane ke liye Settings tab mein Assist (Level 4) ya Execute (Level 5) select karein.`
+        : `🛡️ Permission is set to "${permissionLevel === "observe" ? "Level 1: Observe" : "Level 2: Explain"}" in Settings, so page mutations are paused. Switch to Level 4: Assist or Level 5: Execute in Settings to allow actions.`;
+      setRigEmotion("concerned", "Read-Only");
+      $("statusText").textContent = blockedMsg;
+      appendHistory("buddy", blockedMsg);
+      return true;
+    }
+  }
 
   if (intent.type === "GREETING") {
     appendHistory("user", trimmed);
@@ -2310,8 +2496,8 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     $("promptInput").value = "";
     setRigEmotion("happy", "Ready");
     const helpMsg = isHindi
-      ? `Main aapka ${active.name} hoon! Aap mujhe seedhe chat mein koi bhi action bol sakte hain:\n• Point: "address field par point karo"\n• Click: "submit button click karo"\n• Fill: "is form mein naam Murshad Ali fill kar do"\n• Scroll: "neeche scroll karo" ya "page ke last mein jao"\n• Multi-step: "Meesho dashboard open karo, pending orders find karo..."`
-      : `I am ${active.name}, your browser action companion! Just tell me what to do:\n• Point: "Point to address field" (highlights without clicking)\n• Click: "Click submit button"\n• Fill: "Fill name Murshad Ali in this form"\n• Scroll: "Scroll down" / "Scroll to footer"\n• Multi-step: Chain steps in one message`;
+      ? `Main aapka ${active.name} hoon! Aap mujhe seedhe chat mein koi bhi action bol sakte hain:\n• Point: "address field par point karo"\n• Click: "submit button click karo"\n• Fill: "is form mein naam fill kar do"\n• Scroll: "neeche scroll karo" ya "page ke last mein jao"\n• Multi-step: "Meesho dashboard open karo, pending orders find karo..."`
+      : `I am ${active.name}, your browser action companion! Just tell me what to do:\n• Point: "Point to address field" (highlights without clicking)\n• Click: "Click submit button"\n• Fill: "Fill this form"\n• Scroll: "Scroll down" / "Scroll to footer"\n• Multi-step: Chain steps in one message`;
     appendHistory("buddy", helpMsg);
     $("statusText").textContent = `Capabilities of ${active.name}.`;
     speakResponse(helpMsg, "happy");
@@ -2492,8 +2678,11 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     appendHistory("user", trimmed);
     $("promptInput").value = "";
 
-    // Consequential actions approval gate (payment, purchase, deletion, government form submission)
-    let needsConfirm = Boolean(intent.isConsequential);
+    // Consequential actions approval gate & permission ladder check
+    const { permissionLevel, requireConsent } = await getPermissionSettings();
+    let needsConfirm =
+      permissionLevel === "suggest" ||
+      (requireConsent !== false && Boolean(intent.isConsequential));
     try {
       const activeT = await queryActiveWebTab();
       const activeUrl = (activeT?.url || "").toLowerCase();
@@ -2904,12 +3093,21 @@ async function sendQuery(question, intent) {
     // If AI planned real action(s), execute them instead of only explaining!
     const CONSEQUENTIAL_RE =
       /pay|checkout|purchase|\bbuy\b|place\s*order|delete|remove\s*account|confirm\s*order|\bsubmit\b|file\s*return/i;
-    const { requireConsent } = await chrome.storage.local
-      .get("requireConsent")
-      .catch(() => ({ requireConsent: true }));
+    const { permissionLevel, requireConsent } = await getPermissionSettings();
     const consentRequired = requireConsent !== false;
+    const readOnlyMode = permissionLevel === "observe" || permissionLevel === "explain";
 
-    if (Array.isArray(res.steps) && res.steps.length > 0) {
+    if (readOnlyMode && (res.steps?.length || (res.actionType && res.actionType !== "point" && res.actionType !== "inspect"))) {
+      if (res.highlightSelector || res.targetSelector) {
+        lastHighlightSelector = res.highlightSelector || res.targetSelector;
+      }
+      appendHistory(
+        "buddy",
+        isHindi
+          ? `🛡️ Permission level "${permissionLevel}" active hai, isliye page action auto-run nahi kiya gaya.`
+          : `🛡️ Permission level "${permissionLevel}" is active, so automated page changes were skipped.`,
+      );
+    } else if (Array.isArray(res.steps) && res.steps.length > 0) {
       const planId = `plan_ai_${Date.now()}`;
       activePlan = {
         id: planId,
@@ -2924,9 +3122,10 @@ async function sendQuery(question, intent) {
           value: s.value || undefined,
           selector: s.selector || undefined,
           requiresApproval:
-            consentRequired &&
-            (Boolean(s.isConsequential) ||
-              CONSEQUENTIAL_RE.test(`${s.title || ""} ${s.textTarget || ""}`)),
+            permissionLevel === "suggest" ||
+            (consentRequired &&
+              (Boolean(s.isConsequential) ||
+                CONSEQUENTIAL_RE.test(`${s.title || ""} ${s.textTarget || ""}`))),
           status: "pending",
         })),
         currentStepIndex: 0,
@@ -2947,7 +3146,7 @@ async function sendQuery(question, intent) {
       (res.targetSelector || res.targetText)
     ) {
       const actionLabel = res.targetText || res.targetSelector || "target";
-      if (consentRequired && CONSEQUENTIAL_RE.test(actionLabel)) {
+      if (permissionLevel === "suggest" || (consentRequired && CONSEQUENTIAL_RE.test(actionLabel))) {
         pendingAction = {
           type: res.actionType === "open_link" ? "open_link" : "click",
           selector: res.targetSelector || undefined,
@@ -3044,7 +3243,10 @@ async function sendQuery(question, intent) {
       await executeScroll(res.scrollDirection || "down", 450, res.scrollTarget || null, true);
     }
 
-    lastHighlightSelector = res.highlightSelector || null;
+    lastHighlightSelector =
+      res.highlightSelector ||
+      (res.actionType === "point" ? res.targetSelector : null) ||
+      null;
     lastCallout = { title: res.calloutTitle || null, description: res.calloutDescription || null };
 
     if (lastHighlightSelector) {
@@ -3091,6 +3293,24 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
   const active = getActiveBuddy();
   const isHindi = active.defaultLanguage !== "english";
   if ($("formFillCard")) $("formFillCard").hidden = false;
+
+  try {
+    const { permissionLevel } = await getPermissionSettings();
+    if (permissionLevel === "observe" || permissionLevel === "explain") {
+      const blockedMsg = isHindi
+        ? `🛡️ Settings mein abhi "${permissionLevel === "observe" ? "Level 1: Observe" : "Level 2: Explain"}" mode active hai, isliye main form inputs change nahi kar raha hoon.`
+        : `🛡️ Permission is set to "${permissionLevel === "observe" ? "Level 1: Observe" : "Level 2: Explain"}" in Settings, so form filling is paused.`;
+      if ($("formFillReport")) {
+        $("formFillReport").hidden = false;
+        $("formFillReport").textContent = blockedMsg;
+      }
+      setRigEmotion("concerned", "Read-Only");
+      $("statusText").textContent = blockedMsg;
+      appendHistory("buddy", blockedMsg);
+      return;
+    }
+  } catch {}
+
   $("statusText").textContent = "Inspecting & filling form fields on active page…";
 
   const SENSITIVE_FIELD_RE =
@@ -3115,9 +3335,23 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
       savedProfileData = activeUploadedDocument.fields;
     } else {
       try {
-        const { userProfile = {} } = await chrome.storage.local.get("userProfile");
+        const { userProfile = {}, localMemories = [] } = await chrome.storage.local.get([
+          "userProfile",
+          "localMemories",
+        ]);
         if (userProfile && Object.keys(userProfile).length > 0) {
           savedProfileData = userProfile;
+        } else if (Array.isArray(localMemories) && localMemories.length > 0) {
+          const MEM_META_KEYS = new Set(["preferred_language", "ecommerce_platform"]);
+          const memFields = {};
+          for (const item of localMemories) {
+            const k = String(item?.key || "").trim();
+            const v = String(item?.value || "").trim();
+            if (k && v && !MEM_META_KEYS.has(k.toLowerCase()) && !SENSITIVE_FIELD_RE.test(k)) {
+              memFields[k] = v;
+            }
+          }
+          if (Object.keys(memFields).length > 0) savedProfileData = memFields;
         }
       } catch {}
     }
@@ -3554,8 +3788,11 @@ async function startMultiActionPlan(instruction) {
   await runPlanLoop();
 }
 
+let planLoopRunning = false;
+
 async function runPlanLoop() {
-  if (!activePlan) return;
+  if (!activePlan || activePlan.status === "cancelled" || planLoopRunning) return;
+  planLoopRunning = true;
 
   // Persist plan state to chrome.storage.local to survive service worker / sidepanel cycles
   const persistPlanState = async () => {
@@ -3566,7 +3803,8 @@ async function runPlanLoop() {
     }
   };
 
-  while (activePlan.currentStepIndex < activePlan.steps.length) {
+  try {
+  while (activePlan && activePlan.status !== "cancelled" && activePlan.currentStepIndex < activePlan.steps.length) {
     if (isPlanPaused) {
       activePlan.status = "paused";
       await persistPlanState();
@@ -3663,6 +3901,7 @@ async function runPlanLoop() {
       // Non-fatal
     }
 
+    if (!activePlan || activePlan.status === "cancelled") return;
     if (res?.ok) {
       currentStep.status = "completed";
       currentStep.verified = true;
@@ -3682,11 +3921,13 @@ async function runPlanLoop() {
       await persistPlanState();
       renderTaskPlanUI();
       await new Promise((r) => setTimeout(r, 400));
+      if (!activePlan || activePlan.status === "cancelled") return;
     } else {
       currentStep.status = "failed";
       currentStep.error = res?.error || "Action execution failed";
       activePlan.status = "failed";
       await persistPlanState();
+      recordTaskExecution(activePlan).catch(() => {});
       renderTaskPlanUI();
       setRigEmotion("error", "Failed");
       appendHistory("buddy", `⚠️ Step ${currentStep.stepNumber} failed: ${currentStep.error}`);
@@ -3695,10 +3936,12 @@ async function runPlanLoop() {
     }
   }
 
+  if (!activePlan || activePlan.status === "cancelled") return;
   // All steps completed
   activePlan.status = "completed";
   if ($("planRetryBtn")) $("planRetryBtn").hidden = true;
   await persistPlanState();
+  recordTaskExecution(activePlan).catch(() => {});
   try {
     await chrome.storage.local.remove("savedCheckpoint");
   } catch {}
@@ -3709,6 +3952,9 @@ async function runPlanLoop() {
     "buddy",
     `✅ Multi-action workflow completed! Executed and verified all ${activePlan.steps.length} steps.${extractedCount > 0 ? ` Extracted ${extractedCount} items.` : ""}`,
   );
+  } finally {
+    planLoopRunning = false;
+  }
 }
 
 function renderExtractedDataUI() {
@@ -4295,8 +4541,10 @@ if ($("autoFillSampleBtn")) {
   $("autoFillSampleBtn").onclick = () => startSmartFormFill();
 }
 if ($("verifyFormInputsBtn")) {
-  $("verifyFormInputsBtn").onclick = () =>
-    sendQuery("Find and verify all form fields on this page.", "locate_element");
+  $("verifyFormInputsBtn").onclick = () => {
+    switchTab("chat");
+    sendQuery("What information does this form require?", "locate_element");
+  };
 }
 if ($("closeFormFillBtn")) {
   $("closeFormFillBtn").onclick = () => {
@@ -4407,27 +4655,30 @@ if ($("connectBtn")) {
     const resolvedBase = await getResolvedBackendBase();
     await chrome.storage.local.set({ lastBase: resolvedBase });
 
-    // 1. Check if user already has an active AI Buddy tab open in their browser
+    // 1. Check if user already has a verified AI Buddy tab open in their browser
     try {
       const allTabs = await chrome.tabs.query({});
-      const buddyTab = allTabs.find((t) => {
-        if (!t.url) return false;
+      let buddyTab = null;
+      for (const t of allTabs) {
+        if (!t.url) continue;
         try {
           const u = new URL(t.url);
           if (u.hostname.includes("aistudio.google.com") || u.hostname.includes(LEGACY_BROKEN_HOST)) {
-            return false;
+            continue;
           }
-          return (
-            u.hostname.includes("run.app") ||
-            u.hostname === "localhost" ||
-            u.hostname === "127.0.0.1" ||
-            t.title?.includes("AI Buddy") ||
-            t.title?.includes("your-ai-companion")
-          );
-        } catch {
-          return false;
-        }
-      });
+          if (t.title?.includes("AI Buddy") || t.title?.includes("your-ai-companion")) {
+            buddyTab = t;
+            break;
+          }
+          if (
+            (u.hostname.includes("run.app") || u.hostname === "localhost" || u.hostname === "127.0.0.1") &&
+            (await probeBuddyHealthOrigin(u.origin, 1200))
+          ) {
+            buddyTab = t;
+            break;
+          }
+        } catch {}
+      }
 
       if (buddyTab?.id && buddyTab.url) {
         const u = new URL(buddyTab.url);
@@ -4538,6 +4789,14 @@ if ($("clearChatBtn")) {
   $("clearChatBtn").onclick = () => {
     hideChatLoadingSpinner();
     conversationBuffer.length = 0;
+    chrome.storage.local.remove("conversationBuffer").catch(() => {});
+    pendingAction = null;
+    if ($("confirmCard")) $("confirmCard").hidden = true;
+    if ($("consequentialApprovalCard")) $("consequentialApprovalCard").hidden = true;
+    if ($("taskPlanCard")) $("taskPlanCard").hidden = true;
+    if ($("extractedDataCard")) $("extractedDataCard").hidden = true;
+    if ($("highlightBtn")) $("highlightBtn").hidden = true;
+    if ($("speakAnswerBtn")) $("speakAnswerBtn").hidden = true;
     if ($("historyBox")) {
       $("historyBox").innerHTML =
         '<div class="msg-bubble msg-buddy">Conversation cleared. What can I help you with?</div>';
@@ -4549,6 +4808,7 @@ if ($("clearChatBtn")) {
 // Page Context Summary
 async function loadPageContextSummary() {
   const summaryBox = $("pageSummaryBox");
+  if ($("formFillCard")) $("formFillCard").hidden = false;
   if (!summaryBox) return;
   summaryBox.textContent = "Scanning active tab…";
   try {
@@ -4693,6 +4953,47 @@ if ($("discardSavedTaskBtn")) {
   };
 }
 
+async function getLocalMemoriesStore() {
+  try {
+    const { localMemories } = await chrome.storage.local.get("localMemories");
+    if (Array.isArray(localMemories)) return localMemories;
+  } catch {}
+  return [
+    { key: "preferred_language", value: "Hinglish / English friendly mix", kind: "preference" },
+    { key: "ecommerce_platform", value: "Meesho & Amazon Seller Central", kind: "workflow" },
+  ];
+}
+
+function renderMemoriesListUI(memories) {
+  const list = $("memoriesList");
+  if (!list) return;
+  if (Array.isArray(memories) && memories.length > 0) {
+    list.innerHTML = memories
+      .map(
+        (m) => `
+      <div class="item-row">
+        <div>
+          <div style="font-weight: 600; color: var(--text);">${escapeHtml(m.key)}</div>
+          <div style="font-size: 10px; color: var(--muted);">${escapeHtml(m.value)}</div>
+        </div>
+        <button class="ghost delete-mem-btn" data-key="${escapeHtml(m.key)}" style="padding: 2px 5px; font-size: 10px; color: var(--destructive);">🗑️</button>
+      </div>
+    `,
+      )
+      .join("");
+
+    list.querySelectorAll(".delete-mem-btn").forEach((btn) => {
+      btn.onclick = async () => {
+        const key = btn.getAttribute("data-key");
+        await deleteMemory(key);
+      };
+    });
+  } else {
+    list.innerHTML =
+      '<div style="color: var(--muted); font-size: 10px;">No custom memories saved yet. Click Add to save preferences.</div>';
+  }
+}
+
 // Memory Handlers
 async function loadMemories() {
   const list = $("memoriesList");
@@ -4704,51 +5005,43 @@ async function loadMemories() {
     const headers = {};
     const token = session?.accessToken || session?.access_token;
     if (token) headers["Authorization"] = `Bearer ${token}`;
-    const res = await fetchWithTimeout(`${base}/api/public/extension/memories`, { headers }, 8000);
+    const res = await fetchWithTimeout(`${base}/api/public/extension/memories`, { headers }, 6000);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    if (data?.ok && data.memories && data.memories.length > 0) {
-      list.innerHTML = data.memories
-        .map(
-          (m) => `
-        <div class="item-row">
-          <div>
-            <div style="font-weight: 600; color: var(--text);">${escapeHtml(m.key)}</div>
-            <div style="font-size: 10px; color: var(--muted);">${escapeHtml(m.value)}</div>
-          </div>
-          <button class="ghost delete-mem-btn" data-key="${escapeHtml(m.key)}" style="padding: 2px 5px; font-size: 10px; color: var(--destructive);">🗑️</button>
-        </div>
-      `,
-        )
-        .join("");
-
-      list.querySelectorAll(".delete-mem-btn").forEach((btn) => {
-        btn.onclick = async () => {
-          const key = btn.getAttribute("data-key");
-          await deleteMemory(key);
-        };
-      });
-    } else {
-      list.innerHTML =
-        '<div style="color: var(--muted); font-size: 10px;">No custom memories saved yet. Click Add to save preferences.</div>';
+    if (data?.ok && Array.isArray(data.memories)) {
+      const localList = await getLocalMemoriesStore();
+      const merged = [...data.memories];
+      for (const lm of localList) {
+        if (!merged.some((m) => m.key === lm.key)) merged.push(lm);
+      }
+      await chrome.storage.local.set({ localMemories: merged }).catch(() => {});
+      renderMemoriesListUI(merged);
+      return;
     }
   } catch {
-    list.innerHTML =
-      '<div style="color: var(--muted); font-size: 10px;">Could not load memories.</div>';
+    // Fall back to local extension storage memories seamlessly
   }
+  const fallbackList = await getLocalMemoriesStore();
+  renderMemoriesListUI(fallbackList);
 }
 
 async function deleteMemory(key) {
+  if (!key) return;
   try {
+    const existing = await getLocalMemoriesStore();
+    const filtered = existing.filter((m) => m.key !== key);
+    await chrome.storage.local.set({ localMemories: filtered }).catch(() => {});
+
     const { session } = await chrome.storage.local.get("session");
     const base = await getResolvedBackendBase();
     const headers = {};
     const token = session?.accessToken || session?.access_token;
     if (token) headers["Authorization"] = `Bearer ${token}`;
-    await fetchWithTimeout(`${base}/api/public/extension/memories?key=${encodeURIComponent(key)}`, {
-      method: "DELETE",
-      headers,
-    }, 8000);
+    await fetchWithTimeout(
+      `${base}/api/public/extension/memories?key=${encodeURIComponent(key)}`,
+      { method: "DELETE", headers },
+      5000,
+    ).catch(() => {});
     loadMemories();
   } catch (err) {
     if ($("statusText")) $("statusText").textContent = "Could not delete memory right now.";
@@ -4789,44 +5082,96 @@ if ($("saveMemoryBtn")) {
     btn.disabled = true;
 
     try {
+      // Save immediately to chrome.storage.local so Guest/offline users never lose saved memories
+      const existing = await getLocalMemoriesStore();
+      const updated = [{ key, value, kind: "preference", created_at: new Date().toISOString() }, ...existing.filter((m) => m.key !== key)];
+      await chrome.storage.local.set({ localMemories: updated }).catch(() => {});
+
       const { session } = await chrome.storage.local.get("session");
       const base = await getResolvedBackendBase();
       const headers = { "Content-Type": "application/json" };
       const token = session?.accessToken || session?.access_token;
       if (token) headers["Authorization"] = `Bearer ${token}`;
-      const res = await fetchWithTimeout(`${base}/api/public/extension/memories`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ key, value, kind: "preference" }),
-      }, 8000);
-      const data = await res.json().catch(() => null);
-      if (res.ok && data?.ok) {
-        $("addMemoryForm").hidden = true;
-        if ($("memKeyInput")) $("memKeyInput").value = "";
-        if ($("memValInput")) $("memValInput").value = "";
-        if ($("statusText")) $("statusText").textContent = `✓ Saved memory "${key}".`;
-        loadMemories();
-      } else {
-        const errMsg = data?.message || data?.error || "Failed to save memory";
-        if (errEl) {
-          errEl.textContent = errMsg;
-          errEl.hidden = false;
-        }
-        if ($("statusText")) $("statusText").textContent = errMsg;
-        setRigEmotion("error", "Error");
-      }
-    } catch {
-      const errMsg = "Could not reach server to save memory.";
-      if (errEl) {
-        errEl.textContent = errMsg;
-        errEl.hidden = false;
-      }
-      if ($("statusText")) $("statusText").textContent = errMsg;
-      setRigEmotion("error", "Error");
+      await fetchWithTimeout(
+        `${base}/api/public/extension/memories`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ key, value, kind: "preference" }),
+        },
+        6000,
+      ).catch(() => {});
+
+      $("addMemoryForm").hidden = true;
+      if ($("memKeyInput")) $("memKeyInput").value = "";
+      if ($("memValInput")) $("memValInput").value = "";
+      if ($("statusText")) $("statusText").textContent = `✓ Saved memory "${key}".`;
+      loadMemories();
     } finally {
       btn.disabled = false;
     }
   };
+}
+
+async function recordTaskExecution(plan) {
+  if (!plan?.title) return;
+  const entry = {
+    id: plan.id || `task_${Date.now()}`,
+    title: plan.title,
+    buddy_slug: selectedBuddySlug || "friendly",
+    status: plan.status || "completed",
+    created_at: new Date().toISOString(),
+  };
+  try {
+    const { localTaskHistory = [], session } = await chrome.storage.local.get([
+      "localTaskHistory",
+      "session",
+    ]);
+    const nextHistory = [entry, ...localTaskHistory.filter((t) => t.id !== entry.id)].slice(0, 20);
+    await chrome.storage.local.set({ localTaskHistory: nextHistory }).catch(() => {});
+
+    const base = await getResolvedBackendBase();
+    const headers = { "Content-Type": "application/json" };
+    const token = session?.accessToken || session?.access_token;
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    await fetchWithTimeout(
+      `${base}/api/public/extension/tasks`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          id: entry.id,
+          title: entry.title,
+          buddySlug: entry.buddy_slug,
+          status: entry.status,
+        }),
+      },
+      5000,
+    ).catch(() => {});
+  } catch {}
+}
+
+function renderTasksHistoryUI(tasks) {
+  const list = $("tasksHistoryList");
+  if (!list) return;
+  if (Array.isArray(tasks) && tasks.length > 0) {
+    list.innerHTML = tasks
+      .map(
+        (t) => `
+      <div class="item-row">
+        <div style="overflow: hidden; max-width: 80%;">
+          <div style="font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(t.title)}</div>
+          <div style="font-size: 10px; color: var(--muted);">${t.created_at ? new Date(t.created_at).toLocaleTimeString() : ""} · ${escapeHtml(t.buddy_slug || t.buddySlug || "friendly")}</div>
+        </div>
+        <span class="step-status-tag ${escapeHtml(t.status || "completed")}">${escapeHtml(t.status || "completed")}</span>
+      </div>
+    `,
+      )
+      .join("");
+  } else {
+    list.innerHTML =
+      '<div style="color: var(--muted); font-size: 10px;">No recent tasks executed yet.</div>';
+  }
 }
 
 // Tasks History Handlers
@@ -4834,50 +5179,64 @@ async function loadTasksHistory() {
   const list = $("tasksHistoryList");
   if (!list) return;
   list.innerHTML = '<div style="color: var(--muted); font-size: 10px;">Loading task history…</div>';
+  const { session, localTaskHistory = [] } = await chrome.storage.local
+    .get(["session", "localTaskHistory"])
+    .catch(() => ({ localTaskHistory: [] }));
   try {
-    const { session } = await chrome.storage.local.get("session");
     const base = await getResolvedBackendBase();
     const headers = {};
     const token = session?.accessToken || session?.access_token;
     if (token) headers["Authorization"] = `Bearer ${token}`;
-    const res = await fetchWithTimeout(`${base}/api/public/extension/tasks`, { headers }, 8000);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    if (data?.ok && data.tasks && data.tasks.length > 0) {
-      list.innerHTML = data.tasks
-        .map(
-          (t) => `
-        <div class="item-row">
-          <div style="overflow: hidden; max-width: 80%;">
-            <div style="font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(t.title)}</div>
-            <div style="font-size: 10px; color: var(--muted);">${t.created_at ? new Date(t.created_at).toLocaleTimeString() : ""} · ${escapeHtml(t.buddy_slug || t.buddySlug || "friendly")}</div>
-          </div>
-          <span class="step-status-tag ${t.status}">${escapeHtml(t.status)}</span>
-        </div>
-      `,
-        )
-        .join("");
-    } else {
-      list.innerHTML =
-        '<div style="color: var(--muted); font-size: 10px;">No recent tasks executed yet.</div>';
+    const res = await fetchWithTimeout(`${base}/api/public/extension/tasks`, { headers }, 6000);
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.ok && Array.isArray(data.tasks)) {
+        const merged = [...data.tasks];
+        for (const lt of localTaskHistory) {
+          if (!merged.some((t) => t.id === lt.id)) merged.push(lt);
+        }
+        renderTasksHistoryUI(merged.slice(0, 20));
+        checkSavedCheckpoint();
+        return;
+      }
     }
   } catch {
-    list.innerHTML =
-      '<div style="color: var(--muted); font-size: 10px;">Could not load task history.</div>';
+    // Fallback to localTaskHistory cleanly
   }
+  renderTasksHistoryUI(localTaskHistory);
   checkSavedCheckpoint();
 }
 
 async function checkSavedCheckpoint() {
   try {
-    const { savedCheckpoint } = await chrome.storage.local.get("savedCheckpoint");
+    const { savedCheckpoint, ai_buddy_active_plan } = await chrome.storage.local.get([
+      "savedCheckpoint",
+      "ai_buddy_active_plan",
+    ]);
     const card = $("savedCheckpointCard") || $("savedTaskCheckpointCard");
+    const resumablePlan =
+      ai_buddy_active_plan &&
+      Array.isArray(ai_buddy_active_plan.steps) &&
+      ai_buddy_active_plan.steps.length > 0 &&
+      ai_buddy_active_plan.status !== "completed" &&
+      ai_buddy_active_plan.status !== "cancelled"
+        ? ai_buddy_active_plan
+        : null;
+
     if (savedCheckpoint && savedCheckpoint.status !== "completed") {
       if (card) {
         card.hidden = false;
         if ($("savedTaskCheckpointDesc")) {
           $("savedTaskCheckpointDesc").textContent =
-            `Task "${savedCheckpoint.title}" is paused at step ${savedCheckpoint.currentStepIndex + 1} of ${savedCheckpoint.totalSteps}.`;
+            `Task "${savedCheckpoint.title}" is paused at step ${(savedCheckpoint.currentStepIndex || 0) + 1} of ${savedCheckpoint.totalSteps || savedCheckpoint.steps?.length || 1}.`;
+        }
+      }
+    } else if (resumablePlan) {
+      if (card) {
+        card.hidden = false;
+        if ($("savedTaskCheckpointDesc")) {
+          $("savedTaskCheckpointDesc").textContent =
+            `Task "${resumablePlan.title}" is paused at step ${(resumablePlan.currentStepIndex || 0) + 1} of ${resumablePlan.steps.length}.`;
         }
       }
     } else {
@@ -5047,9 +5406,43 @@ async function loadModelHubStatus() {
       }
     }
   } catch {
+    const { userApiKey } = await chrome.storage.local.get("userApiKey").catch(() => ({}));
+    const fallbackProviders = Object.values(DEFAULT_PROVIDER_META).map((p) => {
+      const configured = p.id === "gemini" && Boolean(userApiKey);
+      return {
+        ...p,
+        configured,
+        status: configured ? "connected" : p.supportsLocal ? "not_connected" : "missing_api",
+        statusLabel: configured ? "Connected" : p.supportsLocal ? "Not Connected" : "Missing API",
+      };
+    });
+    fallbackProviders.forEach((p) => {
+      cachedProviderStatuses[p.id] = p;
+    });
     updateProviderNoticeUI(selectedProvider);
-    list.innerHTML =
-      '<div style="color: var(--muted); font-size: 10px;">Could not reach server to refresh live provider status. Local defaults shown above.</div>';
+    list.innerHTML = fallbackProviders
+      .map((info) => {
+        const isSel = info.id === selectedProvider;
+        const detailNote = info.configured
+          ? "Direct API key saved"
+          : `Missing ${info.missingKeyName} · Falls back to Gemini`;
+        return `
+      <div class="item-row provider-row-item" data-provider="${escapeHtml(info.id)}" style="cursor: pointer; ${isSel ? "border-color: var(--accent-cyan); background: rgba(6, 182, 212, 0.08);" : ""}">
+        <div>
+          <span style="font-weight: 600; color: var(--text);">${escapeHtml(info.name)}${info.id === "gemini" ? " · Default" : ""}</span>
+          <div style="font-size: 9px; color: var(--muted);">${escapeHtml(detailNote)}</div>
+        </div>
+        <span class="step-status-tag ${info.configured ? "completed" : "pending"}">${escapeHtml(info.statusLabel)}</span>
+      </div>
+    `;
+      })
+      .join("");
+    list.querySelectorAll(".provider-row-item").forEach((row) => {
+      row.onclick = () => {
+        const pid = row.getAttribute("data-provider");
+        if (pid) selectProvider(pid);
+      };
+    });
   }
 }
 
@@ -5099,28 +5492,60 @@ if ($("testActiveProviderBtn")) {
       pingBox.style.color = "var(--accent-cyan)";
       pingBox.textContent = `Checking ${info?.name || targetProv} connection…`;
     }
+    const { userApiKey } = await chrome.storage.local.get("userApiKey").catch(() => ({}));
     try {
       const base = await getResolvedBackendBase();
+      const bodyPayload = { provider: targetProv };
+      if (targetProv === "gemini" && userApiKey) {
+        bodyPayload.userApiKey = userApiKey;
+      }
       const res = await fetchWithTimeout(`${base}/api/public/extension/test-model`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: targetProv }),
+        body: JSON.stringify(bodyPayload),
       }, 8000);
       const data = await res.json().catch(() => null);
-      if (pingBox) {
-        if (res.ok && data?.ok) {
+      if (pingBox && data) {
+        if (res.ok && data.ok) {
           pingBox.style.color = "var(--success)";
           pingBox.textContent = `⚡ ${info?.name || targetProv} Connected (${data.latencyMs}ms): ${data.message}`;
-        } else {
+          return;
+        } else if (targetProv !== "gemini" || !userApiKey) {
           pingBox.style.color = "var(--warning)";
           pingBox.textContent = `ℹ️ ${info?.name || targetProv}: ${data?.message || "Missing API or not connected"}`;
+          return;
         }
       }
     } catch {
-      if (pingBox) {
-        pingBox.style.color = "var(--warning)";
-        pingBox.textContent = "Ping check unavailable in offline mode.";
-      }
+      // Fallback below if Gemini direct key is present
+    }
+    if (targetProv === "gemini" && userApiKey) {
+      try {
+        const started = Date.now();
+        const directRes = await fetchWithTimeout(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-4-hydrogen:generateContent?key=${encodeURIComponent(userApiKey)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "Reply OK" }] }] }),
+          },
+          6000,
+        );
+        if (pingBox) {
+          if (directRes.ok) {
+            pingBox.style.color = "var(--success)";
+            pingBox.textContent = `⚡ Direct Gemini Key Connected (${Date.now() - started}ms)`;
+          } else {
+            pingBox.style.color = "var(--warning)";
+            pingBox.textContent = `⚠️ Direct Gemini Key rejected (HTTP ${directRes.status}).`;
+          }
+          return;
+        }
+      } catch {}
+    }
+    if (pingBox) {
+      pingBox.style.color = "var(--warning)";
+      pingBox.textContent = "Ping check unavailable in offline mode.";
     }
   };
 }
@@ -5128,11 +5553,7 @@ if ($("testActiveProviderBtn")) {
 // Speech / Mute & Display Settings (No manual animation selector in UI)
 if ($("muteToggle")) {
   $("muteToggle").onchange = (e) => {
-    isMuted = e.target.checked;
-    if (isMuted && window.speechSynthesis) window.speechSynthesis.cancel();
-    if ($("settingsVoiceToggleBtn")) {
-      $("settingsVoiceToggleBtn").textContent = isMuted ? "🔇 Muted" : "🔊 Unmuted";
-    }
+    persistMutedState(e.target.checked);
   };
 }
 
@@ -5145,51 +5566,8 @@ if ($("avatarRenderMode")) {
 
 if ($("sizeSelect")) {
   $("sizeSelect").onchange = (e) => {
-    const stage = $("characterStage");
-    if (!stage) return;
-    const wrap3d = $("buddy3dCanvasWrap");
-    const svg = $("characterSvg");
-    const img = $("buddy3dImg");
-    if (e.target.value === "hidden") {
-      stage.style.display = "none";
-      buddy3dViewer?.setPaused?.(true);
-    } else if (e.target.value === "compact") {
-      stage.style.display = "flex";
-      if (wrap3d) {
-        wrap3d.style.width = "102px";
-        wrap3d.style.height = "102px";
-      }
-      if (svg) {
-        svg.style.width = "90px";
-        svg.style.height = "100px";
-      }
-      if (img) {
-        img.style.width = "90px";
-        img.style.height = "90px";
-      }
-      if (currentRenderMode === "3d") {
-        buddy3dViewer?.setPaused?.(false);
-        buddy3dViewer?.resize();
-      }
-    } else {
-      stage.style.display = "flex";
-      if (wrap3d) {
-        wrap3d.style.width = "132px";
-        wrap3d.style.height = "132px";
-      }
-      if (svg) {
-        svg.style.width = "120px";
-        svg.style.height = "120px";
-      }
-      if (img) {
-        img.style.width = "110px";
-        img.style.height = "110px";
-      }
-      if (currentRenderMode === "3d") {
-        buddy3dViewer?.setPaused?.(false);
-        buddy3dViewer?.resize();
-      }
-    }
+    applyStageSize(e.target.value);
+    chrome.storage.local.set({ stageSize: e.target.value }).catch(() => {});
   };
 }
 
@@ -5240,6 +5618,7 @@ if ($("settingsSaveApiKeyBtn")) {
   $("settingsSaveApiKeyBtn").onclick = async () => {
     const val = $("settingsApiKeyInput")?.value?.trim() || "";
     await chrome.storage.local.set({ userApiKey: val });
+    loadModelHubStatus();
     if ($("settingsApiKeyFeedback")) {
       $("settingsApiKeyFeedback").textContent = val
         ? "✓ Gemini API Key saved! Buddy is now 100% direct & serverless."
@@ -5290,33 +5669,36 @@ if ($("settingsDetectHostBtn")) {
     }
     try {
       const candidates = [];
-      const tab = await queryActiveWebTab();
-      if (tab?.url && !RESTRICTED.test(tab.url)) {
-        try {
-          const u = new URL(tab.url);
+      try {
+        const allTabs = await chrome.tabs.query({});
+        for (const t of allTabs) {
+          if (!t?.url || RESTRICTED.test(t.url)) continue;
+          const u = new URL(t.url);
+          const isBuddyTab =
+            t.title?.includes("AI Buddy") ||
+            t.title?.includes("your-ai-companion") ||
+            u.port === "3000" ||
+            u.hostname.includes("run.app");
           if (
             u.protocol.startsWith("http") &&
             !u.hostname.includes("aistudio.google.com") &&
-            !u.hostname.includes(LEGACY_BROKEN_HOST)
+            !u.hostname.includes(LEGACY_BROKEN_HOST) &&
+            isBuddyTab
           ) {
-            candidates.push(u.origin);
+            if (t.title?.includes("AI Buddy")) candidates.unshift(u.origin);
+            else candidates.push(u.origin);
           }
-        } catch {}
-      }
-      candidates.push(DEFAULT_BASE, FALLBACK_PRE_BASE, "http://localhost:3000");
+        }
+      } catch {}
+      candidates.push("http://localhost:3000", DEFAULT_BASE, FALLBACK_PRE_BASE);
       const uniqueCandidates = [...new Set(candidates)];
       let verifiedOrigin = null;
       for (const origin of uniqueCandidates) {
-        try {
-          const r = await fetchWithTimeout(`${origin}/api/public/extension/health`, {}, 3500);
-          if (r.ok) {
-            const j = await r.json().catch(() => null);
-            if (j && (j.ok !== undefined || j.checks)) {
-              verifiedOrigin = origin;
-              break;
-            }
-          }
-        } catch {}
+        if (await probeBuddyHealthOrigin(origin, 2500)) {
+          verifiedOrigin = origin;
+          verifiedBackendBaseCache = origin;
+          break;
+        }
       }
       if (verifiedOrigin) {
         if ($("settingsApiBaseInput")) $("settingsApiBaseInput").value = verifiedOrigin;
@@ -5368,10 +5750,7 @@ if ($("settingsConsequentialGate")) {
 
 if ($("settingsVoiceToggleBtn")) {
   $("settingsVoiceToggleBtn").onclick = () => {
-    isMuted = !isMuted;
-    if (isMuted && window.speechSynthesis) window.speechSynthesis.cancel();
-    if ($("muteToggle")) $("muteToggle").checked = isMuted;
-    $("settingsVoiceToggleBtn").textContent = isMuted ? "🔇 Muted" : "🔊 Unmuted";
+    persistMutedState(!isMuted);
   };
 }
 
@@ -5459,7 +5838,14 @@ document.addEventListener("visibilitychange", () => {
 });
 
 chrome.storage?.onChanged?.addListener?.((changes, area) => {
-  if (area === "local" && (changes.session || changes.selectedBuddySlug)) {
+  if (area !== "local") return;
+  if (changes.selectedBuddySlug?.newValue && changes.selectedBuddySlug.newValue !== selectedBuddySlug) {
+    switchBuddy(changes.selectedBuddySlug.newValue, { persist: false, silent: true });
+  }
+  if (
+    changes.session &&
+    JSON.stringify(changes.session.oldValue) !== JSON.stringify(changes.session.newValue)
+  ) {
     render();
   }
 });

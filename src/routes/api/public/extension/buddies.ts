@@ -6,21 +6,21 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { BUDDY_PRESETS } from "@/lib/ai/buddy-personas";
 import { BUDDY_VISUALS } from "@/lib/buddy-visuals";
+import {
+  extensionJsonResponse,
+  handleExtensionOptions,
+} from "@/lib/extension-cors.server";
 import { verifyBearer } from "@/lib/supabase-bearer.server";
-
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json", "cache-control": "no-store" },
-  });
 
 export const Route = createFileRoute("/api/public/extension/buddies")({
   server: {
     handlers: {
-      GET: async ({ request }) => {
+      OPTIONS: async (ctx?: { request?: Request }) => handleExtensionOptions(ctx?.request),
+      GET: async (ctx?: { request?: Request }) => {
+        const request = ctx?.request;
         let auth = null;
         try {
-          auth = await verifyBearer(request.headers.get("authorization"));
+          auth = await verifyBearer(request?.headers.get("authorization") ?? null);
         } catch {
           auth = null;
         }
@@ -131,7 +131,7 @@ export const Route = createFileRoute("/api/public/extension/buddies")({
 
         const all16Buddies = [...formattedPresets, formattedCustom];
 
-        return json({
+        return extensionJsonResponse(request, {
           ok: true,
           buddies: all16Buddies,
           selectedBuddy: selectedCustomId ? `custom:${selectedCustomId}` : selectedSlug,

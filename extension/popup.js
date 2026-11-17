@@ -24,21 +24,27 @@ $("connect").onclick = async () => {
 
   try {
     const allTabs = await chrome.tabs.query({});
-    const buddyTab = allTabs.find((t) => {
-      if (!t.url) return false;
+    let buddyTab = null;
+    for (const t of allTabs) {
+      if (!t.url) continue;
       try {
         const u = new URL(t.url);
-        if (u.hostname.includes("aistudio.google.com")) return false;
-        return (
-          (u.hostname.includes("run.app") && !u.hostname.includes(LEGACY_BROKEN_HOST)) ||
-          u.hostname === "localhost" ||
-          u.hostname === "127.0.0.1" ||
-          t.title?.includes("AI Buddy")
-        );
-      } catch {
-        return false;
-      }
-    });
+        if (u.hostname.includes("aistudio.google.com") || u.hostname.includes(LEGACY_BROKEN_HOST)) {
+          continue;
+        }
+        if (t.title?.includes("AI Buddy")) {
+          buddyTab = t;
+          break;
+        }
+        if (
+          (u.hostname.includes("run.app") || u.hostname === "localhost" || u.hostname === "127.0.0.1") &&
+          (await fetch(`${u.origin}/api/public/extension/health`).then((r) => r.ok).catch(() => false))
+        ) {
+          buddyTab = t;
+          break;
+        }
+      } catch {}
+    }
 
     if (buddyTab?.id && buddyTab.url) {
       const u = new URL(buddyTab.url);

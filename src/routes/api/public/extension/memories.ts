@@ -4,13 +4,11 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
+import {
+  extensionJsonResponse,
+  handleExtensionOptions,
+} from "@/lib/extension-cors.server";
 import { verifyBearer } from "@/lib/supabase-bearer.server";
-
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json", "cache-control": "no-store" },
-  });
 
 const memorySchema = z.object({
   id: z.string().optional(),
@@ -50,6 +48,7 @@ const guestMemoriesStore: Array<{
 export const Route = createFileRoute("/api/public/extension/memories")({
   server: {
     handlers: {
+      OPTIONS: async ({ request }) => handleExtensionOptions(request),
       GET: async ({ request }) => {
         let auth = null;
         try {
@@ -66,13 +65,13 @@ export const Route = createFileRoute("/api/public/extension/memories")({
             .order("updated_at", { ascending: false });
 
           if (error) {
-            return json({ ok: false, error: "Failed to fetch memories", memories: [] }, 500);
+            return extensionJsonResponse(request, { ok: false, error: "Failed to fetch memories", memories: [] }, 500);
           }
 
-          return json({ ok: true, memories: data || [], isGuest: false });
+          return extensionJsonResponse(request, { ok: true, memories: data || [], isGuest: false });
         }
 
-        return json({
+        return extensionJsonResponse(request, {
           ok: true,
           memories: guestMemoriesStore,
           isGuest: true,
@@ -91,7 +90,7 @@ export const Route = createFileRoute("/api/public/extension/memories")({
         try {
           body = memorySchema.parse(await request.json());
         } catch {
-          return json({ ok: false, message: "Invalid memory payload" }, 400);
+          return extensionJsonResponse(request, { ok: false, message: "Invalid memory payload" }, 400);
         }
 
         const id = body.id || globalThis.crypto.randomUUID();
@@ -115,10 +114,10 @@ export const Route = createFileRoute("/api/public/extension/memories")({
             .single();
 
           if (error) {
-            return json({ ok: false, error: error.message }, 500);
+            return extensionJsonResponse(request, { ok: false, error: error.message }, 500);
           }
 
-          return json({ ok: true, memory: data });
+          return extensionJsonResponse(request, { ok: true, memory: data });
         }
 
         // Guest store
@@ -138,7 +137,7 @@ export const Route = createFileRoute("/api/public/extension/memories")({
           guestMemoriesStore.unshift(memItem);
         }
 
-        return json({ ok: true, memory: memItem, isGuest: true });
+        return extensionJsonResponse(request, { ok: true, memory: memItem, isGuest: true });
       },
 
       DELETE: async ({ request }) => {
@@ -154,7 +153,7 @@ export const Route = createFileRoute("/api/public/extension/memories")({
         const key = url.searchParams.get("key");
 
         if (!id && !key) {
-          return json({ ok: false, message: "Must provide memory id or key to delete" }, 400);
+          return extensionJsonResponse(request, { ok: false, message: "Must provide memory id or key to delete" }, 400);
         }
 
         if (auth) {
@@ -166,8 +165,8 @@ export const Route = createFileRoute("/api/public/extension/memories")({
           }
 
           const { error } = await query;
-          if (error) return json({ ok: false, error: error.message }, 500);
-          return json({ ok: true, deleted: true });
+          if (error) return extensionJsonResponse(request, { ok: false, error: error.message }, 500);
+          return extensionJsonResponse(request, { ok: true, deleted: true });
         }
 
         // Guest store deletion
@@ -176,7 +175,7 @@ export const Route = createFileRoute("/api/public/extension/memories")({
           guestMemoriesStore.splice(idx, 1);
         }
 
-        return json({ ok: true, deleted: true, isGuest: true });
+        return extensionJsonResponse(request, { ok: true, deleted: true, isGuest: true });
       },
     },
   },

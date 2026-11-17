@@ -7,12 +7,18 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { getGeminiKey, isProviderConfigured } from "@/lib/ai/provider-keys.server";
+import {
+  extensionJsonResponse,
+  handleExtensionOptions,
+} from "@/lib/extension-cors.server";
 import { verifyBearer } from "@/lib/supabase-bearer.server";
 
 export const Route = createFileRoute("/api/public/extension/health")({
   server: {
     handlers: {
-      GET: async ({ request }) => {
+      OPTIONS: async (ctx?: { request?: Request }) => handleExtensionOptions(ctx?.request),
+      GET: async (ctx?: { request?: Request }) => {
+        const request = ctx?.request;
         const geminiKey = getGeminiKey();
         const hasGemini = Boolean(geminiKey);
         const hasLovable = isProviderConfigured("lovable-gateway");
@@ -73,10 +79,7 @@ export const Route = createFileRoute("/api/public/extension/health")({
         }
 
         const ok = Object.values(checks).every((c) => c.ok);
-        return new Response(JSON.stringify({ ok, checks, version: "0.1.0" }), {
-          status: 200,
-          headers: { "content-type": "application/json", "cache-control": "no-store" },
-        });
+        return extensionJsonResponse(request, { ok, checks, version: "0.1.0" }, 200);
       },
     },
   },

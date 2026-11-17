@@ -7,17 +7,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { MODEL_CATALOG, PROVIDERS, type ProviderId } from "@/lib/ai/model-hub";
 import { isProviderConfigured } from "@/lib/ai/provider-keys.server";
-
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json", "cache-control": "no-store" },
-  });
+import {
+  extensionJsonResponse,
+  handleExtensionOptions,
+} from "@/lib/extension-cors.server";
 
 export const Route = createFileRoute("/api/public/extension/models")({
   server: {
     handlers: {
-      GET: async () => {
+      OPTIONS: async (ctx?: { request?: Request }) => handleExtensionOptions(ctx?.request),
+      GET: async (ctx?: { request?: Request }) => {
         const providerStatuses: Array<{
           id: ProviderId;
           name: string;
@@ -83,7 +82,7 @@ export const Route = createFileRoute("/api/public/extension/models")({
           "lovable-gateway",
         ];
 
-        return json({
+        return extensionJsonResponse(ctx?.request, {
           ok: true,
           defaultProvider: "gemini",
           defaultModel: "gemini-3.8-flash",

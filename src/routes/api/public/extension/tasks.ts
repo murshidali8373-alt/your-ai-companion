@@ -4,13 +4,11 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
+import {
+  extensionJsonResponse,
+  handleExtensionOptions,
+} from "@/lib/extension-cors.server";
 import { verifyBearer } from "@/lib/supabase-bearer.server";
-
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json", "cache-control": "no-store" },
-  });
 
 const postSchema = z.object({
   id: z.string().optional(),
@@ -72,6 +70,7 @@ const guestTasksStore: Array<{
 export const Route = createFileRoute("/api/public/extension/tasks")({
   server: {
     handlers: {
+      OPTIONS: async ({ request }) => handleExtensionOptions(request),
       GET: async ({ request }) => {
         const url = new URL(request.url);
         const requestedTaskId = url.searchParams.get("taskId");
@@ -93,9 +92,9 @@ export const Route = createFileRoute("/api/public/extension/tasks")({
               .single();
 
             if (error || !data) {
-              return json({ ok: false, error: "Task not found" }, 404);
+              return extensionJsonResponse(request, { ok: false, error: "Task not found" }, 404);
             }
-            return json({ ok: true, task: data, isGuest: false });
+            return extensionJsonResponse(request, { ok: true, task: data, isGuest: false });
           }
 
           const { data, error } = await auth.db
@@ -106,22 +105,22 @@ export const Route = createFileRoute("/api/public/extension/tasks")({
             .limit(20);
 
           if (error) {
-            return json({ ok: false, error: "Failed to fetch tasks", tasks: [] }, 500);
+            return extensionJsonResponse(request, { ok: false, error: "Failed to fetch tasks", tasks: [] }, 500);
           }
 
-          return json({ ok: true, tasks: data || [], isGuest: false });
+          return extensionJsonResponse(request, { ok: true, tasks: data || [], isGuest: false });
         }
 
         // Guest handling
         if (requestedTaskId) {
           const match = guestTasksStore.find((t) => t.id === requestedTaskId);
           if (!match) {
-            return json({ ok: false, error: "Task not found" }, 404);
+            return extensionJsonResponse(request, { ok: false, error: "Task not found" }, 404);
           }
-          return json({ ok: true, task: match, isGuest: true });
+          return extensionJsonResponse(request, { ok: true, task: match, isGuest: true });
         }
 
-        return json({
+        return extensionJsonResponse(request, {
           ok: true,
           tasks: guestTasksStore.slice(0, 20),
           isGuest: true,
@@ -140,7 +139,7 @@ export const Route = createFileRoute("/api/public/extension/tasks")({
         try {
           body = postSchema.parse(await request.json());
         } catch {
-          return json({ ok: false, message: "Invalid task data" }, 400);
+          return extensionJsonResponse(request, { ok: false, message: "Invalid task data" }, 400);
         }
 
         const taskId = body.id || `task_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -183,7 +182,7 @@ export const Route = createFileRoute("/api/public/extension/tasks")({
             }
           }
 
-          return json({ ok: true, taskId, status: body.status, checkpoint: body.checkpoint });
+          return extensionJsonResponse(request, { ok: true, taskId, status: body.status, checkpoint: body.checkpoint });
         }
 
         // Guest handling
@@ -213,7 +212,7 @@ export const Route = createFileRoute("/api/public/extension/tasks")({
           if (guestTasksStore.length > 50) guestTasksStore.pop();
         }
 
-        return json({
+        return extensionJsonResponse(request, {
           ok: true,
           taskId,
           status: body.status,

@@ -11,6 +11,10 @@ import { z } from "zod";
 
 import { getGeminiKey } from "@/lib/ai/provider-keys.server";
 import {
+  extensionJsonResponse,
+  handleExtensionOptions,
+} from "@/lib/extension-cors.server";
+import {
   parseDocumentTextLocally,
   sanitizeExtractedFields,
   type DocumentType,
@@ -23,12 +27,6 @@ const bodySchema = z.object({
   textContent: z.string().max(100_000).optional(),
   userApiKey: z.string().max(200).optional(),
 });
-
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json", "cache-control": "no-store" },
-  });
 
 const ALLOWED_DOC_TYPES = new Set<DocumentType>([
   "aadhaar",
@@ -43,12 +41,17 @@ const ALLOWED_DOC_TYPES = new Set<DocumentType>([
 export const Route = createFileRoute("/api/public/extension/extract-document")({
   server: {
     handlers: {
+      OPTIONS: async ({ request }) => handleExtensionOptions(request),
       POST: async ({ request }) => {
         let parsed: z.infer<typeof bodySchema>;
         try {
           parsed = bodySchema.parse(await request.json());
         } catch {
-          return json({ ok: false, error: "bad_request", message: "Invalid document payload." }, 400);
+          return extensionJsonResponse(
+            request,
+            { ok: false, error: "bad_request", message: "Invalid document payload." },
+            400,
+          );
         }
 
         const apiKey = parsed.userApiKey?.trim() || getGeminiKey();
@@ -160,7 +163,7 @@ export const Route = createFileRoute("/api/public/extension/extract-document")({
                     ? data.ambiguousFields.filter((x): x is string => typeof x === "string")
                     : [];
 
-                  return json({
+                  return extensionJsonResponse(request, {
                     ok: Object.keys(cleanFields).length > 0 || ambiguous.length > 0,
                     documentType: docType,
                     fileName: parsed.fileName,
@@ -194,10 +197,10 @@ export const Route = createFileRoute("/api/public/extension/extract-document")({
         // Local OCR text parser fallback (works offline/without server API key on text/PDF text layers)
         if (parsed.textContent?.trim()) {
           const localResult = parseDocumentTextLocally(parsed.textContent, parsed.fileName);
-          return json(localResult);
+          return extensionJsonResponse(request, localResult);
         }
 
-        return json({
+        return extensionJsonResponse(request, {
           ok: false,
           documentType: "other",
           fileName: parsed.fileName,

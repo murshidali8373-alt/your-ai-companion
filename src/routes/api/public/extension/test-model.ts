@@ -6,12 +6,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { verifyProviderConnection } from "@/lib/ai/provider-adapters.server";
 import type { ProviderId } from "@/lib/ai/model-hub";
-
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json", "cache-control": "no-store" },
-  });
+import {
+  extensionJsonResponse,
+  handleExtensionOptions,
+} from "@/lib/extension-cors.server";
 
 const testSchema = z.object({
   provider: z.enum([
@@ -32,12 +30,17 @@ const testSchema = z.object({
 export const Route = createFileRoute("/api/public/extension/test-model")({
   server: {
     handlers: {
+      OPTIONS: async ({ request }) => handleExtensionOptions(request),
       POST: async ({ request }) => {
         let body: z.infer<typeof testSchema>;
         try {
           body = testSchema.parse(await request.json());
         } catch {
-          return json({ ok: false, message: "Invalid provider verification request" }, 400);
+          return extensionJsonResponse(
+            request,
+            { ok: false, message: "Invalid provider verification request" },
+            400,
+          );
         }
 
         try {
@@ -46,9 +49,9 @@ export const Route = createFileRoute("/api/public/extension/test-model")({
             body.userApiKey,
             body.customBaseUrl,
           );
-          return json(result);
+          return extensionJsonResponse(request, result);
         } catch (error) {
-          return json({
+          return extensionJsonResponse(request, {
             providerId: body.provider,
             ok: false,
             status: "error",

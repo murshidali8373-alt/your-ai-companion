@@ -8,6 +8,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
 import { ask, askGuest } from "@/lib/buddy-service.server";
+import {
+  extensionJsonResponse,
+  handleExtensionOptions,
+} from "@/lib/extension-cors.server";
 import { verifyBearer } from "@/lib/supabase-bearer.server";
 
 const elementSchema = z.object({
@@ -83,15 +87,10 @@ const bodySchema = z.object({
     .optional(),
 });
 
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json", "cache-control": "no-store" },
-  });
-
 export const Route = createFileRoute("/api/public/extension/ask")({
   server: {
     handlers: {
+      OPTIONS: async ({ request }) => handleExtensionOptions(request),
       POST: async ({ request }) => {
         const auth = await verifyBearer(request.headers.get("authorization"));
 
@@ -99,7 +98,11 @@ export const Route = createFileRoute("/api/public/extension/ask")({
         try {
           parsed = bodySchema.parse(await request.json());
         } catch {
-          return json({ error: "bad_request", message: "That request was malformed." }, 400);
+          return extensionJsonResponse(
+            request,
+            { error: "bad_request", message: "That request was malformed." },
+            400,
+          );
         }
 
         try {
@@ -119,7 +122,7 @@ export const Route = createFileRoute("/api/public/extension/ask")({
               screenshotBase64: parsed.screenshotBase64,
               uploadedDocumentSummary: parsed.uploadedDocumentSummary,
             });
-            return json(result);
+            return extensionJsonResponse(request, result);
           } else {
             // Guest mode: unauthenticated users can still inspect pages and ask Buddy
             const result = await askGuest({
@@ -137,7 +140,7 @@ export const Route = createFileRoute("/api/public/extension/ask")({
               screenshotBase64: parsed.screenshotBase64,
               uploadedDocumentSummary: parsed.uploadedDocumentSummary,
             });
-            return json({ ...result, guest: true });
+            return extensionJsonResponse(request, { ...result, guest: true });
           }
         } catch (error) {
           console.error("[extension/ask]", error);
@@ -147,7 +150,8 @@ export const Route = createFileRoute("/api/public/extension/ask")({
               : typeof error === "string"
                 ? error
                 : "Buddy encountered an unexpected server error. Try again.";
-          return json(
+          return extensionJsonResponse(
+            request,
             { error: "server_error", message },
             500,
           );
