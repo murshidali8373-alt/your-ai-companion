@@ -117,6 +117,26 @@
       if (prevText && prevText.length < 80) return prevText;
     }
 
+    // 5b. Container field-group label / legend / preceding table cell (when wrapper holds a single control)
+    const fieldGroup = el.closest?.(".form-group, .field, .form-field, .input-group, fieldset");
+    if (fieldGroup) {
+      const groupControls = fieldGroup.querySelectorAll?.(
+        'input:not([type="hidden"]), textarea, select, [contenteditable="true"], [role="textbox"], [role="searchbox"], [role="combobox"]',
+      );
+      if (!groupControls || groupControls.length <= 1) {
+        const grpLabel = fieldGroup.querySelector?.("label, legend, .label, .field-label, .form-label");
+        const grpTxt = grpLabel?.innerText?.trim();
+        if (grpTxt && grpTxt.length < 80 && (!grpLabel.htmlFor || grpLabel.htmlFor === el.id)) {
+          return grpTxt;
+        }
+      }
+    }
+    const td = el.closest?.("td");
+    if (td && td.previousElementSibling) {
+      const cellTxt = td.previousElementSibling.innerText?.trim();
+      if (cellTxt && cellTxt.length < 80) return cellTxt;
+    }
+
     // 6. Attributes, image alt, button value & fallback labels
     const attrLabel =
       el.getAttribute("placeholder") ||
@@ -237,6 +257,7 @@
       const errMsg = nearbyErrEl?.innerText?.trim()?.slice(0, 200) || undefined;
 
       return item(el, role, {
+        inputType: type || el.getAttribute("role") || undefined,
         placeholder:
           (el.placeholder || el.getAttribute("placeholder") || "").slice(0, 200) || undefined,
         required: el.required || el.getAttribute("aria-required") === "true" || undefined,

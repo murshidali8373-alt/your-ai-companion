@@ -57,6 +57,23 @@ export interface AskInput {
     documentType: string;
     availableFields: string[];
   } | null;
+  actionContext?: {
+    lastTargetField?: string | null;
+    lastActionType?: string | null;
+    pendingSlotType?: string | null;
+    activeElementLabel?: string | null;
+    recentFields?: string[];
+  } | null;
+}
+
+function sanitizeTextForPrompt(raw: string): string {
+  return String(raw || "")
+    .replace(/\bBearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Bearer [redacted]")
+    .replace(/\b(?:sk|AIza)[A-Za-z0-9_\-]{12,}/g, "[redacted_key]")
+    .replace(
+      /\b(password|passwd|pwd|otp|cvv|secret|token)\s*[:=]\s*[^\s,;]+/gi,
+      (_match, key) => `${key}=[redacted]`,
+    );
 }
 
 async function callGeminiWithScreenshot(params: {
@@ -113,6 +130,8 @@ export interface AskOutput {
   scrollDirection?: "up" | "down" | "left" | "right" | "top" | "bottom" | null;
   scrollTarget?: string | null;
   steps?: PlannedActionStep[] | null;
+  needsClarification?: boolean;
+  clarificationQuestion?: string | null;
   targetRect?: SnapshotElement["rect"] | null;
   buddyName: string;
   permission: PermissionLevel;
@@ -258,7 +277,7 @@ function buildGroundedSnapshotFallback(params: {
   highlightSelector: string | null;
   calloutTitle?: string | null;
   calloutDescription?: string | null;
-  actionType?: "click" | "type" | "scroll" | "inspect" | null;
+  actionType?: BuddyActionType | null;
   targetRect?: SnapshotElement["rect"] | null;
 } {
   const { question, snapshot, buddyName, language, aiError } = params;
@@ -401,9 +420,39 @@ function buildGroundedSnapshotFallback(params: {
       };
     }
 
-    if (/\b(?:fill|form|input|fields)\b/i.test(qLower)) {
+    // Detect fill / write / enter requests without a clear value -> NEVER explain the page; ask what to fill!
+    if (
+      /\b(?:fill|bhar|bharo|likh|likho|lkh|lkho|daal|daalo|dalo|type|enter)\b/i.test(qLower)
+    ) {
+      const hasContentHint =
+        /\b(?:kch|kuch|something|ye|yeh|isme|isko|it|this)\b/i.test(qLower) &&
+        !/\b(?:with|mein|me|main|in|into)\s+["']?[^"'\s]{2,}["']?\s*$/i.test(qLower);
       const matchEl =
         matchSnapshotElementForFallback(snapshot, question) || snapshot.forms?.[0] || null;
+      if (hasContentHint || !/\b(?:with|as|:|=)\b/i.test(qLower)) {
+        const askText = isEnglish
+          ? "What should I write or fill here? Please share the text."
+          : /\b(?:likh|likho|type)\b/i.test(qLower)
+            ? "Kya likhna hai? Text bata do."
+            : "Kya fill karna hai?";
+        return {
+          reply: {
+            answer: askText,
+            highlight: matchEl?.ref || null,
+            confidence: "medium",
+            needs: "value_to_fill",
+            needsClarification: true,
+            clarificationQuestion: askText,
+            emotion: "curious",
+            actionType: "ask_clarification",
+          },
+          highlightSelector: matchEl?.selector || null,
+          calloutTitle: matchEl ? (matchEl.name || matchEl.placeholder || "Target Box").slice(0, 50) : null,
+          calloutDescription: askText,
+          actionType: "ask_clarification",
+          targetRect: matchEl?.rect ?? null,
+        };
+      }
       if (matchEl) {
         const label = matchEl.name || matchEl.placeholder || matchEl.role || "form field";
         return {
@@ -837,8 +886,14 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
     void err;
   }
 
-  const pageContext = input.snapshot
-    ? buildPageContext(input.snapshot)
+  const safeForms = input.snapshot?.forms?.map((f) =>
+    f.sensitive ? { ...f, value: undefined } : f,
+  );
+  const safeSnapshot = input.snapshot
+    ? { ...input.snapshot, forms: safeForms ?? input.snapshot.forms }
+    : null;
+  const pageContext = safeSnapshot
+    ? buildPageContext(safeSnapshot)
     : "No page context available.";
   const system = buildSystemPrompt({
     persona: {
@@ -855,14 +910,34 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
     memories,
     privacyMode,
     providerDisclosure: "Google Gemini",
+    interpretMode: input.intent === "interpret_command",
   });
   const docSummaryBlock = input.uploadedDocumentSummary
     ? `\n\nUPLOADED DOCUMENT IN SESSION:\nFile: ${input.uploadedDocumentSummary.fileName} (Type: ${input.uploadedDocumentSummary.documentType})\nAvailable extracted fields: ${input.uploadedDocumentSummary.availableFields.join(", ") || "none"}`
     : "";
-  const historyBlock = input.history?.length
-    ? `\n\nRECENT CONVERSATION:\n${input.history.map((h) => `${h.role === "user" ? "USER" : persona.name}: ${h.content}`).join("\n\n")}`
+  const ctxParts: string[] = [];
+  if (input.actionContext?.lastTargetField) {
+    ctxParts.push(`lastTargetField="${input.actionContext.lastTargetField}"`);
+  }
+  if (input.actionContext?.lastActionType) {
+    ctxParts.push(`lastActionType="${input.actionContext.lastActionType}"`);
+  }
+  if (input.actionContext?.pendingSlotType) {
+    ctxParts.push(`pendingSlotType="${input.actionContext.pendingSlotType}"`);
+  }
+  if (input.actionContext?.activeElementLabel) {
+    ctxParts.push(`focusedElement="${input.actionContext.activeElementLabel}"`);
+  }
+  if (input.actionContext?.recentFields?.length) {
+    ctxParts.push(`recentFields=[${input.actionContext.recentFields.join(", ")}]`);
+  }
+  const actionContextBlock = ctxParts.length
+    ? `\n\nCURRENT ACTION CONTEXT:\n${ctxParts.join(" | ")}`
     : "";
-  const user = `${pageContext}${docSummaryBlock}${historyBlock}\n\nUSER (${input.source}): ${question}`;
+  const historyBlock = input.history?.length
+    ? `\n\nRECENT CONVERSATION:\n${input.history.map((h) => `${h.role === "user" ? "USER" : persona.name}: ${sanitizeTextForPrompt(h.content)}`).join("\n\n")}`
+    : "";
+  const user = `${pageContext}${docSummaryBlock}${actionContextBlock}${historyBlock}\n\nUSER (${input.source}): ${sanitizeTextForPrompt(question)}`;
   await event(db, taskId, userId, "understand", `Context ~${estimateTokens(user)} tokens`);
 
   const recommendedMode = recommendSpecialistBuddy({
@@ -998,6 +1073,8 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       scrollDirection: reply.scrollDirection ?? null,
       scrollTarget: reply.scrollTarget ?? null,
       steps: reply.steps ?? null,
+      needsClarification: reply.needsClarification ?? false,
+      clarificationQuestion: reply.clarificationQuestion ?? null,
       targetRect,
       buddyName: persona.name,
       permission,
@@ -1037,6 +1114,8 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       calloutTitle: fallback.calloutTitle,
       calloutDescription: fallback.calloutDescription,
       actionType: fallback.actionType,
+      needsClarification: fallback.reply.needsClarification ?? false,
+      clarificationQuestion: fallback.reply.clarificationQuestion ?? null,
       targetRect: fallback.targetRect,
       buddyName: persona.name,
       permission,
@@ -1120,8 +1199,14 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
     }
   }
 
-  const pageContext = input.snapshot
-    ? buildPageContext(input.snapshot)
+  const safeForms = input.snapshot?.forms?.map((f) =>
+    f.sensitive ? { ...f, value: undefined } : f,
+  );
+  const safeSnapshot = input.snapshot
+    ? { ...input.snapshot, forms: safeForms ?? input.snapshot.forms }
+    : null;
+  const pageContext = safeSnapshot
+    ? buildPageContext(safeSnapshot)
     : "No page context available.";
   const system = buildSystemPrompt({
     persona: {
@@ -1138,14 +1223,34 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
     memories: [],
     privacyMode: true,
     providerDisclosure: "Google Gemini",
+    interpretMode: input.intent === "interpret_command",
   });
   const docSummaryBlock = input.uploadedDocumentSummary
     ? `\n\nUPLOADED DOCUMENT IN SESSION:\nFile: ${input.uploadedDocumentSummary.fileName} (Type: ${input.uploadedDocumentSummary.documentType})\nAvailable extracted fields: ${input.uploadedDocumentSummary.availableFields.join(", ") || "none"}`
     : "";
-  const historyBlock = input.history?.length
-    ? `\n\nRECENT CONVERSATION:\n${input.history.map((h) => `${h.role === "user" ? "USER" : persona.name}: ${h.content}`).join("\n\n")}`
+  const ctxParts: string[] = [];
+  if (input.actionContext?.lastTargetField) {
+    ctxParts.push(`lastTargetField="${input.actionContext.lastTargetField}"`);
+  }
+  if (input.actionContext?.lastActionType) {
+    ctxParts.push(`lastActionType="${input.actionContext.lastActionType}"`);
+  }
+  if (input.actionContext?.pendingSlotType) {
+    ctxParts.push(`pendingSlotType="${input.actionContext.pendingSlotType}"`);
+  }
+  if (input.actionContext?.activeElementLabel) {
+    ctxParts.push(`focusedElement="${input.actionContext.activeElementLabel}"`);
+  }
+  if (input.actionContext?.recentFields?.length) {
+    ctxParts.push(`recentFields=[${input.actionContext.recentFields.join(", ")}]`);
+  }
+  const actionContextBlock = ctxParts.length
+    ? `\n\nCURRENT ACTION CONTEXT:\n${ctxParts.join(" | ")}`
     : "";
-  const user = `${pageContext}${docSummaryBlock}${historyBlock}\n\nUSER (${input.source}): ${question}`;
+  const historyBlock = input.history?.length
+    ? `\n\nRECENT CONVERSATION:\n${input.history.map((h) => `${h.role === "user" ? "USER" : persona.name}: ${sanitizeTextForPrompt(h.content)}`).join("\n\n")}`
+    : "";
+  const user = `${pageContext}${docSummaryBlock}${actionContextBlock}${historyBlock}\n\nUSER (${input.source}): ${sanitizeTextForPrompt(question)}`;
 
   const recommendedMode = recommendSpecialistBuddy({
     question,
@@ -1245,6 +1350,8 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
       scrollDirection: reply.scrollDirection ?? null,
       scrollTarget: reply.scrollTarget ?? null,
       steps: reply.steps ?? null,
+      needsClarification: reply.needsClarification ?? false,
+      clarificationQuestion: reply.clarificationQuestion ?? null,
       targetRect,
       buddyName: persona.name,
       permission,
@@ -1277,6 +1384,8 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
       calloutTitle: fallback.calloutTitle,
       calloutDescription: fallback.calloutDescription,
       actionType: fallback.actionType,
+      needsClarification: fallback.reply.needsClarification ?? false,
+      clarificationQuestion: fallback.reply.clarificationQuestion ?? null,
       targetRect: fallback.targetRect,
       buddyName: persona.name,
       permission,

@@ -360,6 +360,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     pendingAskOptionsQueue.push({
       uploadedDocumentSummary: msg.uploadedDocumentSummary || null,
       preferredProvider: msg.preferredProvider || null,
+      actionContext: msg.actionContext || null,
     });
     ask(
       msg.question,
@@ -869,6 +870,7 @@ async function generateAutonomousCompanionReply({
   userApiKey,
   preferredProvider,
   history = [],
+  actionContext = null,
 }) {
   const activeBuddy = getBuddyPresetInternal(buddySlug);
   const isHindiLang = activeBuddy.defaultLanguage !== "english";
@@ -879,19 +881,37 @@ async function generateAutonomousCompanionReply({
     userApiKey ? "Google Gemini" : "Local Grounded Companion",
   );
 
+  const sanitizePromptStr = (raw) =>
+    String(raw || "")
+      .replace(/\bBearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Bearer [redacted]")
+      .replace(/\b(?:sk|AIza)[A-Za-z0-9_\-]{12,}/g, "[redacted_key]")
+      .replace(
+        /\b(password|passwd|pwd|otp|cvv|cvc|secret|token)\s*[:=]\s*[^\s,;]+/gi,
+        (_m, key) => `${key}=[redacted]`,
+      );
+
   // 1. Direct Google Gemini API call if user provided API key
   let directAuthError = null;
   if (userApiKey) {
     try {
       const geminiModels = ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
+      const interpretExtra =
+        intent === "interpret_command"
+          ? `\nCOMMAND INTERPRETATION MODE:
+The local command parser could not confidently determine a clear direct action from the user's message.
+Interpret colloquial/short Hinglish ("hnn kr do", "isme daal do", "bss ye wala", "kch likh do", "ye fill karo"), typo variants, and conversational context!
+- NEVER fall back to explaining/summarizing the webpage if the user asked to fill/write/click/search/open.
+- If the user wants to type/fill but did NOT provide text ("kch likh do", "ye fill karo", "isme daal do"), set actionType="ask_clarification", needsClarification=true, clarificationQuestion="Kya likhna hai? Text bata do." (or "Kya fill karna hai?"), and highlight the candidate field!
+- Separate: "web_search" (search website on web), "open_website" (open portal by name), "search_submit" (type into page search box & search), "type" (fill input ONLY without submitting), "explain_page" (only when user explicitly asked to explain page).`
+          : "";
       const systemInstruction = `You are ${activeBuddy.name}, an expert AI browser companion. Personality: ${activeBuddy.personality}. Language: ${activeBuddy.defaultLanguage || "hinglish"}.
 You observe the user's active webpage (elements have refs like "e1", "f1") and plan real browser actions or answer clearly.
 RULES:
 - NEVER click when the user only asks where something is ("kahan hai", "point", "show"); use actionType "point" and set "highlight".
-- For real actions (click, open_link, type, select, check, uncheck, scroll, form_fill, multi_step), populate exact JSON fields so the Side Panel executes them.
-- NEVER invent missing personal info (names, Aadhaar, PAN, GSTIN, prices, order IDs).
+- For real actions (click, open_link, type, fill, select, check, uncheck, scroll, form_fill, search_submit, web_search, open_website, ask_clarification, explain_page, multi_step), populate exact JSON fields so the Side Panel executes them.
+- NEVER invent missing personal info (names, Aadhaar, PAN, GSTIN, prices, order IDs).${interpretExtra}
 Return strictly valid JSON with keys:
-{"answer": string, "highlight": string|null, "emotion": "neutral"|"thinking"|"happy"|"concerned"|"curious"|"celebrate", "calloutTitle": string|null, "calloutDescription": string|null, "actionType": "point"|"click"|"open_link"|"type"|"select"|"check"|"uncheck"|"scroll"|"form_fill"|"multi_step"|"inspect"|null, "targetText": string|null, "targetField": string|null, "targetValue": string|null, "fields": object|null, "scrollDirection": "up"|"down"|"left"|"right"|"top"|"bottom"|null, "scrollTarget": string|null, "steps": [{"title": string, "action": "click"|"type"|"select"|"scroll"|"point"|"fill_from_document", "textTarget": string|null, "value": string|null, "selector": string|null, "isConsequential": boolean}]|null}`;
+{"answer": string, "highlight": string|null, "emotion": "neutral"|"thinking"|"happy"|"concerned"|"curious"|"celebrate", "calloutTitle": string|null, "calloutDescription": string|null, "actionType": "point"|"click"|"open_link"|"type"|"fill"|"select"|"check"|"uncheck"|"scroll"|"form_fill"|"search_submit"|"web_search"|"open_website"|"explain_page"|"ask_clarification"|"multi_step"|"inspect"|null, "targetText": string|null, "targetField": string|null, "targetValue": string|null, "fields": object|null, "scrollDirection": "up"|"down"|"left"|"right"|"top"|"bottom"|null, "scrollTarget": string|null, "needsClarification": boolean, "clarificationQuestion": string|null, "steps": [{"title": string, "action": "click"|"type"|"select"|"scroll"|"point"|"fill_from_document", "textTarget": string|null, "value": string|null, "selector": string|null, "isConsequential": boolean}]|null}`;
 
       let promptText = "";
       const refMap = new Map();
@@ -916,7 +936,7 @@ Return strictly valid JSON with keys:
         if (snapshot.forms?.length) {
           promptText += `Form Fields: ${snapshot.forms
             .slice(0, 18)
-            .map((f) => `[${f.ref || "f"}] ${f.name || f.placeholder || f.role} (${f.tag}${f.value ? `, val="${String(f.value).slice(0, 30)}"` : ""})`)
+            .map((f) => `[${f.ref || "f"}] ${f.name || f.placeholder || f.role} (${f.inputType || f.tag}${!f.sensitive && f.value ? `, val="${sanitizePromptStr(String(f.value)).slice(0, 30)}"` : ""})`)
             .join(", ")}\n`;
         }
         if (snapshot.controls?.length) {
@@ -927,10 +947,23 @@ Return strictly valid JSON with keys:
             .join(", ")}\n`;
         }
         if (snapshot.text) {
-          promptText += `Page Content: ${snapshot.text.slice(0, 3000)}\n`;
+          promptText += `Page Content: ${sanitizePromptStr(snapshot.text).slice(0, 2500)}\n`;
         }
       }
-      promptText += `\nUSER QUESTION: ${question}`;
+      if (actionContext && typeof actionContext === "object") {
+        const acParts = [];
+        if (actionContext.lastTargetField) acParts.push(`lastTargetField="${actionContext.lastTargetField}"`);
+        if (actionContext.lastActionType) acParts.push(`lastActionType="${actionContext.lastActionType}"`);
+        if (actionContext.pendingSlotType) acParts.push(`pendingSlotType="${actionContext.pendingSlotType}"`);
+        if (actionContext.activeElementLabel) acParts.push(`focusedElement="${actionContext.activeElementLabel}"`);
+        if (Array.isArray(actionContext.recentFields) && actionContext.recentFields.length) {
+          acParts.push(`recentFields=[${actionContext.recentFields.join(", ")}]`);
+        }
+        if (acParts.length) {
+          promptText += `\nCURRENT ACTION CONTEXT:\n${acParts.join(" | ")}\n`;
+        }
+      }
+      promptText += `\nUSER QUESTION: ${sanitizePromptStr(question)}`;
 
       const parts = [];
       if (screenshotBase64) {
@@ -945,7 +978,7 @@ Return strictly valid JSON with keys:
             .slice(-6)
             .map((h) => ({
               role: h.role === "assistant" || h.role === "model" ? "model" : "user",
-              parts: [{ text: h.content }],
+              parts: [{ text: sanitizePromptStr(h.content) }],
             }))
         : [];
       const contents = [...historyContents, { role: "user", parts }];
@@ -963,7 +996,7 @@ Return strictly valid JSON with keys:
               generationConfig: {
                 responseMimeType: "application/json",
                 maxOutputTokens: 1200,
-                temperature: 0.4,
+                temperature: 0.35,
               },
             }),
           },
@@ -1004,10 +1037,10 @@ Return strictly valid JSON with keys:
           let matchedEl = null;
           if (parsedPlan?.highlight && refMap.has(parsedPlan.highlight)) {
             matchedEl = refMap.get(parsedPlan.highlight);
-          } else if (snapshot && (parsedPlan?.targetText || parsedPlan?.highlight)) {
+          } else if (snapshot && (parsedPlan?.targetText || parsedPlan?.targetField || parsedPlan?.highlight)) {
             matchedEl = findBestMatchingElement(
               snapshot,
-              String(parsedPlan.targetText || parsedPlan.highlight),
+              String(parsedPlan.targetText || parsedPlan.targetField || parsedPlan.highlight),
             );
           } else if (
             snapshot &&
@@ -1028,7 +1061,7 @@ Return strictly valid JSON with keys:
               answer: answerText,
               highlight: parsedPlan?.highlight || matchedEl?.ref || null,
               confidence: "high",
-              needs: null,
+              needs: parsedPlan?.needsClarification ? "clarification" : null,
               emotion: parsedPlan?.emotion || "happy",
             },
             highlightSelector,
@@ -1042,6 +1075,8 @@ Return strictly valid JSON with keys:
             fields: parsedPlan?.fields || null,
             scrollDirection: parsedPlan?.scrollDirection || null,
             scrollTarget: parsedPlan?.scrollTarget || null,
+            needsClarification: Boolean(parsedPlan?.needsClarification),
+            clarificationQuestion: parsedPlan?.clarificationQuestion || null,
             steps: Array.isArray(parsedPlan?.steps) ? parsedPlan.steps : null,
             buddyName: activeBuddy.name,
             permission: "explain",
@@ -1232,8 +1267,44 @@ Return strictly valid JSON with keys:
     };
   }
 
-  // Form filling commands
+  // Form filling / writing commands (NEVER explain webpage when user asked to fill/write without value)
   const fillWithMatch = question.match(/\bfill\s+(.+?)\s+with\s+["']?([^"'\n]+?)["']?(?:\s+without\s+submitting)?[.!?]*$/i);
+  const isBareFillOrWrite =
+    !fillWithMatch &&
+    /\b(?:fill|bhar|bharo|likh|likho|lkh|lkho|daal|daalo|dalo|type|enter)\b/i.test(qLower) &&
+    (/\b(?:kch|kuch|something|ye|yeh|isme|isko|it|this)\b/i.test(qLower) || !/\b(?:with|as|:|=)\b/i.test(qLower));
+
+  if (isBareFillOrWrite) {
+    const isHindi = activeBuddy.defaultLanguage !== "english";
+    const matchedField = findBestMatchingElement(snapshot, question) || snapshot?.forms?.[0] || null;
+    const askText = isHindi
+      ? /\b(?:likh|likho|type)\b/i.test(qLower)
+        ? "Kya likhna hai? Text bata do."
+        : "Kya fill karna hai?"
+      : "What should I write or fill here? Please share the value.";
+    return {
+      taskId: null,
+      reply: {
+        answer: askText,
+        highlight: matchedField?.ref || null,
+        confidence: "medium",
+        needs: "value_to_fill",
+        emotion: "curious",
+        actionType: "ask_clarification",
+      },
+      actionType: "ask_clarification",
+      needsClarification: true,
+      clarificationQuestion: askText,
+      targetField: matchedField?.name || matchedField?.placeholder || null,
+      targetSelector: matchedField?.selector || null,
+      highlightSelector: matchedField?.selector || null,
+      buddyName: activeBuddy.name,
+      permission: "explain",
+      guest: true,
+      providerWarning,
+    };
+  }
+
   const isFormFillAction =
     Boolean(fillWithMatch) ||
     /(?:form\s+(?:fill|bhar|bharo)|fill\s+(?:the\s+|this\s+)?form|auto\s*fill|fill\s+(?:all\s+)?(?:inputs|fields)|fill\s+kar|likh\s+do|daal\s+do|type\s+kar)/i.test(
@@ -1870,6 +1941,7 @@ async function ask(
   preferredModel,
   uploadedDocumentSummary,
   preferredProvider,
+  actionContext,
 ) {
   const queuedExtras = pendingAskOptionsQueue.shift() || {};
   await ensureConversationBufferLoaded();
@@ -1877,6 +1949,7 @@ async function ask(
     uploadedDocumentSummary || queuedExtras.uploadedDocumentSummary || undefined;
   const requestedPreferredProvider =
     preferredProvider || queuedExtras.preferredProvider || undefined;
+  const effectiveActionContext = actionContext || queuedExtras.actionContext || undefined;
 
   const { session } = await chrome.storage.local.get("session");
   const { lastBase, userApiKey, customBaseUrl, selectedProvider } = await chrome.storage.local.get([
@@ -1924,13 +1997,22 @@ async function ask(
   }
 
   const formattedHistory = getFormattedHistory(history);
+  const sanitizedSnapshot = snapshot
+    ? {
+        ...snapshot,
+        forms: Array.isArray(snapshot.forms)
+          ? snapshot.forms.map((f) => (f?.sensitive ? { ...f, value: undefined } : f))
+          : snapshot.forms,
+      }
+    : null;
 
   const payload = JSON.stringify({
     question,
     intent: intent || "answer",
-    snapshot,
+    snapshot: sanitizedSnapshot,
     screenshotBase64: screenshotBase64 || undefined,
     uploadedDocumentSummary: effectiveDocSummary || undefined,
+    actionContext: effectiveActionContext || undefined,
     history: formattedHistory.length > 0 ? formattedHistory : undefined,
     buddySlug: buddySlug || undefined,
     customBuddyId: customBuddyId || undefined,
@@ -2041,13 +2123,14 @@ async function ask(
       const autonomousResult = await generateAutonomousCompanionReply({
         question,
         intent,
-        snapshot,
+        snapshot: sanitizedSnapshot,
         screenshotBase64,
         buddySlug,
         customBuddyId,
         userApiKey,
         preferredProvider: effectivePreferredProvider,
         history: formattedHistory,
+        actionContext: effectiveActionContext,
       });
       if (autonomousResult) {
         body = autonomousResult;
@@ -2070,19 +2153,21 @@ async function ask(
         preferredModel,
         effectiveDocSummary,
         effectivePreferredProvider,
+        effectiveActionContext,
       );
     }
     if (res && !res.ok && !body.reply?.answer) {
       const autonomousResult = await generateAutonomousCompanionReply({
         question,
         intent,
-        snapshot,
+        snapshot: sanitizedSnapshot,
         screenshotBase64,
         buddySlug,
         customBuddyId,
         userApiKey,
         preferredProvider: effectivePreferredProvider,
         history: formattedHistory,
+        actionContext: effectiveActionContext,
       });
       if (autonomousResult) {
         body = autonomousResult;
@@ -2118,13 +2203,14 @@ async function ask(
       const autonomousResult = await generateAutonomousCompanionReply({
         question,
         intent,
-        snapshot,
+        snapshot: sanitizedSnapshot,
         screenshotBase64,
         buddySlug,
         customBuddyId,
         userApiKey,
         preferredProvider: effectivePreferredProvider,
         history: formattedHistory,
+        actionContext: effectiveActionContext,
       });
       if (autonomousResult) {
         if (autonomousResult.reply?.answer) {
@@ -2542,6 +2628,7 @@ async function smartFillForm(fields, options = {}) {
 
       const getFieldIdentifiers = (el) => {
         const elRoot = el.getRootNode?.() || document;
+        const findById = (id) => elRoot.getElementById?.(id) || document.getElementById(id);
         const rawIdentifiers = [
           el.name,
           el.id,
@@ -2551,7 +2638,18 @@ async function smartFillForm(fields, options = {}) {
           el.getAttribute?.("title"),
           el.getAttribute?.("data-testid"),
           el.getAttribute?.("autocomplete"),
+          el.type,
+          el.getAttribute?.("role"),
         ].filter(Boolean);
+
+        const labelledby = el.getAttribute?.("aria-labelledby");
+        if (labelledby) {
+          const parts = labelledby
+            .split(/\s+/)
+            .map((id) => findById(id)?.innerText)
+            .filter(Boolean);
+          if (parts.length) rawIdentifiers.push(parts.join(" "));
+        }
 
         if (el.id) {
           try {
@@ -2576,6 +2674,24 @@ async function smartFillForm(fields, options = {}) {
           rawIdentifiers.push(prev.innerText);
         }
 
+        // Check immediate field wrapper/fieldset/table cell when it holds only this input
+        const fieldGroup = el.closest?.(".form-group, .field, .form-field, .input-group, fieldset");
+        if (fieldGroup) {
+          const groupControls = fieldGroup.querySelectorAll?.(
+            'input:not([type="hidden"]), textarea, select, [contenteditable="true"], [role="textbox"], [role="searchbox"], [role="combobox"]',
+          );
+          if (!groupControls || groupControls.length <= 1) {
+            const grpLabel = fieldGroup.querySelector?.("label, legend, .label, .field-label, .form-label");
+            if (grpLabel?.innerText && (!grpLabel.htmlFor || grpLabel.htmlFor === el.id)) {
+              rawIdentifiers.push(grpLabel.innerText);
+            }
+          }
+        }
+        const td = el.closest?.("td");
+        if (td?.previousElementSibling?.innerText) {
+          rawIdentifiers.push(td.previousElementSibling.innerText);
+        }
+
         const isCheckOrRadioCtrl =
           el.type === "checkbox" ||
           el.type === "radio" ||
@@ -2596,6 +2712,64 @@ async function smartFillForm(fields, options = {}) {
         if (parentText) rawIdentifiers.push(parentText);
 
         return rawIdentifiers.map(normalize).filter((s) => s.length > 0);
+      };
+
+      const getFieldDisplayLabel = (el) => {
+        const elRoot = el.getRootNode?.() || document;
+        if (el.id) {
+          try {
+            const l =
+              elRoot.querySelector?.(`label[for="${CSS.escape(el.id)}"]`) ||
+              document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+            if (l?.innerText?.trim()) return l.innerText.trim().slice(0, 60);
+          } catch {}
+        }
+        const grp = el.closest?.(".form-group, .field, .form-field, fieldset")?.querySelector?.("label, legend");
+        if (grp?.innerText?.trim() && (!grp.htmlFor || grp.htmlFor === el.id)) {
+          return grp.innerText.trim().slice(0, 60);
+        }
+        return (
+          el.getAttribute?.("aria-label") ||
+          el.placeholder ||
+          el.name ||
+          el.id ||
+          el.tagName.toLowerCase()
+        );
+      };
+
+      const getUniqueSelector = (node) => {
+        if (!node) return undefined;
+        const nodeRoot = node.getRootNode?.() || document;
+        const safeCount = (s) => {
+          try {
+            return (nodeRoot.querySelectorAll ? nodeRoot.querySelectorAll(s) : document.querySelectorAll(s)).length;
+          } catch {
+            return 0;
+          }
+        };
+        if (node.id && safeCount(`#${CSS.escape(node.id)}`) === 1) {
+          return `#${CSS.escape(node.id)}`;
+        }
+        if (node.name && safeCount(`[name="${CSS.escape(node.name)}"]`) === 1) {
+          return `${node.tagName.toLowerCase()}[name="${CSS.escape(node.name)}"]`;
+        }
+        const parts = [];
+        let cur = node;
+        while (cur && cur.nodeType === 1 && cur !== nodeRoot && parts.length < 5) {
+          let p = cur.tagName.toLowerCase();
+          if (cur.id && safeCount(`#${CSS.escape(cur.id)}`) === 1) {
+            parts.unshift(`#${CSS.escape(cur.id)}`);
+            break;
+          }
+          const parent = cur.parentElement;
+          if (parent) {
+            const same = [...parent.children].filter((c) => c.tagName === cur.tagName);
+            if (same.length > 1) p += `:nth-of-type(${same.indexOf(cur) + 1})`;
+          }
+          parts.unshift(p);
+          cur = parent;
+        }
+        return parts.join(" > ");
       };
 
       const validateInteractability = (el) => {
@@ -2708,10 +2882,13 @@ async function smartFillForm(fields, options = {}) {
         desh: ["country", "nation"],
         pincode: ["zip", "zipcode", "postalcode", "pin", "postal"],
         pin: ["pincode", "zip", "zipcode", "postalcode", "postal"],
-        search: ["query", "q", "searchbox", "find", "keyword", "searchinput"],
+        search: ["query", "q", "searchbox", "find", "keyword", "searchinput", "searchquery"],
+        searchbox: ["search", "query", "q", "find", "keyword", "searchinput", "searchquery"],
         describe: ["prompt", "description", "details", "idea", "app", "message", "describeanapp"],
-        message: ["comment", "comments", "note", "notes", "msg", "description", "remarks", "body", "sandesh"],
-        msg: ["message", "comment", "comments", "note", "notes", "description", "remarks", "body", "sandesh"],
+        message: ["comment", "comments", "note", "notes", "msg", "description", "remarks", "body", "sandesh", "chat", "chatbox", "composer", "reply"],
+        msg: ["message", "comment", "comments", "note", "notes", "description", "remarks", "body", "sandesh", "chat", "chatbox"],
+        chat: ["chatbox", "message", "msg", "reply", "composer", "prompt", "comment", "typeamessage"],
+        chatbox: ["chat", "message", "msg", "reply", "composer", "prompt", "typeamessage"],
         comment: ["message", "note", "notes", "feedback", "review"],
         subject: ["title", "topic", "heading"],
         company: ["organization", "org", "firm", "business", "businessname", "legalname"],
@@ -2748,35 +2925,69 @@ async function smartFillForm(fields, options = {}) {
 
       const claimedElements = new Set();
 
-      const findCandidateForKey = (key, explicitSelector) => {
+      const findCandidateForKey = (key, explicitSelector, entryVal) => {
         // 1. Explicit CSS selector override
         if (explicitSelector) {
           const selEl = resolveEditableTarget(queryDeepSelector(explicitSelector));
-          if (selEl && validateInteractability(selEl).ok) return selEl;
+          if (selEl && validateInteractability(selEl).ok) return { el: selEl };
         }
 
-        // 2. Current / highlighted / active / primary visible field
+        // 2. Current / highlighted / active / semantic value inference (with ambiguity check!)
         if (key === "__CURRENT__" || key === "__PRIMARY__") {
           if (opts?.fallbackSelector) {
             const hlEl = resolveEditableTarget(queryDeepSelector(opts.fallbackSelector));
-            if (hlEl && validateInteractability(hlEl).ok) return hlEl;
+            if (hlEl && validateInteractability(hlEl).ok) return { el: hlEl };
           }
           const active = resolveEditableTarget(document.activeElement);
-          if (active && active !== document.body && validateInteractability(active).ok) return active;
-          const visibleInputs = elements.filter((el) => validateInteractability(el).ok);
-          const firstUnclaimed = visibleInputs.find((el) => !claimedElements.has(el));
-          if (firstUnclaimed) return firstUnclaimed;
-          if (visibleInputs.length > 0) return visibleInputs[0];
-          return null;
+          if (active && active !== document.body && validateInteractability(active).ok) return { el: active };
+          const visibleInputs = elements.filter(
+            (el) => validateInteractability(el).ok && !claimedElements.has(el),
+          );
+          if (visibleInputs.length === 1) return { el: visibleInputs[0] };
+
+          // Try semantic inference from value format (mobile number, email, URL)
+          const rawValStr = String(entryVal || "").trim();
+          if (visibleInputs.length > 1 && rawValStr) {
+            let inferredKey = null;
+            if (/^(\+?\d{1,3}[\s-]?)?[6-9]\d{9}$/.test(rawValStr.replace(/\s+/g, ""))) {
+              inferredKey = "phone";
+            } else if (/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(rawValStr)) {
+              inferredKey = "email";
+            }
+            if (inferredKey) {
+              const inferredRes = findCandidateForKey(inferredKey, null, rawValStr);
+              if (inferredRes?.el) return inferredRes;
+              if (inferredRes?.ambiguous) return inferredRes;
+            }
+          }
+
+          if (visibleInputs.length > 1 && opts?.fromChatCommand) {
+            const emptyInputs = visibleInputs.filter((el) => {
+              const cur = isContentEditableEl(el) ? el.innerText : el.value;
+              return !String(cur || "").trim();
+            });
+            const pool = emptyInputs.length > 0 ? emptyInputs : visibleInputs;
+            if (pool.length === 1) return { el: pool[0] };
+            return {
+              ambiguous: true,
+              key,
+              candidates: pool.slice(0, 6).map((el, idx) => ({
+                index: idx + 1,
+                label: getFieldDisplayLabel(el),
+                selector: getUniqueSelector(el),
+              })),
+            };
+          }
+
+          if (visibleInputs.length > 0) return { el: visibleInputs[0] };
+          return { el: null };
         }
 
         const normKey = normalize(key);
-        if (!normKey) return null;
+        if (!normKey) return { el: null };
         const keyCandidates = [normKey, ...(FIELD_SYNONYMS[normKey] || [])].filter((k) => k.length > 0);
 
-        let bestUnclaimedEl = null;
-        let bestUnclaimedScore = 0;
-
+        const scoredCandidates = [];
         for (const el of elements) {
           if (claimedElements.has(el)) continue;
           const check = validateInteractability(el);
@@ -2803,13 +3014,32 @@ async function smartFillForm(fields, options = {}) {
               }
             }
           }
-          if (score > bestUnclaimedScore) {
-            bestUnclaimedScore = score;
-            bestUnclaimedEl = el;
+          if (score > 0) {
+            scoredCandidates.push({ el, score });
           }
         }
 
-        if (bestUnclaimedEl) return bestUnclaimedEl;
+        scoredCandidates.sort((a, b) => b.score - a.score);
+        if (scoredCandidates.length > 0) {
+          const topScore = scoredCandidates[0].score;
+          const tied = scoredCandidates.filter((c) => c.score === topScore);
+          if (tied.length > 1 && opts?.fromChatCommand) {
+            // If exact labels differ (e.g. "Billing Phone" vs "Shipping Phone"), ask user to disambiguate
+            const distinctLabels = new Set(tied.map((t) => normalize(getFieldDisplayLabel(t.el))));
+            if (distinctLabels.size > 1) {
+              return {
+                ambiguous: true,
+                key,
+                candidates: tied.slice(0, 6).map((c, idx) => ({
+                  index: idx + 1,
+                  label: getFieldDisplayLabel(c.el),
+                  selector: getUniqueSelector(c.el),
+                })),
+              };
+            }
+          }
+          return { el: scoredCandidates[0].el };
+        }
 
         // Fallback: look for visible text/placeholder overlay element matching the key and resolve to nearby editable
         const overlays = queryAllDeep("div, span, label, p").filter((node) => {
@@ -2821,11 +3051,11 @@ async function smartFillForm(fields, options = {}) {
         for (const ov of overlays) {
           const resolved = resolveEditableTarget(ov);
           if (resolved && validateInteractability(resolved).ok && !claimedElements.has(resolved)) {
-            return resolved;
+            return { el: resolved };
           }
         }
 
-        return null;
+        return { el: null };
       };
 
       // Build ordered fill entries from either array (explicitPairs) or object (fieldsToFill)
@@ -2847,8 +3077,20 @@ async function smartFillForm(fields, options = {}) {
         const { key, val, overwrite, selector: entrySel } = entry;
         if (val === undefined || val === null) continue;
 
-        const candidate = findCandidateForKey(key, entrySel);
+        const matchRes = findCandidateForKey(key, entrySel, val);
+        if (matchRes?.ambiguous && Array.isArray(matchRes.candidates) && matchRes.candidates.length > 1) {
+          return {
+            ok: false,
+            ambiguous: true,
+            target: key,
+            value: val,
+            candidates: matchRes.candidates,
+            results,
+            message: `Multiple matching fields found for "${key === "__CURRENT__" ? "input box" : key}". Please choose which field.`,
+          };
+        }
 
+        const candidate = matchRes?.el || null;
         if (!candidate) {
           results.skipped.push({ key, value: val, reason: "Field not found on active page" });
           continue;
@@ -3180,7 +3422,7 @@ async function smartFillForm(fields, options = {}) {
       }
 
       // 4. Detect Submit Trigger for explicit confirmation gate
-      if (successfullyFilled.length > 0) {
+      if (successfullyFilled.length > 0 && !opts?.noSubmitPrompt) {
         for (const el of successfullyFilled) {
           const form = el.closest?.("form");
           const btn = form
@@ -3240,9 +3482,10 @@ async function smartFillForm(fields, options = {}) {
   const topPreservedCount = mainResult.results?.preserved?.length || 0;
 
   if (
-    !mainResult.ok ||
-    (topFilledCount === 0 && topPreservedCount === 0) ||
-    topSkippedMissing.length > 0
+    !mainResult.ambiguous &&
+    (!mainResult.ok ||
+      (topFilledCount === 0 && topPreservedCount === 0) ||
+      topSkippedMissing.length > 0)
   ) {
     let subFieldsArg = fields;
     let subOptionsArg = options;
@@ -4712,6 +4955,66 @@ async function executeAction(action, selector, value, options = {}) {
           message: verified
             ? `Filled "${fieldLabel}" with requested value.`
             : `Field "${fieldLabel}" rejected or cleared the typed value.`,
+        };
+      }
+
+      // --- 4b. SEARCH BOX FILL + SUBMIT ACTION ---
+      if (act === "search_submit") {
+        const searchCandidates = queryAllDeep(
+          'input[type="search"], [role="searchbox"], input[name*="search" i], input[id*="search" i], input[placeholder*="search" i], input[aria-label*="search" i], input[name="q"], input[name="query"]',
+        ).filter((el) => isVisible(el) && !el.disabled && !el.readOnly);
+        let searchEl = sel ? queryDeepSelector(sel) : searchCandidates[0] || null;
+        if (!searchEl) {
+          return {
+            ok: false,
+            noSearchInput: true,
+            action: "search_submit",
+            message: "No visible search input box was found on this page.",
+          };
+        }
+        const queryStr = String(val || opts?.query || "").trim();
+        searchEl.scrollIntoView({ behavior: "smooth", block: "center" });
+        searchEl.focus();
+        const proto =
+          searchEl.tagName === "TEXTAREA"
+            ? window.HTMLTextAreaElement.prototype
+            : window.HTMLInputElement.prototype;
+        const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+        if (nativeSetter) nativeSetter.call(searchEl, queryStr);
+        else searchEl.value = queryStr;
+        if (searchEl._valueTracker) searchEl._valueTracker.setValue("");
+        searchEl.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+        searchEl.dispatchEvent(new Event("change", { bubbles: true }));
+
+        let submittedWith = "enter_key";
+        const form = searchEl.closest?.("form");
+        const submitBtn = form
+          ? form.querySelector('button[type="submit"], input[type="submit"], button[aria-label*="search" i]')
+          : searchEl.parentElement?.querySelector?.('button, [role="button"]');
+        if (submitBtn && isVisible(submitBtn)) {
+          dispatchRealClick(submitBtn);
+          submittedWith = "search_button";
+        } else {
+          const enterOpts = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true };
+          searchEl.dispatchEvent(new KeyboardEvent("keydown", enterOpts));
+          searchEl.dispatchEvent(new KeyboardEvent("keypress", enterOpts));
+          searchEl.dispatchEvent(new KeyboardEvent("keyup", enterOpts));
+          if (form && typeof form.requestSubmit === "function") {
+            try {
+              form.requestSubmit();
+              submittedWith = "form_submit";
+            } catch {}
+          }
+        }
+        const fieldLabel = searchEl.getAttribute?.("aria-label") || searchEl.placeholder || searchEl.name || searchEl.id || "search";
+        return {
+          ok: true,
+          verified: true,
+          action: "search_submit",
+          query: queryStr,
+          field: fieldLabel,
+          submittedWith,
+          message: `Searched "${queryStr}" using ${fieldLabel}.`,
         };
       }
 

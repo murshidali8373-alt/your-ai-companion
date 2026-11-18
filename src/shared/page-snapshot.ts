@@ -112,8 +112,8 @@ function line(el: SnapshotElement): string {
   return bits.join(" ");
 }
 
-function section(title: string, elements: SnapshotElement[]): string[] {
-  if (!elements.length) return [];
+function section(title: string, elements?: SnapshotElement[]): string[] {
+  if (!elements?.length) return [];
   return [`${title}:`, ...elements.map((el) => `- ${line(el)}`)];
 }
 

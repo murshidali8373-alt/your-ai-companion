@@ -445,7 +445,32 @@ let lastHighlightSelector = null;
 let lastCallout = { title: null, description: null };
 let pendingAction = null;
 let pendingDisambiguation = null;
+let pendingSlot = null;
+const sessionTaskContext = {
+  lastActionType: null,
+  lastTargetField: null,
+  lastTargetSelector: null,
+  lastOptions: null,
+  lastItems: null,
+  recentFields: [],
+  lastActionProposal: null,
+};
 const sessionActionLog = [];
+
+function recordTaskContext({ actionType, targetField, targetSelector, options, items, proposal } = {}) {
+  if (actionType) sessionTaskContext.lastActionType = actionType;
+  if (targetField && targetField !== "__CURRENT__") {
+    sessionTaskContext.lastTargetField = targetField;
+    sessionTaskContext.recentFields = [
+      targetField,
+      ...sessionTaskContext.recentFields.filter((f) => f !== targetField),
+    ].slice(0, 6);
+  }
+  if (targetSelector !== undefined) sessionTaskContext.lastTargetSelector = targetSelector;
+  if (options !== undefined) sessionTaskContext.lastOptions = options;
+  if (items !== undefined) sessionTaskContext.lastItems = items;
+  if (proposal !== undefined) sessionTaskContext.lastActionProposal = proposal;
+}
 
 function sanitizeLogSummary(text) {
   return String(text || "")
@@ -468,6 +493,10 @@ function recordSessionAction(summary, status = "confirmed") {
 }
 let recognition = null;
 let isRecognizing = false;
+let isLiveVoiceMode = false;
+let isBuddySpeaking = false;
+let liveVoiceState = "idle"; // "idle" | "listening" | "processing" | "speaking" | "error"
+let liveVoiceRestartTimer = null;
 let isMuted = false;
 let currentEmotion = "idle";
 let blinkInterval = null;
@@ -997,62 +1026,206 @@ $("buddyAvatar")?.addEventListener("click", () => {
   }, 900);
 });
 
+function updateVoiceUiState(state, statusMsg) {
+  liveVoiceState = state;
+  const vb = $("voiceBtn");
+  const lvb = $("liveVoiceBtn");
+  if (vb) {
+    vb.classList.toggle("active", state === "listening");
+    vb.classList.toggle("listening", state === "listening");
+    vb.classList.toggle("speaking-active", state === "speaking");
+    vb.textContent =
+      state === "listening"
+        ? "🛑 Listening…"
+        : state === "speaking"
+          ? "✋ Interrupt"
+          : state === "processing"
+            ? "⏳ Thinking…"
+            : "🎤 Talk";
+  }
+  if (lvb) {
+    lvb.classList.toggle("live-active", isLiveVoiceMode);
+    lvb.textContent = isLiveVoiceMode ? "🟢 Live On" : "🎙️ Live";
+  }
+  if (statusMsg && $("statusText")) {
+    $("statusText").textContent = statusMsg;
+  }
+}
+
+function clearLiveRestartTimer() {
+  if (liveVoiceRestartTimer) {
+    clearTimeout(liveVoiceRestartTimer);
+    liveVoiceRestartTimer = null;
+  }
+}
+
+function interruptBuddySpeech({ resumeListening = false } = {}) {
+  clearLiveRestartTimer();
+  isBuddySpeaking = false;
+  try {
+    window.speechSynthesis?.cancel?.();
+  } catch {}
+  stopSpeechMouthCycle();
+  buddy3dViewer?.setSpeaking?.(false);
+  if (currentEmotion !== "privacy") {
+    setRigEmotion(resumeListening ? "listening" : "idle", resumeListening ? "Listening" : "Idle");
+  }
+  updateVoiceUiState(resumeListening ? "listening" : "idle");
+  if (resumeListening) {
+    startVoiceListening();
+  }
+}
+
+function startVoiceListening() {
+  clearLiveRestartTimer();
+  if (!recognition) {
+    const msg = "Speech recognition is not supported in this browser window.";
+    updateVoiceUiState("error", msg);
+    setRigEmotion("concerned", "No Mic");
+    appendHistory("buddy", `🎤 ${msg}`);
+    return false;
+  }
+  if (isBuddySpeaking) {
+    interruptBuddySpeech({ resumeListening: false });
+  }
+  if (isRecognizing) return true;
+  try {
+    const active = getActiveBuddy();
+    recognition.lang = active?.defaultLanguage === "english" ? "en-IN" : "hi-IN";
+    recognition.interimResults = true;
+    recognition.start();
+    return true;
+  } catch {
+    stopVoice();
+    return false;
+  }
+}
+
+function toggleLiveVoice(forceState) {
+  const next = typeof forceState === "boolean" ? forceState : !isLiveVoiceMode;
+  isLiveVoiceMode = next;
+  if (!isLiveVoiceMode) {
+    clearLiveRestartTimer();
+    try {
+      recognition?.stop?.();
+    } catch {}
+    interruptBuddySpeech({ resumeListening: false });
+    updateVoiceUiState("idle", "Live conversation stopped.");
+    return false;
+  }
+  updateVoiceUiState("listening", "Live conversation active — speak anytime…");
+  return startVoiceListening();
+}
+
+window.__buddyVoiceController = {
+  getState: () => ({
+    liveVoiceState,
+    isLiveVoiceMode,
+    isRecognizing,
+    isBuddySpeaking,
+  }),
+  toggleLiveVoice,
+  startVoiceListening,
+  interruptBuddySpeech,
+};
+
 // Speech recognition setup
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 if (SpeechRecognition) {
   recognition = new SpeechRecognition();
   recognition.continuous = false;
-  recognition.interimResults = false;
+  recognition.interimResults = true;
   recognition.lang = "en-IN";
 
   recognition.onstart = () => {
     isRecognizing = true;
-    const vb = $("voiceBtn");
-    if (vb) {
-      vb.classList.add("active", "listening");
-      vb.textContent = "🛑 Listening…";
-    }
     setRigEmotion("listening", "Listening");
-    if ($("statusText")) $("statusText").textContent = "Listening to your voice…";
+    updateVoiceUiState(
+      "listening",
+      isLiveVoiceMode ? "Live conversation: listening…" : "Listening to your voice…",
+    );
   };
 
   recognition.onresult = (event) => {
-    const transcript = event.results[0]?.[0]?.transcript || "";
-    if (transcript.trim()) {
-      if ($("promptInput")) $("promptInput").value = transcript;
-      sendQuery(transcript, "answer");
+    let interimText = "";
+    let finalText = "";
+    const results = event?.results || [];
+    for (let i = 0; i < results.length; i++) {
+      const alt = results[i]?.[0]?.transcript || "";
+      if (results[i]?.isFinal) finalText += `${alt} `;
+      else interimText += `${alt} `;
+    }
+    if (isBuddySpeaking && (interimText.trim() || finalText.trim())) {
+      interruptBuddySpeech({ resumeListening: false });
+    }
+    const interimClean = interimText.trim();
+    if (interimClean && $("promptInput") && !finalText.trim()) {
+      $("promptInput").value = interimClean;
+    }
+    const finalClean = finalText.trim();
+    if (finalClean) {
+      if ($("promptInput")) $("promptInput").value = finalClean;
+      updateVoiceUiState("processing", `Heard: "${finalClean}"`);
+      sendQuery(finalClean, "answer", { fromVoice: true });
     }
   };
 
   recognition.onerror = (event) => {
     const code = event?.error || "";
-    stopVoice();
-    if (code && code !== "aborted") {
-      const msg =
-        code === "not-allowed" || code === "service-not-allowed"
-          ? "Microphone permission denied. Please allow microphone access in Chrome site/extension settings."
-          : code === "audio-capture"
-            ? "No microphone was detected. Connect a microphone and try again."
-            : code === "no-speech"
-              ? "No speech detected. Try speaking closer to your microphone."
-              : `Voice input error (${code}).`;
-      if ($("statusText")) $("statusText").textContent = msg;
-      if (code === "not-allowed" || code === "audio-capture") {
-        appendHistory("buddy", `🎤 ${msg}`);
-      }
+    isRecognizing = false;
+    if (code === "aborted") {
+      if (!isLiveVoiceMode && !busy && !isBuddySpeaking) updateVoiceUiState("idle");
+      return;
+    }
+    if (code === "no-speech" && isLiveVoiceMode) {
+      updateVoiceUiState("listening", "Live conversation: waiting for speech…");
+      clearLiveRestartTimer();
+      liveVoiceRestartTimer = setTimeout(() => {
+        if (isLiveVoiceMode && !busy && !isBuddySpeaking && !isRecognizing) {
+          startVoiceListening();
+        }
+      }, 350);
+      return;
+    }
+    const msg =
+      code === "not-allowed" || code === "service-not-allowed"
+        ? "Microphone permission denied. Please allow microphone access in Chrome site/extension settings."
+        : code === "audio-capture"
+          ? "No microphone was detected. Connect a microphone and try again."
+          : code === "no-speech"
+            ? "No speech detected. Try speaking closer to your microphone."
+            : `Voice input error (${code}).`;
+    if (code === "not-allowed" || code === "audio-capture") {
+      isLiveVoiceMode = false;
+      appendHistory("buddy", `🎤 ${msg}`);
+    }
+    updateVoiceUiState("error", msg);
+    if (!busy) setRigEmotion("concerned", "Mic Notice");
+  };
+
+  recognition.onend = () => {
+    isRecognizing = false;
+    if (isLiveVoiceMode && !busy && !isBuddySpeaking && liveVoiceState !== "error") {
+      clearLiveRestartTimer();
+      liveVoiceRestartTimer = setTimeout(() => {
+        if (isLiveVoiceMode && !busy && !isBuddySpeaking && !isRecognizing) {
+          startVoiceListening();
+        }
+      }, 320);
+      return;
+    }
+    if (!busy && !isBuddySpeaking && liveVoiceState !== "error") {
+      stopVoice();
     }
   };
-  recognition.onend = () => stopVoice();
 }
 
 function stopVoice() {
   isRecognizing = false;
-  const vb = $("voiceBtn");
-  if (vb) {
-    vb.classList.remove("active", "listening");
-    vb.textContent = "🎤 Talk";
+  if (!busy && !isBuddySpeaking) {
+    setRigEmotion("idle", "Idle");
+    updateVoiceUiState("idle");
   }
-  if (!busy) setRigEmotion("idle", "Idle");
 }
 
 function setEmotion(emotion, label) {
@@ -1350,9 +1523,19 @@ function speakResponse(text, finishEmotion = "idle") {
     typeof SpeechSynthesisUtterance === "undefined" ||
     !spokenText
   ) {
+    isBuddySpeaking = false;
     stopSpeechMouthCycle();
     buddy3dViewer?.setSpeaking(false);
     setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
+    updateVoiceUiState(isLiveVoiceMode ? "listening" : "idle");
+    if (isLiveVoiceMode && !busy && !pendingAction) {
+      clearLiveRestartTimer();
+      liveVoiceRestartTimer = setTimeout(() => {
+        if (isLiveVoiceMode && !busy && !isBuddySpeaking && !isRecognizing) {
+          startVoiceListening();
+        }
+      }, 360);
+    }
     return;
   }
 
@@ -1361,15 +1544,29 @@ function speakResponse(text, finishEmotion = "idle") {
     if (settled) return;
     settled = true;
     clearSpeechTimers();
+    isBuddySpeaking = false;
     stopSpeechMouthCycle();
     buddy3dViewer?.setSpeaking(false);
     if (currentEmotion !== "privacy") {
       setRigEmotion(finishEmotion, finishEmotion.toUpperCase());
     }
+    if (isLiveVoiceMode && !busy && !pendingAction) {
+      updateVoiceUiState("listening", "Live conversation: listening…");
+      clearLiveRestartTimer();
+      liveVoiceRestartTimer = setTimeout(() => {
+        if (isLiveVoiceMode && !busy && !isBuddySpeaking && !isRecognizing) {
+          startVoiceListening();
+        }
+      }, 360);
+    } else if (!isRecognizing) {
+      updateVoiceUiState("idle");
+    }
   };
 
   try {
     window.speechSynthesis.cancel();
+    isBuddySpeaking = true;
+    updateVoiceUiState("speaking", "Speaking… (tap Interrupt to speak)");
     const utterance = new SpeechSynthesisUtterance(spokenText);
     const lang = detectSpeechLanguageForExtension(spokenText);
     utterance.lang = lang;
@@ -1381,6 +1578,7 @@ function speakResponse(text, finishEmotion = "idle") {
     let boundaryIdx = 0;
 
     utterance.onstart = () => {
+      isBuddySpeaking = true;
       if (currentEmotion !== "privacy") {
         setRigEmotion("talking", "Talking");
         buddy3dViewer?.setSpeaking(true);
@@ -2013,6 +2211,42 @@ function stripBuddyPrefix(text) {
     .trim();
 }
 
+function normalizeHinglishCommand(rawText) {
+  const quotes = [];
+  const masked = String(rawText || "").replace(/(["'])([^"']+)\1/g, (m) => {
+    quotes.push(m);
+    return `__Q${quotes.length - 1}__`;
+  });
+
+  let out = masked
+    .replace(/\bhnn+\b|\bhn+\b|\bhaa+n\b/gi, "haan")
+    .replace(/\bkrdo\b|\bkr\s+do\b/gi, "kar do")
+    .replace(/\bkro\b|\bkrr+o\b/gi, "karo")
+    .replace(/\bkr\b(?=\s+(?:do|de|dein|ke|na|rha|raha|rahi|lo)|[.!?\s]*$)/gi, "kar")
+    .replace(/\bkyuu+n?\b|\bkyu+\b|\bq\b(?=\s+(?:kar|karo|ho|h|hai|nahi|nhi|likh|fill|bhai|buddy)?\s*[?!.]*$)/gi, "kyun")
+    .replace(/\bsb+\b/gi, "sab")
+    .replace(/\bkch+\b/gi, "kuch")
+    .replace(/\bbtaa*o\b/gi, "batao")
+    .replace(/\bbta+\b/gi, "bata")
+    .replace(/\bbss+\b/gi, "bas")
+    .replace(/\blgta\b/gi, "lagta")
+    .replace(/\blgbhg\b/gi, "lagbhag")
+    .replace(/\bdall*o\b|\bdalo\b/gi, "daalo")
+    .replace(/\blkho\b|\blikhh+o\b/gi, "likho")
+    .replace(/\blkh\b/gi, "likh")
+    .replace(/\bkholl+o\b/gi, "kholo")
+    .replace(/\bdikk*hao\b/gi, "dikhao")
+    .replace(/\bbnao\b/gi, "banao")
+    .replace(/\byhi\b/gi, "yahi")
+    .replace(/\bwhi\b/gi, "wahi")
+    .replace(/\btk\b(?=\s+kya)/gi, "tak")
+    .replace(/\bh\b(?=\s*(?:kya|na|to|bhai|buddy)?[.!?\s]*$)/gi, "hai")
+    .replace(/\bhu\b(?=\s*(?:main|bhai)?[.!?\s]*$)/gi, "hoon")
+    .replace(/\bsmjhao\b/gi, "samjhao");
+
+  return out.replace(/__Q(\d+)__/g, (_m, idx) => quotes[Number(idx)] || "");
+}
+
 function normalizeFillTarget(raw) {
   return String(raw || "")
     .trim()
@@ -2020,7 +2254,18 @@ function normalizeFillTarget(raw) {
       /^(?:is\s+page\s+(?:par|pe|pr|mein|me|main)|page\s+(?:par|pe|pr|mein|me|main)|is\s+form\s+(?:mein|me|main)|form\s+(?:mein|me|main)|ye|yeh|is|the|a|an|my|apna|mera|yha|yaha|yahan)\s+/i,
       "",
     )
-    .replace(/\s+(?:field|input|box|textbox|textarea|area|dropdown|select|ki|ka|ke|par|pe|pr|ko)$/i, "")
+    .replace(
+      /\s+(?:waa?l[aei]|wle)\s*(?:field|input|box|textbox|textarea|area|dropdown|select|jagah)?(?:\s+(?:ki|ka|ke|par|pe|pr|ko))?$/i,
+      "",
+    )
+    .replace(
+      /\s+(?:field|input|box|textbox|textarea|area|dropdown|select|jagah|waa?l[aei]|ki|ka|ke|par|pe|pr|ko)$/i,
+      "",
+    )
+    .replace(
+      /\s+(?:waa?l[aei]|wle)$/i,
+      "",
+    )
     .trim()
     .toLowerCase();
 }
@@ -2044,6 +2289,13 @@ function resolveOrdinalChoiceIndex(text) {
   return null;
 }
 
+function isNonValuePlaceholder(rawVal) {
+  const normVal = normalizeHinglishCommand(String(rawVal || "").trim().toLowerCase());
+  return /^(?:kuch|kch|something|anything|kuch\s+bhi|anything|text|value|data|details|ye|yeh|isko|isme|karo|kro|kar\s*do|kr\s*do|fill|bharo|bhar\s*do|daalo|daal\s*do|likho|likh\s*do|type)$/i.test(
+    normVal,
+  );
+}
+
 function extractFillDetails(text) {
   const cleaned = stripBuddyPrefix(text)
     .replace(
@@ -2056,7 +2308,7 @@ function extractFillDetails(text) {
   const explicitPairs = [];
 
   const hasFillVerbOrAssign =
-    /\b(?:fill|type|likh|likho|daal|daalo|bhar|bharo|enter|set|populate|change|update|replace)\b|[:=]/i.test(
+    /\b(?:fill|type|likh|likho|lkh|lkho|daal|daalo|dalo|bhar|bharo|enter|set|populate|change|update|replace)\b|[:=]/i.test(
       cleaned,
     );
   if (
@@ -2064,13 +2316,13 @@ function extractFillDetails(text) {
     (/\b(?:point|highlight|click|press|tap|dabao|scroll|find|locate|dhoondho|dhundo|kaha|kahan|kidhar|where)\b/i.test(
       cleaned,
     ) ||
-      /\bsearch\s*(?:karo|kro|(?:kar|kr)\s*do|karein|for)\b/i.test(cleaned))
+      /\bsearch\s*(?:karo|kro|(?:kar|kr)\s*do|krdo|karein|for)\b/i.test(cleaned))
   ) {
     return { fields: null, explicitPairs: null, overwrite, explicitUserProvided: false };
   }
 
   const trailingVerbSuffix =
-    "(?:fill\\s+(?:(?:kar|kr)\\s*do|(?:kar|kr)o|karein)|fill|type\\s+(?:(?:kar|kr)\\s*do|(?:kar|kr)o)|type|likh\\s*(?:do|de|kar|kr)?|likho|daal\\s*(?:do|de)?|daalo|bhar\\s*(?:do|de)?|bharo|enter\\s*(?:(?:kar|kr)\\s*do|(?:kar|kr)o)?|set\\s*(?:(?:kar|kr)\\s*do|(?:kar|kr)o)|(?:kar|kr)\\s*do|(?:kar|kr)o)";
+    "(?:fill\\s+(?:(?:kar|kr)\\s*do|krdo|(?:kar|kr)o|karein)|fill|type\\s+(?:(?:kar|kr)\\s*do|krdo|(?:kar|kr)o)|type|likh\\s*(?:do|de|kar|kr)?|likho|lkho|daal\\s*(?:do|de)?|daalo|dalo|bhar\\s*(?:do|de)?|bharo|enter\\s*(?:(?:kar|kr)\\s*do|krdo|(?:kar|kr)o)?|set\\s*(?:(?:kar|kr)\\s*do|krdo|(?:kar|kr)o)|(?:kar|kr)\\s*do|krdo|(?:kar|kr)o)";
 
   // 1. Explicit key: value or key = value
   const keyValRegex =
@@ -2081,7 +2333,7 @@ function extractFillDetails(text) {
     const val = m[2]
       .replace(new RegExp(`\\s+${trailingVerbSuffix}.*$`, "i"), "")
       .trim();
-    if (val) {
+    if (val && !isNonValuePlaceholder(val)) {
       fields[key] = val;
       explicitPairs.push({ target: key, value: val, overwrite });
     }
@@ -2093,67 +2345,102 @@ function extractFillDetails(text) {
   // Split multi-field instructions cleanly (without mutating values inside clauses)
   const clauses = cleaned
     .split(
-      /\s*(?:,|;|\bphir\b|\bfir\b|\bthen\b|\band then\b|\buske baad\b|\b(?:and|aur)\b(?=\s+(?:fill|type|enter|write|set|likh|likho|daal|daalo|bhar|bharo|naam|name|full\s*name|email|phone|mobile|address|pata|city|state|country|pincode|pin|zip|gstin|gst|pan|dob|date\s*of\s*birth|father\s*name|gender|company|category|bio|message|msg|comment|subject|title|username)\b))\s*/i,
+      /\s*(?:,|;|\bphir\b|\bfir\b|\bthen\b|\band then\b|\buske baad\b|\b(?:and|aur)\b(?=\s+(?:fill|type|enter|write|set|likh|likho|daal|daalo|dalo|bhar|bharo|naam|name|full\s*name|email|phone|mobile|address|pata|city|state|country|pincode|pin|zip|gstin|gst|pan|dob|date\s*of\s*birth|father\s*name|gender|company|category|bio|message|msg|comment|subject|title|username)\b))\s*/i,
     )
     .map((c) => c.replace(/^(?:pehle|first|aur|and|also|next)\s+/i, "").trim())
     .filter(Boolean);
 
   const KNOWN_FIELD_ALIASES =
-    "(?:full\\s*name|legal\\s*name|trade\\s*name|first\\s*name|last\\s*name|father\\s*name|user\\s*name|date\\s*of\\s*birth|dob|gender|category|bio|mobile\\s*(?:number|no)?|phone\\s*(?:number|no)?|pin\\s*code|zip\\s*code|email\\s*(?:id|address)?|aadhaar\\s*(?:number|no)?|aadhar\\s*(?:number|no)?|naam|name|mail|email|phone|mobile|address|pata|city|state|country|pincode|pin|zip|gstin|gst|pan|search|describe|description|prompt|message|msg|comment|comments|note|notes|company|subject|title|username|password)";
+    "(?:full\\s*name|legal\\s*name|trade\\s*name|first\\s*name|last\\s*name|father\\s*name|user\\s*name|date\\s*of\\s*birth|dob|gender|category|bio|mobile\\s*(?:number|no)?|phone\\s*(?:number|no)?|pin\\s*code|zip\\s*code|email\\s*(?:id|address)?|aadhaar\\s*(?:number|no)?|aadhar\\s*(?:number|no)?|naam|name|mail|email|phone|mobile|address|pata|city|state|country|pincode|pin|zip|gstin|gst|pan|search|describe|description|prompt|message|msg|chat|comment|comments|note|notes|company|subject|title|username|password)";
 
   const patternARegex = new RegExp(
     `^(.+?)\\s+(?:mein|me|main|per|par|pe|pr|in|into)\\s+["']?(.+?)["']?\\s*(?:${trailingVerbSuffix})?[.!?\\s]*$`,
     "i",
   );
   const patternBRegex =
-    /^(?:fill|type|enter|write|put|set|likho|likh\s+do|daalo|daal\s+do|bharo)\s+["']?(.+?)["']?\s+(?:in|into|inside|mein|me|main|par|pe|pr)\s+(?:the\s+)?(.+?)[.!?\s]*$/i;
+    /^(?:fill|type|enter|write|put|set|likho|lkho|likh\s+do|daalo|dalo|daal\s+do|bharo)\s+["']?(.+?)["']?\s+(?:in|into|inside|mein|me|main|par|pe|pr)\s+(?:the\s+)?(.+?)[.!?\s]*$/i;
   const patternCRegex1 =
     /^(?:fill|type|populate)\s+(?:this(?:\s+box|\s+field)?|it)\s+(?:with|as)\s+["']?(.+?)["']?[.!?\s]*$/i;
   const patternCRegex2 =
-    /^(?:isko|is\s+box\s+ko|is\s+field\s+ko|yha|yaha|yahan)\s+["']?(.+?)["']?\s+(?:se\s+)?(?:fill|bhar|type|likh|daal)\s*(?:(?:kar|kr)\s*do|(?:kar|kr)o|do)?[.!?\s]*$/i;
+    /^(?:isko|is\s+box\s+ko|is\s+field\s+ko|yha|yaha|yahan)\s+["']?(.+?)["']?\s+(?:se\s+)?(?:fill|bhar|type|likh|daal)\s*(?:(?:kar|kr)\s*do|krdo|(?:kar|kr)o|do)?[.!?\s]*$/i;
   const knownFieldValRe = new RegExp(
     `\\b(${KNOWN_FIELD_ALIASES})\\s+(?:change\\s+karke\\s+|update\\s+karke\\s+|as\\s+|is\\s+|to\\s+|ko\\s+|ka\\s+|:)?["']?(.+?)["']?(?:\\s+${trailingVerbSuffix})?[.!?\\s]*$`,
     "i",
   );
 
+  const knownFieldExactRe = new RegExp(`^(?:${KNOWN_FIELD_ALIASES})$`, "i");
+
   for (const clause of clauses) {
-    // Pattern A: "<field> (box|field|input)? mein/me/main/per/par/pr/in/into <value> (fill|type|likh|daal|bhar|kr do)?"
-    let match = clause.match(patternARegex);
+    // Pattern B FIRST when explicit fill/type/enter verb places value before in/into/mein <field>
+    let match = clause.match(patternBRegex);
     if (match) {
-      const rawTarget = match[1].trim();
-      const rawVal = match[2].trim();
-      if (/^(?:is|ye|yeh|isko|is\s*box|this|this\s*box|this\s*field|yahan|yaha|yha)$/i.test(rawTarget)) {
-        explicitPairs.push({ target: "__CURRENT__", value: rawVal, overwrite });
-        continue;
-      }
-      const normT = normalizeFillTarget(rawTarget);
-      if (normT && rawVal) {
-        fields[normT] = rawVal;
-        explicitPairs.push({ target: normT, value: rawVal, overwrite });
-        continue;
+      const rawVal = match[1].trim();
+      const rawTarget = match[2].trim();
+      const normTCheck = normalizeFillTarget(rawTarget);
+      const valLooksLikeField = knownFieldExactRe.test(normalizeFillTarget(rawVal));
+      const targetLooksLikeField =
+        /^(?:this|this\s*box|this\s*field|it|here|isko|isme|yahan|yaha|yha)$/i.test(rawTarget) ||
+        /\b(?:box|field|input|textbox|textarea|area|dropdown|select|bar|wala|wali|wale)\b/i.test(rawTarget) ||
+        /\b(?:into|inside)\b/i.test(clause) ||
+        knownFieldExactRe.test(normTCheck);
+
+      if (!valLooksLikeField && targetLooksLikeField && !isNonValuePlaceholder(rawVal)) {
+        if (/^(?:this|this\s*box|this\s*field|it|here|isko|isme|yahan|yaha|yha)$/i.test(rawTarget)) {
+          explicitPairs.push({ target: "__CURRENT__", value: rawVal, overwrite });
+          continue;
+        }
+        if (normTCheck && rawVal) {
+          fields[normTCheck] = rawVal;
+          explicitPairs.push({ target: normTCheck, value: rawVal, overwrite });
+          continue;
+        }
       }
     }
 
-    // Pattern B: "(fill|type|enter|write|likho|daalo|set) <value> in/into/mein <field>"
+    // Pattern A: "<field> (wale)? (box|field|input)? mein/me/main/per/par/pr/in/into <value> (fill|type|likh|daal|bhar|kr do)?"
+    match = clause.match(patternARegex);
+    if (match) {
+      const rawTarget = match[1]
+        .trim()
+        .replace(/^(?:fill|type|enter|write|put|set)\s+/i, "")
+        .trim();
+      const rawVal = match[2].trim();
+      if (!isNonValuePlaceholder(rawVal)) {
+        if (/^(?:is|ye|yeh|isko|isme|is\s*box|this|this\s*box|this\s*field|yahan|yaha|yha)$/i.test(rawTarget)) {
+          explicitPairs.push({ target: "__CURRENT__", value: rawVal, overwrite });
+          continue;
+        }
+        const normT = normalizeFillTarget(rawTarget);
+        if (normT && rawVal) {
+          fields[normT] = rawVal;
+          explicitPairs.push({ target: normT, value: rawVal, overwrite });
+          continue;
+        }
+      }
+    }
+
+    // Fallback Pattern B (when not matched by Pattern A)
     match = clause.match(patternBRegex);
     if (match) {
       const rawVal = match[1].trim();
       const rawTarget = match[2].trim();
-      if (/^(?:this|this\s*box|this\s*field|it|here|isko|yahan|yaha|yha)$/i.test(rawTarget)) {
-        explicitPairs.push({ target: "__CURRENT__", value: rawVal, overwrite });
-        continue;
-      }
-      const normT = normalizeFillTarget(rawTarget);
-      if (normT && rawVal) {
-        fields[normT] = rawVal;
-        explicitPairs.push({ target: normT, value: rawVal, overwrite });
-        continue;
+      if (!isNonValuePlaceholder(rawVal)) {
+        if (/^(?:this|this\s*box|this\s*field|it|here|isko|isme|yahan|yaha|yha)$/i.test(rawTarget)) {
+          explicitPairs.push({ target: "__CURRENT__", value: rawVal, overwrite });
+          continue;
+        }
+        const normT = normalizeFillTarget(rawTarget);
+        if (normT && rawVal) {
+          fields[normT] = rawVal;
+          explicitPairs.push({ target: normT, value: rawVal, overwrite });
+          continue;
+        }
       }
     }
 
     // Pattern C: "isko/this <value> se fill/bhar kar do" or "fill this with <value>"
     match = clause.match(patternCRegex1) || clause.match(patternCRegex2);
-    if (match && match[1]) {
+    if (match && match[1] && !isNonValuePlaceholder(match[1])) {
       explicitPairs.push({ target: "__CURRENT__", value: match[1].trim(), overwrite });
       continue;
     }
@@ -2188,10 +2475,7 @@ function extractFillDetails(text) {
       const cleanVal = match[2]
         .replace(new RegExp(`\\s+${trailingVerbSuffix}$`, "i"), "")
         .trim();
-      if (
-        cleanVal &&
-        !/^(?:karo|kro|(?:kar|kr)\s*do|fill|bharo|bhar\s*do|daalo|daal\s*do|field|input|box)$/i.test(cleanVal)
-      ) {
+      if (cleanVal && !isNonValuePlaceholder(cleanVal)) {
         fields[mappedKey] = cleanVal;
         explicitPairs.push({ target: mappedKey, value: cleanVal, overwrite });
         continue;
@@ -2214,8 +2498,10 @@ function extractFillDetails(text) {
       const match = cleaned.match(p.regex);
       if (match && match[1]) {
         const val = match[1].trim();
-        fields[p.key] = val;
-        explicitPairs.push({ target: p.key, value: val, overwrite });
+        if (!isNonValuePlaceholder(val)) {
+          fields[p.key] = val;
+          explicitPairs.push({ target: p.key, value: val, overwrite });
+        }
       }
     }
   }
@@ -2232,10 +2518,140 @@ function extractFieldsFromMessage(text) {
   return extractFillDetails(text).fields;
 }
 
+function isLikelyActionCommand(text) {
+  const norm = normalizeHinglishCommand(String(text || "")).toLowerCase().trim();
+  if (!norm) return false;
+  return /\b(?:fill|type|likh|likho|daal|daalo|bhar|bharo|enter|click|press|dabao|scroll|open|kholo|search|dhoondho|dhundo|select|choose|chuno|check|uncheck|badal|badlo|change|update|replace|modify|remove|hatao|hatana|lagao|submit|bhejo|rakh|rakhna|isme|isko|usko|ye\s+wala|wahi|yahi|kar\s+do|karo)\b/i.test(
+    norm,
+  );
+}
+
 function parseActionIntent(text) {
+  const ctx = arguments.length > 1 ? arguments[1] : null;
   const trimmed = (text || "").trim();
   const stripped = stripBuddyPrefix(trimmed);
-  const lower = stripped.toLowerCase();
+  const normStripped = normalizeHinglishCommand(stripped);
+  const lower = normStripped.toLowerCase();
+
+  // 0. CONVERSATIONAL CONTEXT FOLLOW-UPS (pending slot, pending confirmation, contextual pronouns)
+  if (ctx) {
+    if (
+      /^(?:cancel|rehne\s+do|chhodo|mat\s+karo|nahi|no|skip|band\s+karo)[.!?\s]*$/i.test(lower) &&
+      (ctx.pendingSlot || ctx.hasPendingAction || ctx.pendingDisambiguation)
+    ) {
+      return { type: "CANCEL_PENDING" };
+    }
+
+    if (
+      ctx.pendingSlot?.type === "fill_target" &&
+      Array.isArray(ctx.pendingSlot.candidates) &&
+      ctx.pendingSlot.candidates.length > 0
+    ) {
+      const idx = resolveOrdinalChoiceIndex(lower);
+      if (idx && idx <= ctx.pendingSlot.candidates.length) {
+        const chosen = ctx.pendingSlot.candidates[idx - 1];
+        return {
+          type: "FORM_FILL",
+          explicitPairs: [
+            {
+              target: chosen.label || "__CURRENT__",
+              selector: chosen.selector,
+              value: ctx.pendingSlot.value,
+              overwrite: true,
+            },
+          ],
+          explicitUserProvided: true,
+          noSubmitPrompt: Boolean(ctx.pendingSlot.noSubmitPrompt),
+        };
+      }
+      const matchedCand = ctx.pendingSlot.candidates.find((c) =>
+        String(c.label || "").toLowerCase().includes(lower.replace(/\s+(?:wala|wali|mein|me|field|box)$/i, "").trim()),
+      );
+      if (matchedCand) {
+        return {
+          type: "FORM_FILL",
+          explicitPairs: [
+            {
+              target: matchedCand.label || "__CURRENT__",
+              selector: matchedCand.selector,
+              value: ctx.pendingSlot.value,
+              overwrite: true,
+            },
+          ],
+          explicitUserProvided: true,
+          noSubmitPrompt: Boolean(ctx.pendingSlot.noSubmitPrompt),
+        };
+      }
+    }
+
+    // Bare value response to "Kya likhna hai? / Kya fill karna hai?"
+    if (
+      ctx.pendingSlot?.type === "fill_value" &&
+      trimmed.length > 0 &&
+      trimmed.length <= 240 &&
+      !/^(?:scroll\s+|click\s+|point\s+|go\s+back|refresh|reload|help|what\s+can\s+you\s+do|explain\s+this\s+page|ye\s+page\s+samjhao|yahan\s+kya)/i.test(
+        lower,
+      ) &&
+      !/(?:kholo|kahan\s+hai|kidhar\s+hai|samjhao|page\s+par\s+kya)/i.test(lower)
+    ) {
+      const target = ctx.pendingSlot.targetField || ctx.session?.lastTargetField || "__CURRENT__";
+      const isBoxSingle =
+        target === "__CURRENT__" || /\b(?:search|chat|msg|message|comment|prompt|query)\b/i.test(String(target));
+      return {
+        type: "FORM_FILL",
+        explicitPairs: [
+          {
+            target,
+            selector: ctx.pendingSlot.targetSelector || undefined,
+            value: trimmed,
+            overwrite: true,
+          },
+        ],
+        explicitUserProvided: true,
+        fromChatCommand: true,
+        noSubmitPrompt: Boolean(ctx.pendingSlot.noSubmitPrompt || isBoxSingle),
+      };
+    }
+
+    // Short affirmative follow-up ("hnn kr do", "haan kar do", "ok kar do", "yes")
+    if (
+      /^(?:haan|yes|ok|okay|theek\s+hai|thik\s+hai|sahi\s+hai)?\s*(?:kar\s+do|karo|do\s+it|proceed|confirm|chalo)?[.!?\s]*$/i.test(
+        lower,
+      ) &&
+      /^(?:haan|yes|ok|okay|theek|thik|kar\s+do|karo|proceed)/i.test(lower)
+    ) {
+      if (ctx.hasPendingAction) {
+        return { type: "CONFIRM_PENDING" };
+      }
+      if (ctx.session?.lastActionProposal) {
+        return { type: "EXECUTE_CONTEXT_PROPOSAL", proposal: ctx.session.lastActionProposal };
+      }
+    }
+
+    // Demonstrative selection ("bss ye wala", "ye wala", "yahi wala")
+    if (
+      /^(?:bas\s+)?(?:yahi|ye|yeh)\s*(?:wala|wali|wale)?[.!?\s]*$/i.test(lower)
+    ) {
+      if (ctx.pendingDisambiguation?.candidates?.length) {
+        return { type: "SELECT_CONTEXT_ITEM", index: 1 };
+      }
+      if (ctx.pendingSlot?.type === "fill_target" && ctx.pendingSlot.candidates?.length) {
+        const chosen = ctx.pendingSlot.candidates[0];
+        return {
+          type: "FORM_FILL",
+          explicitPairs: [
+            {
+              target: chosen.label || "__CURRENT__",
+              selector: chosen.selector,
+              value: ctx.pendingSlot.value,
+              overwrite: true,
+            },
+          ],
+          explicitUserProvided: true,
+        };
+      }
+    }
+  }
 
   // 1. GREETING
   if (
@@ -2280,7 +2696,7 @@ function parseActionIntent(text) {
 
   // 2c. PAGE INVENTORY ("Is page par kya kya hai") — works locally without AI key
   if (
-    /^(?:is\s+page\s+(?:par|pe|pr|mein|me|main)\s+kya\s+(?:kya\s+)?(?:hai|h|he)|page\s+(?:par|pe|pr|mein|me|main)\s+kya\s+(?:kya\s+)?(?:hai|h|he)|what\s+is\s+on\s+(?:this\s+)?page|what'?s\s+on\s+(?:this\s+)?page|list\s+(?:page\s+)?(?:elements|fields|buttons|controls))[.!?\s]*$/i.test(
+    /^(?:is\s+page\s+(?:par|pe|pr|mein|me|main)\s+kya\s+(?:kya\s+)?(?:hai|he)|page\s+(?:par|pe|pr|mein|me|main)\s+kya\s+(?:kya\s+)?(?:hai|he)|what\s+is\s+on\s+(?:this\s+)?page|what'?s\s+on\s+(?:this\s+)?page|list\s+(?:page\s+)?(?:elements|fields|buttons|controls))[.!?\s]*$/i.test(
       lower,
     )
   ) {
@@ -2294,6 +2710,15 @@ function parseActionIntent(text) {
     )
   ) {
     return { type: "ACTIVITY_LOG" };
+  }
+
+  // 2e. EXPLAIN PAGE (Strictly separated from filling/actions!)
+  if (
+    /^(?:explain\s+(?:this\s+|the\s+)?page|page\s+(?:explain|samjhao)\s*(?:karo|kar\s+do)?|(?:ye|yeh|is)\s+page\s+(?:ko\s+)?(?:explain\s*(?:karo|kar\s+do)?|samjhao|kya\s+hai)|is\s+page\s+ke\s+baare\s+mein\s+batao|summarize\s+(?:this\s+)?page|what\s+is\s+this\s+page)[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
+    return { type: "EXPLAIN" };
   }
 
   // 3. SCROLL (named container, scroll-to-element, or directional)
@@ -2359,6 +2784,31 @@ function parseActionIntent(text) {
     )
   ) {
     return { type: "FORM_INSPECT" };
+  }
+
+  // 3b-2. WEB SEARCH & OPEN EXTERNAL WEBSITE ("Aadhaar website kholo", "search for Aadhaar website", "Google par Flipkart search karo")
+  const hasExplicitInPage = /\b(?:is\s+page\s+(?:par|pe|pr|mein|me|main)|page\s+(?:par|pe|pr|mein|me|main)|on\s+this\s+page|in\s+this\s+page)\b/i.test(
+    lower,
+  );
+  if (!hasExplicitInPage) {
+    const googleWebSearchMatch =
+      normStripped.match(/^(?:google|web|internet)\s+(?:par|pe|pr|mein|me|on)\s+(.+?)\s+(?:search|find|dhoondho|dhundo)\s*(?:karo|kar\s+do)?[.!?\s]*$/i) ||
+      normStripped.match(/^(?:search\s+(?:for|about)\s+)(.+?\b(?:website|site|portal|official\s+page|official\s+site)\b.*?)[.!?\s]*$/i) ||
+      normStripped.match(/^(.+?\b(?:website|site|portal)\b)\s+(?:search\s*(?:karo|kar\s+do)|dhoondho|dhundo)[.!?\s]*$/i);
+    if (googleWebSearchMatch?.[1]) {
+      return { type: "WEB_SEARCH", query: googleWebSearchMatch[1].trim() };
+    }
+
+    const openWebsiteMatch =
+      normStripped.match(/^(?:open|visit|go\s+to)\s+(?:the\s+)?(.+?\b(?:website|site|portal)\b.*?)[.!?\s]*$/i) ||
+      normStripped.match(/^(.+?\b(?:website|site|portal)\b)\s+(?:open\s*(?:karo|kar\s+do)?|kholo|khol\s+do|dikhao)[.!?\s]*$/i) ||
+      normStripped.match(/^(?:(?:open|visit)\s+)?(google|youtube|amazon|flipkart|uidai|aadhaar|digilocker|irctc)\s*(?:kholo|khol\s+do|open\s*(?:karo|kar\s+do)?)?[.!?\s]*$/i);
+    if (
+      openWebsiteMatch?.[1] &&
+      !/\b(?:tab|button|link|menu|drawer|modal|popup|dashboard)\b/i.test(lower)
+    ) {
+      return { type: "OPEN_WEBSITE", query: openWebsiteMatch[1].trim() };
+    }
   }
 
   // 3c. IN-PAGE EXPLICIT SEARCH ("122 search karo is page par", "is page par pension search kr do")
@@ -2427,8 +2877,8 @@ function parseActionIntent(text) {
   }
 
   const fillDetails = extractFillDetails(stripped);
-  const isFormTrigger =
-    /(?:form\s+(?:fill|bhar|bharo)|fill\s+(?:the\s+|this\s+|is\s+page\s+ka\s+)?form|is\s+page\s+ka\s+form\s+(?:fill|bhar)|auto\s*fill|fill\s+(?:all\s+)?(?:inputs|fields)|form\s+bhar\s+do|is\s+form\s+ko\s+bharo|\bisko\s+fill\s+(?:(?:kar|kr)\s*(?:do|o))?|\bis\s+(?:box|field|input)\s+ko\s+fill\s+(?:(?:kar|kr)\s*(?:do|o))?|fill\s+this\s*(?:box|field|input)?)/i.test(
+  const isWholeFormTrigger =
+    /(?:form\s+(?:fill|bhar|bharo)|fill\s+(?:the\s+|this\s+|is\s+page\s+ka\s+)?form|is\s+page\s+ka\s+form\s+(?:fill|bhar)|auto\s*fill|fill\s+(?:all\s+)?(?:inputs|fields)|form\s+bhar\s+do|is\s+form\s+ko\s+bharo)/i.test(
       lower,
     );
   const hasSingleFillVerb =
@@ -2436,12 +2886,48 @@ function parseActionIntent(text) {
     !/\b(?:click|press|dabao|scroll|point|highlight|find|kholo)\b/i.test(lower);
 
   if (fillDetails.explicitPairs && hasSingleFillVerb) {
+    const targets = fillDetails.explicitPairs.map((p) => String(p.target || "").toLowerCase());
+    const noSubmitPrompt =
+      fillDetails.explicitPairs.length === 1 &&
+      targets.every((t) => t === "__current__" || /\b(?:search|chat|msg|message|comment|prompt|query)\b/.test(t));
     return {
       type: "FORM_FILL",
       fields: fillDetails.fields,
       explicitPairs: fillDetails.explicitPairs,
       overwrite: fillDetails.overwrite,
       explicitUserProvided: fillDetails.explicitUserProvided,
+      fromChatCommand: true,
+      noSubmitPrompt,
+    };
+  }
+
+  // 5b. FILL / WRITE INTENT MISSING VALUE ("Buddy, ye fill karo", "buddy isme kch likh do", "isme daal do", "ye wala bhar do")
+  if (
+    !fillDetails.explicitPairs &&
+    !isWholeFormTrigger &&
+    hasSingleFillVerb &&
+    !/\b(?:aur|and|then|phir|fir|,)\b/i.test(lower)
+  ) {
+    let targetField = "__CURRENT__";
+    const fieldMention = lower.match(
+      /^(?:(?:ab|please)\s+)?(.+?)\s+(?:mein|me|main|par|pe|pr|ko)\s+(?:kuch\s+|something\s+)?(?:fill|type|likh|likho|daal|daalo|bhar|bharo|enter)/i,
+    );
+    if (fieldMention?.[1]) {
+      const candT = fieldMention[1].trim();
+      if (/^(?:is|ye|yeh|isko|isme|is\s*box|this|this\s*box|this\s*field|yahan|yaha|yha|ye\s+wala)$/i.test(candT)) {
+        targetField = ctx?.session?.lastTargetField || "__CURRENT__";
+      } else {
+        targetField = normalizeFillTarget(candT) || "__CURRENT__";
+      }
+    } else if (/\b(?:isme|isko|ye|yeh|ye\s+wala|this|it)\b/i.test(lower)) {
+      targetField = ctx?.session?.lastTargetField || "__CURRENT__";
+    }
+    const verb = /\b(?:likh|likho|type)\b/i.test(lower) ? "write" : "fill";
+    return {
+      type: "FILL_NEED_VALUE",
+      targetField,
+      verb,
+      noSubmitPrompt: /\b(?:search|chat|msg|message|comment|prompt|query)\b/.test(String(targetField)),
     };
   }
 
@@ -2470,6 +2956,7 @@ function parseActionIntent(text) {
           explicitPairs: fillDetails.explicitPairs,
           overwrite: fillDetails.overwrite,
           explicitUserProvided: fillDetails.explicitUserProvided,
+          fromChatCommand: true,
         };
       }
       const segs = lower
@@ -2489,13 +2976,14 @@ function parseActionIntent(text) {
   }
 
   // 7. FORM FILL (explicit key-value or general form fill trigger)
-  if (isFormTrigger || fillDetails.explicitPairs) {
+  if (isWholeFormTrigger || fillDetails.explicitPairs) {
     return {
       type: "FORM_FILL",
       fields: fillDetails.fields,
       explicitPairs: fillDetails.explicitPairs,
       overwrite: fillDetails.overwrite,
       explicitUserProvided: fillDetails.explicitUserProvided,
+      fromChatCommand: true,
       useUploadedDocument: Boolean(activeUploadedDocument && !fillDetails.explicitPairs),
     };
   }
@@ -2626,7 +3114,28 @@ function parseActionIntent(text) {
     }
   }
 
-  // 12. FIND / LOCATE ACTION (STRICT: NEVER CLICKS)
+  // 12. SEARCH BOX SUBMIT vs ELEMENT LOCATE ("Delhi search karo" vs "Orders tab kahan hai")
+  const searchSubmitTrailing = normStripped.match(
+    /^(.+?)\s+search\s+(?:karo|kar\s+do|karein|do)[.!?\s]*$/i,
+  );
+  const searchSubmitLeading = normStripped.match(
+    /^search\s+["']?([^"'\n]+?)["']?[.!?\s]*$/i,
+  );
+  if (
+    (searchSubmitTrailing || searchSubmitLeading) &&
+    !/\b(?:button|btn|tab|link|icon|menu|bar|field|input|box|website|site|portal|form|kahan|where|how to|kaise|explain)\b/i.test(
+      lower,
+    )
+  ) {
+    const rawQ = (searchSubmitTrailing ? searchSubmitTrailing[1] : searchSubmitLeading[1])
+      .replace(/^(?:the|a|an|for|about|search\s*box\s*mein|search\s*mein)\s+/i, "")
+      .trim();
+    if (rawQ) {
+      return { type: "SEARCH_SUBMIT", target: "search", query: rawQ };
+    }
+  }
+
+  // 12b. FIND / LOCATE ACTION (STRICT: NEVER CLICKS)
   const findTrailingMatch = lower.match(
     /(.+?)\s+(?:find\s*(?:karo|kro|(?:kar|kr)\s*do)|locate\s*(?:karo|kro|(?:kar|kr)\s*do)|search\s*(?:karo|kro|(?:kar|kr)\s*do)|dhoondho|dhundo|dhoondh\s+ke\s+dikhao|kaha(?:n)?\s+(?:hai|h|he)|kidhar\s+(?:hai|h|he)|kdr\s+(?:hai|h|he)|khaa\s+(?:hai|h|he)|kha\s+(?:hai|h|he|karna\s+h)|dikhao|batao)[.!?\s]*$/i,
   );
@@ -2652,23 +3161,56 @@ function parseActionIntent(text) {
     }
   }
 
-  // 13. EXPLAIN PAGE
-  if (
-    /^(?:explain\s+(?:this\s+)?page|page\s+explain\s+(?:karo|kro|(?:kar|kr)\s*do)|summarize\s+page|what\s+is\s+this\s+page)[.!?\s]*$/i.test(
-      lower,
-    )
-  ) {
-    return { type: "EXPLAIN" };
-  }
-
-  // 14. Default: GENERAL ASK / QUESTION
+  // 13. Default: GENERAL ASK / GEMINI INTERPRETATION
   return { type: "ASK" };
+}
+
+function resolveWebsiteDestination(query, forceSearchOnly = false) {
+  const q = String(query || "").trim();
+  const clean = q
+    .replace(/\b(?:official|ki|ka|ke|website|site|portal|web|page)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const lower = clean.toLowerCase();
+  if (!forceSearchOnly) {
+    const KNOWN_PORTALS = [
+      { re: /\b(?:aadhaar|aadhar|uidai)\b/i, url: "https://uidai.gov.in" },
+      { re: /\bmyaadhaar\b/i, url: "https://myaadhaar.uidai.gov.in" },
+      { re: /\b(?:gst|gst\s*portal)\b/i, url: "https://www.gst.gov.in" },
+      { re: /\b(?:income\s*tax|efiling|itr)\b/i, url: "https://www.incometax.gov.in" },
+      { re: /\bdigilocker\b/i, url: "https://www.digilocker.gov.in" },
+      { re: /\bparivahan\b/i, url: "https://parivahan.gov.in" },
+      { re: /\birctc\b/i, url: "https://www.irctc.co.in" },
+      { re: /\bflipkart\b/i, url: "https://www.flipkart.com" },
+      { re: /\bamazon\b/i, url: "https://www.amazon.in" },
+      { re: /\bmeesho\b/i, url: "https://supplier.meesho.com" },
+      { re: /\byoutube\b/i, url: "https://www.youtube.com" },
+      { re: /\bgoogle\b/i, url: "https://www.google.com" },
+      { re: /\bwikipedia\b/i, url: "https://www.wikipedia.org" },
+      { re: /\bgithub\b/i, url: "https://github.com" },
+    ];
+    for (const p of KNOWN_PORTALS) {
+      if (p.re.test(lower)) return { url: p.url, isSearch: false, label: clean || q };
+    }
+  }
+  const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(q)}`;
+  return { url: searchUrl, isSearch: true, label: q };
 }
 
 async function executeNaturalBrowserAction(intent, trimmed) {
   const active = getActiveBuddy();
   const isHindi = active.defaultLanguage !== "english";
-  const mutatingIntents = new Set(["NAVIGATE", "MULTI_STEP", "SELECT", "CHECK", "CLICK", "FORM_FILL"]);
+  const mutatingIntents = new Set([
+    "NAVIGATE",
+    "OPEN_WEBSITE",
+    "WEB_SEARCH",
+    "SEARCH_SUBMIT",
+    "MULTI_STEP",
+    "SELECT",
+    "CHECK",
+    "CLICK",
+    "FORM_FILL",
+  ]);
   if (mutatingIntents.has(intent.type)) {
     const { permissionLevel } = await getPermissionSettings();
     if (permissionLevel === "observe" || permissionLevel === "explain") {
@@ -2685,6 +3227,158 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       appendHistory("buddy", blockedMsg);
       return true;
     }
+  }
+
+  if (intent.type === "CANCEL_PENDING") {
+    pendingSlot = null;
+    pendingAction = null;
+    pendingDisambiguation = null;
+    sessionTaskContext.lastActionProposal = null;
+    if ($("confirmCard")) $("confirmCard").hidden = true;
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    const cancelMsg = isHindi ? "Theek hai, pending action cancel kar diya." : "Okay, cancelled the pending action.";
+    setRigEmotion("idle", "Cancelled");
+    $("statusText").textContent = cancelMsg;
+    appendHistory("buddy", cancelMsg);
+    speakResponse(cancelMsg, "idle");
+    return true;
+  }
+
+  if (intent.type === "CONFIRM_PENDING" && pendingAction) {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    $("confirmApproveBtn")?.click();
+    return true;
+  }
+
+  if (intent.type === "EXECUTE_CONTEXT_PROPOSAL" && intent.proposal) {
+    sessionTaskContext.lastActionProposal = null;
+    return executeNaturalBrowserAction(intent.proposal, trimmed);
+  }
+
+  if (intent.type === "SELECT_CONTEXT_ITEM" && pendingDisambiguation?.candidates?.length) {
+    const chosen = pendingDisambiguation.candidates[(intent.index || 1) - 1] || pendingDisambiguation.candidates[0];
+    const disAction = pendingDisambiguation.action || "click";
+    const disTarget = pendingDisambiguation.target;
+    pendingDisambiguation = null;
+    return executeNaturalBrowserAction(
+      {
+        type: "CLICK",
+        action: disAction === "open_link" ? "open_link" : "click",
+        target: chosen.text || disTarget,
+        selector: chosen.selector,
+        candidateIndex: intent.index || 1,
+      },
+      trimmed,
+    );
+  }
+
+  if (intent.type === "FILL_NEED_VALUE") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    pendingSlot = {
+      type: "fill_value",
+      targetField: intent.targetField || "__CURRENT__",
+      targetSelector: intent.selector || lastHighlightSelector || undefined,
+      verb: intent.verb || "fill",
+      noSubmitPrompt: Boolean(intent.noSubmitPrompt),
+    };
+    recordTaskContext({
+      actionType: "ask_clarification",
+      targetField: pendingSlot.targetField,
+      targetSelector: pendingSlot.targetSelector,
+    });
+    if (pendingSlot.targetField && pendingSlot.targetField !== "__CURRENT__") {
+      try {
+        await executeFind(pendingSlot.targetField, "point");
+      } catch {}
+    }
+    const askText = isHindi
+      ? intent.verb === "write"
+        ? "Kya likhna hai? Text bata do."
+        : "Kya fill karna hai?"
+      : intent.verb === "write"
+        ? "What should I type here? Please share the text."
+        : "What value should I fill here?";
+    setRigEmotion("curious", "Need Value");
+    $("statusText").textContent = askText;
+    appendHistory("buddy", askText);
+    recordConversationTurn(trimmed, askText);
+    speakResponse(askText, "curious");
+    return true;
+  }
+
+  if (intent.type === "WEB_SEARCH" || intent.type === "OPEN_WEBSITE") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    const dest = resolveWebsiteDestination(intent.query, intent.type === "WEB_SEARCH");
+    setRigEmotion("working", intent.type === "WEB_SEARCH" ? "Searching web…" : "Opening site…");
+    $("statusText").textContent = `Opening ${dest.url}…`;
+    const res = await sendRuntimeMessage({ type: "NAVIGATE_TAB", url: dest.url });
+    if (res?.ok) {
+      setRigEmotion("happy", "Opened!");
+      lastHighlightSelector = null;
+      recordTaskContext({ actionType: intent.type.toLowerCase(), targetField: null, targetSelector: null });
+      const msg =
+        intent.type === "WEB_SEARCH"
+          ? isHindi
+            ? `🌐 Web par "${dest.label}" search khol diya hai (${res.url || dest.url}).`
+            : `🌐 Opened web search for "${dest.label}" (${res.url || dest.url}).`
+          : isHindi
+            ? `🌐 "${dest.label}" website khol di hai (${res.url || dest.url}).`
+            : `🌐 Opened "${dest.label}" at ${res.url || dest.url}.`;
+      recordSessionAction(msg, "confirmed");
+      $("statusText").textContent = msg;
+      appendHistory("buddy", msg);
+      recordConversationTurn(trimmed, msg);
+      speakResponse(msg, "happy");
+    } else {
+      setRigEmotion("error", "Failed");
+      const failMsg = res?.message || `Could not open ${dest.url}.`;
+      recordSessionAction(failMsg, "failed");
+      $("statusText").textContent = failMsg;
+      appendHistory("buddy", `⚠️ ${failMsg}`);
+    }
+    return true;
+  }
+
+  if (intent.type === "SEARCH_SUBMIT") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    setRigEmotion("working", "Searching…");
+    $("statusText").textContent = `Searching "${intent.query}" in page search box…`;
+    const res = await sendRuntimeMessage({
+      type: "EXECUTE_ACTION",
+      action: "search_submit",
+      selector: intent.selector || undefined,
+      value: intent.query,
+      options: { query: intent.query },
+    });
+    if (res?.ok) {
+      setRigEmotion("happy", "Searched!");
+      recordTaskContext({ actionType: "search_submit", targetField: res.field || "search" });
+      const msg = isHindi
+        ? `🔍 Search box mein "${intent.query}" daal kar search kar diya hai (${res.submittedWith === "search_button" ? "Search button" : "Enter"}).`
+        : `🔍 Entered "${intent.query}" in search box and submitted search.`;
+      recordSessionAction(msg, "confirmed");
+      $("statusText").textContent = msg;
+      appendHistory("buddy", msg);
+      recordConversationTurn(trimmed, msg);
+      speakResponse(msg, "happy");
+    } else {
+      setRigEmotion("confused", "No Search");
+      const failMsg = res?.noSearchInput
+        ? isHindi
+          ? `⚠️ Is page par koi visible search box nahi mila. Agar aap page text highlight karna chahte hain to "is page par ${intent.query} search karo" bolein, ya web search ke liye "search for ${intent.query} website" bolein.`
+          : `⚠️ No visible search box was found on this page. Say "search ${intent.query} on this page" to highlight text on page.`
+        : res?.message || `Could not run search for "${intent.query}".`;
+      recordSessionAction(failMsg, "failed");
+      $("statusText").textContent = failMsg;
+      appendHistory("buddy", failMsg);
+      speakResponse(failMsg, "confused");
+    }
+    return true;
   }
 
   if (intent.type === "GREETING") {
@@ -2819,6 +3513,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
   if (intent.type === "SCROLL") {
     appendHistory("user", trimmed);
     $("promptInput").value = "";
+    recordTaskContext({ actionType: "scroll" });
     await executeScroll(
       intent.direction,
       450,
@@ -2838,6 +3533,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     if (res?.ok) {
       setRigEmotion("happy", "Opened!");
       lastHighlightSelector = null;
+      recordTaskContext({ actionType: "navigate" });
       const msg = isHindi
         ? `🌐 Tab ko ${res.url || intent.url} par navigate kar diya hai.`
         : `🌐 Navigated to ${res.url || intent.url}.`;
@@ -3304,6 +4000,8 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       explicitPairs: intent.explicitPairs,
       overwrite: Boolean(intent.overwrite),
       explicitUserProvided: Boolean(intent.explicitUserProvided),
+      fromChatCommand: Boolean(intent.fromChatCommand ?? true),
+      noSubmitPrompt: Boolean(intent.noSubmitPrompt),
     });
     return true;
   }
@@ -3342,14 +4040,22 @@ async function executeNaturalBrowserAction(intent, trimmed) {
   return false;
 }
 
-async function sendQuery(question, intent) {
+async function sendQuery(question, intent, options = {}) {
   if (busy || !question || !question.trim()) return;
 
-  // Always dismiss any existing confirmation cards on new user input
-  if ($("confirmCard")) $("confirmCard").hidden = true;
-  pendingAction = null;
+  // Interrupt active speech if user sends a new message
+  if (isBuddySpeaking && !options?.fromVoice) {
+    interruptBuddySpeech({ resumeListening: false });
+  }
 
+  // Always dismiss any existing confirmation cards unless confirming them
   const trimmed = question.trim();
+  const parserCtx = {
+    pendingSlot,
+    pendingDisambiguation,
+    hasPendingAction: Boolean(pendingAction),
+    session: sessionTaskContext,
+  };
 
   // 0. Automatic Privacy Gesture Trigger (never logs sensitive data, turns head+torso away & closes eyes)
   const privacyCheck = window.Buddy3DRuntime?.detectPrivacyTrigger?.({ userText: trimmed });
@@ -3415,14 +4121,26 @@ async function sendQuery(question, intent) {
         return;
       }
     }
-    // New unrelated command clears stale disambiguation
-    pendingDisambiguation = null;
+    // Keep disambiguation only if user said "bss ye wala", otherwise clear
+    if (!/^(?:bas\s+)?(?:yahi|ye|yeh)\s*(?:wala|wali|wale)?[.!?\s]*$/i.test(trimmed)) {
+      pendingDisambiguation = null;
+    }
   }
 
   // 1. Unified Natural Language Browser Action Intent Parser & Dispatcher
-  const parsed = parseActionIntent(trimmed);
+  const parsed = parseActionIntent(trimmed, parserCtx);
+  if (parsed.type !== "CONFIRM_PENDING" && parsed.type !== "CANCEL_PENDING") {
+    if ($("confirmCard")) $("confirmCard").hidden = true;
+    pendingAction = null;
+  }
+  const prevPendingSlot = pendingSlot;
   const handled = await executeNaturalBrowserAction(parsed, trimmed);
-  if (handled) return;
+  if (handled) {
+    if (parsed.type === "FORM_FILL" && pendingSlot && pendingSlot === prevPendingSlot) {
+      pendingSlot = null;
+    }
+    return;
+  }
 
   busy = true;
   $("sendBtn").disabled = true;
@@ -3455,7 +4173,17 @@ async function sendQuery(question, intent) {
         : pageToggleEl.classList.contains("active")
       : true;
     const detachPage = !pageVisionActive;
-    const finalIntent = detachPage ? "general" : intent || "answer";
+    const shouldInterpretWithGemini =
+      !detachPage &&
+      !options?.fromGeminiInterpret &&
+      (isLikelyActionCommand(trimmed) ||
+        Boolean(pendingSlot) ||
+        Boolean(sessionTaskContext.lastTargetField));
+    const finalIntent = detachPage
+      ? "general"
+      : shouldInterpretWithGemini && (!intent || intent === "answer")
+        ? "interpret_command"
+        : intent || "answer";
     const uploadedDocumentSummary = activeUploadedDocument
       ? {
           fileName: activeUploadedDocument.fileName,
@@ -3463,10 +4191,18 @@ async function sendQuery(question, intent) {
           availableFields: Object.keys(activeUploadedDocument.fields || {}),
         }
       : undefined;
+    const actionContextPayload = {
+      lastTargetField: sessionTaskContext.lastTargetField || null,
+      lastActionType: sessionTaskContext.lastActionType || null,
+      pendingSlotType: pendingSlot?.type || null,
+      activeElementLabel: lastCallout?.title || null,
+      recentFields: sessionTaskContext.recentFields || [],
+    };
     const res = await sendRuntimeMessage({
       type: "ASK",
       question: trimmed,
       intent: finalIntent,
+      actionContext: actionContextPayload,
       history: historyPayload,
       uploadedDocumentSummary,
       buddySlug: active.slug,
@@ -3488,7 +4224,11 @@ async function sendQuery(question, intent) {
       return;
     }
 
-    currentAnswer = res.reply?.answer || "I am grounded on this page and ready to assist you.";
+    currentAnswer =
+      res.clarificationQuestion ||
+      res.reply?.clarificationQuestion ||
+      res.reply?.answer ||
+      "I am grounded on this page and ready to assist you.";
     appendHistory("buddy", currentAnswer);
     recordConversationTurn(trimmed, currentAnswer);
 
@@ -3502,6 +4242,32 @@ async function sendQuery(question, intent) {
       appendModeRecommendationNotice(modeRec);
     }
 
+    // If AI returned a clarifying question ("Kya likhna hai? Text bata do."), store pendingSlot instead of acting or summarizing!
+    if (res.actionType === "ask_clarification" || res.needsClarification || res.reply?.needsClarification) {
+      pendingSlot = {
+        type: "fill_value",
+        targetField: res.targetField || res.targetText || sessionTaskContext.lastTargetField || "__CURRENT__",
+        targetSelector: res.targetSelector || res.highlightSelector || undefined,
+        noSubmitPrompt: Boolean(
+          res.targetField && /\b(?:search|chat|msg|message|comment|prompt|query)\b/i.test(String(res.targetField)),
+        ),
+      };
+      recordTaskContext({
+        actionType: "ask_clarification",
+        targetField: pendingSlot.targetField,
+        targetSelector: pendingSlot.targetSelector || null,
+      });
+      lastHighlightSelector = res.highlightSelector || res.targetSelector || null;
+      if (lastHighlightSelector) {
+        $("highlightBtn").hidden = false;
+        pointArmAtElement();
+      }
+      setRigEmotion("curious", "Clarify");
+      $("statusText").textContent = "Awaiting clarification…";
+      speakResponse(currentAnswer, "curious");
+      return;
+    }
+
     // If AI planned real action(s), execute them instead of only explaining!
     const CONSEQUENTIAL_RE =
       /pay|checkout|purchase|\bbuy\b|place\s*order|delete|remove\s*account|confirm\s*order|\bsubmit\b|file\s*return/i;
@@ -3509,7 +4275,7 @@ async function sendQuery(question, intent) {
     const consentRequired = requireConsent !== false;
     const readOnlyMode = permissionLevel === "observe" || permissionLevel === "explain";
 
-    if (readOnlyMode && (res.steps?.length || (res.actionType && res.actionType !== "point" && res.actionType !== "inspect"))) {
+    if (readOnlyMode && (res.steps?.length || (res.actionType && res.actionType !== "point" && res.actionType !== "inspect" && res.actionType !== "explain_page"))) {
       if (res.highlightSelector || res.targetSelector) {
         lastHighlightSelector = res.highlightSelector || res.targetSelector;
       }
@@ -3550,9 +4316,29 @@ async function sendQuery(question, intent) {
       if ($("planRetryBtn")) $("planRetryBtn").hidden = true;
       renderTaskPlanUI();
       await runPlanLoop();
+    } else if (res.actionType === "web_search" || res.actionType === "open_website") {
+      const dest = resolveWebsiteDestination(
+        res.targetText || res.targetValue || trimmed,
+        res.actionType === "web_search",
+      );
+      await sendRuntimeMessage({ type: "NAVIGATE_TAB", url: dest.url });
+      recordSessionAction(`Navigated to ${dest.url}`, "confirmed");
+    } else if (res.actionType === "search_submit" && (res.targetValue || res.targetText)) {
+      await sendRuntimeMessage({
+        type: "EXECUTE_ACTION",
+        action: "search_submit",
+        selector: res.targetSelector || undefined,
+        value: String(res.targetValue || res.targetText),
+      });
+      recordTaskContext({ actionType: "search_submit", targetField: "search" });
     } else if (res.actionType === "point") {
       // Strictly highlight/point without clicking
       lastHighlightSelector = res.highlightSelector || res.targetSelector || null;
+      recordTaskContext({
+        actionType: "point",
+        targetField: res.targetText || res.calloutTitle || null,
+        targetSelector: lastHighlightSelector,
+      });
     } else if (
       (res.actionType === "click" || res.actionType === "open_link") &&
       (res.targetSelector || res.targetText)
@@ -3623,7 +4409,7 @@ async function sendQuery(question, intent) {
           appendHistory("buddy", `⚠️ ${failMsg}`);
         }
       }
-    } else if (res.actionType === "type" && (res.targetValue !== null && res.targetValue !== undefined)) {
+    } else if ((res.actionType === "type" || res.actionType === "fill") && (res.targetValue !== null && res.targetValue !== undefined)) {
       await startSmartFormFill(null, {
         explicitPairs: [
           {
@@ -3635,6 +4421,9 @@ async function sendQuery(question, intent) {
         ],
         explicitUserProvided: true,
         fromChatCommand: true,
+        noSubmitPrompt: /\b(?:search|chat|msg|message|comment|prompt|query)\b/i.test(
+          String(res.targetField || res.targetText || ""),
+        ),
       });
     } else if (
       (res.actionType === "select" || res.actionType === "check" || res.actionType === "uncheck") &&
@@ -3698,17 +4487,25 @@ async function sendQuery(question, intent) {
       if ($("confirmCard")) $("confirmCard").hidden = true;
     }
 
+    const actionExecutedAlreadySpoke =
+      res.actionType === "type" ||
+      res.actionType === "fill" ||
+      res.actionType === "form_fill" ||
+      res.actionType === "scroll" ||
+      pendingSlot?.type === "fill_target";
+
     const emotion = pendingAction
       ? "concerned"
       : lastHighlightSelector
         ? "pointing"
         : res.reply?.emotion || "idle";
-    setRigEmotion(emotion, emotion.toUpperCase());
-    speakResponse(currentAnswer, emotion);
-
-    $("statusText").textContent = res.pageReadable
-      ? `Grounded on active page (${active.name}).`
-      : "Answered using specialist knowledge.";
+    if (!actionExecutedAlreadySpoke) {
+      setRigEmotion(emotion, emotion.toUpperCase());
+      speakResponse(currentAnswer, emotion);
+      $("statusText").textContent = res.pageReadable
+        ? `Grounded on active page (${active.name}).`
+        : "Answered using specialist knowledge.";
+    }
   } catch (err) {
     hideChatLoadingSpinner();
     setRigEmotion("error", "Error");
@@ -3719,6 +4516,20 @@ async function sendQuery(question, intent) {
     $("sendBtn").disabled = false;
     $("sendBtn").classList.remove("is-loading");
     $("sendBtn").textContent = "Send ↵";
+    if (
+      isLiveVoiceMode &&
+      !isBuddySpeaking &&
+      !isRecognizing &&
+      liveVoiceState !== "error" &&
+      !liveVoiceRestartTimer &&
+      !pendingAction
+    ) {
+      liveVoiceRestartTimer = setTimeout(() => {
+        if (isLiveVoiceMode && !busy && !isBuddySpeaking && !isRecognizing) {
+          startVoiceListening();
+        }
+      }, 360);
+    }
   }
 }
 
@@ -3835,6 +4646,8 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
       explicitPairs: extraOpts?.explicitPairs || undefined,
       explicitUserProvided: Boolean(extraOpts?.explicitUserProvided),
       fromUploadedDocument: Boolean(extraOpts?.fromUploadedDocument),
+      fromChatCommand: Boolean(extraOpts?.fromChatCommand ?? true),
+      noSubmitPrompt: Boolean(extraOpts?.noSubmitPrompt),
       fallbackSelector: lastHighlightSelector || undefined,
     },
   });
@@ -3842,8 +4655,33 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
   const reportEl = $("formFillReport");
   if (reportEl) reportEl.hidden = false;
 
+  if (res?.ambiguous && Array.isArray(res.candidates) && res.candidates.length > 1) {
+    pendingSlot = {
+      type: "fill_target",
+      value: res.value,
+      candidates: res.candidates,
+      noSubmitPrompt: Boolean(extraOpts?.noSubmitPrompt),
+    };
+    const listText = res.candidates.map((c) => `${c.index}. "${c.label}"`).join("\n");
+    const askFieldMsg = isHindi
+      ? `🤔 Kis field mein "${res.value}" fill karna hai?\n${listText}\nNumber (1-${res.candidates.length}) ya field ka naam batayein.`
+      : `🤔 Which field should I fill "${res.value}" into?\n${listText}\nReply with 1-${res.candidates.length} or the field name.`;
+    setRigEmotion("confused", "Which field?");
+    $("statusText").textContent = "Clarification needed: choose field";
+    appendHistory("buddy", askFieldMsg);
+    if (reportEl) reportEl.textContent = askFieldMsg;
+    speakResponse(askFieldMsg, "confused");
+    return;
+  }
+
   if (res?.ok && res.results) {
     const { filled, preserved, skipped, errors } = res.results;
+    if (filled.length > 0) {
+      recordTaskContext({
+        actionType: "fill",
+        targetField: filled[filled.length - 1].field,
+      });
+    }
     const lines = [];
     const formatFieldDisplay = (f) =>
       SENSITIVE_FIELD_RE.test(String(f.field || "")) ? `${f.field} = "•••"` : `${f.field} = "${f.value}"`;
@@ -5019,24 +5857,23 @@ if ($("speakAnswerBtn")) {
 
 if ($("voiceBtn")) {
   $("voiceBtn").onclick = () => {
-    if (!recognition) {
-      const msg = "Speech recognition is not supported in this browser window.";
-      if ($("statusText")) $("statusText").textContent = msg;
-      setRigEmotion("concerned", "No Mic");
-      appendHistory("buddy", `🎤 ${msg}`);
+    if (isBuddySpeaking) {
+      interruptBuddySpeech({ resumeListening: true });
       return;
     }
     if (isRecognizing) {
-      recognition.stop();
-    } else {
       try {
-        const active = getActiveBuddy();
-        recognition.lang = active?.defaultLanguage === "english" ? "en-IN" : "hi-IN";
-        recognition.start();
-      } catch {
-        stopVoice();
-      }
+        recognition?.stop?.();
+      } catch {}
+    } else {
+      startVoiceListening();
     }
+  };
+}
+
+if ($("liveVoiceBtn")) {
+  $("liveVoiceBtn").onclick = () => {
+    toggleLiveVoice();
   };
 }
 

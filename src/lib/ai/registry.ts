@@ -31,6 +31,7 @@ export type TaskIntent =
   | "classify"
   | "deep_research"
   | "browser_action"
+  | "interpret_command"
   | "file_analysis"
   | "general";
 
@@ -164,7 +165,8 @@ export function route(request: RouteRequest): ModelEntry[] {
     request.latencySensitive ||
     request.intent === "locate_element" ||
     request.intent === "classify" ||
-    request.intent === "browser_action";
+    request.intent === "browser_action" ||
+    request.intent === "interpret_command";
   const wantsCheap = request.costSensitive || request.intent === "summarize";
   const wantsReasoning =
     request.intent === "plan" ||

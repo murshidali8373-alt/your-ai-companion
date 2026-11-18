@@ -34,8 +34,9 @@ export function buildSystemPrompt(input: {
   memories: MemoryItem[];
   privacyMode: boolean;
   providerDisclosure?: string;
+  interpretMode?: boolean;
 }): string {
-  const { persona, permission, memories, privacyMode, providerDisclosure } = input;
+  const { persona, permission, memories, privacyMode, providerDisclosure, interpretMode } = input;
 
   const specialistParts = [
     persona.systemPrompt.trim(),
@@ -58,7 +59,14 @@ export function buildSystemPrompt(input: {
     "Never invent user-specific facts (GSTIN, prices, names, addresses, legal citations, code that you have not seen). Ask instead.",
     "Never claim an action already succeeded before execution. Instead, output a structured action plan so the Side Panel executes it on the live page.",
     "When the user asks where something is ('kahan hai', 'show me', 'point'), use actionType 'point' and set 'highlight' — NEVER click on a point request.",
+    "When the user asks to fill, type, or enter text (including Hinglish like 'isme kch likh do', 'ye fill karo', 'isme daal do'), NEVER explain the webpage instead. If target field or value is missing, set needsClarification: true, actionType: 'ask_clarification', and ask concisely (e.g. 'Kya likhna hai? Text bata do.' or 'Kis field mein fill karna hai?').",
+    "Separate intents strictly: (a) 'Search box mein X likho' / 'chat box mein Y likho' -> actionType 'type' with targetField without submitting; (b) 'X search karo' -> actionType 'search_submit' when a page search input exists; (c) 'Aadhaar website kholo' / 'search for X website' -> actionType 'open_website' or 'web_search' with targetText; (d) 'explain page' -> actionType 'explain_page'.",
     "When the user asks to click/open/fill/type/select/scroll or perform multi-step tasks, output exact actionType, targetField/targetValue/fields/scrollDirection or steps using snapshot refs (like 'e3') or clear targetText.",
+    ...(interpretMode
+      ? [
+          "INTERPRETATION MODE ACTIVE: Understand messy/short/abbreviated Hinglish (e.g. hnn=haan, kr=kar, q/kyu=kyun, kch=kuch, btao=batao, isme/isko=this/current field, yhi/whi=same/previous) from conversation and page context, map to the clearest single structured action, or ask one short clarification question.",
+        ]
+      : []),
     "Keep answers short: two to four sentences unless the user asks for detail.",
     "",
     `PERMISSION: ${permission} — ${PERMISSION_DESCRIPTIONS[permission]}`,
@@ -66,12 +74,12 @@ export function buildSystemPrompt(input: {
     "",
     "OUTPUT FORMAT",
     "Reply with a compact JSON object and nothing else:",
-    '{"answer": string, "highlight": string|null, "confidence": "high"|"medium"|"low", "needs": string|null, "emotion": "neutral"|"thinking"|"happy"|"concerned"|"curious"|"celebrate", "calloutTitle": string|null, "calloutDescription": string|null, "actionType": "point"|"click"|"open_link"|"type"|"select"|"check"|"uncheck"|"scroll"|"form_fill"|"multi_step"|"inspect"|null, "targetText": string|null, "targetField": string|null, "targetValue": string|null, "fields": object|null, "scrollDirection": "up"|"down"|"left"|"right"|"top"|"bottom"|null, "scrollTarget": string|null, "steps": [{"title": string, "action": "click"|"type"|"select"|"scroll"|"point"|"fill_from_document", "textTarget": string|null, "value": string|null, "selector": string|null, "isConsequential": boolean}]|null}',
+    '{"answer": string, "highlight": string|null, "confidence": "high"|"medium"|"low", "needs": string|null, "needsClarification": boolean, "clarificationQuestion": string|null, "emotion": "neutral"|"thinking"|"happy"|"concerned"|"curious"|"celebrate", "calloutTitle": string|null, "calloutDescription": string|null, "actionType": "point"|"click"|"open_link"|"type"|"fill"|"select"|"check"|"uncheck"|"scroll"|"form_fill"|"multi_step"|"inspect"|"web_search"|"open_website"|"search_submit"|"ask_clarification"|"explain_page"|null, "targetText": string|null, "targetField": string|null, "targetValue": string|null, "fields": object|null, "scrollDirection": "up"|"down"|"left"|"right"|"top"|"bottom"|null, "scrollTarget": string|null, "steps": [{"title": string, "action": "click"|"type"|"select"|"scroll"|"point"|"fill_from_document", "textTarget": string|null, "value": string|null, "selector": string|null, "isConsequential": boolean}]|null}',
     '"highlight" is the ref of the element to point at or act on (e.g. "e3") or null.',
     '"calloutTitle" is a short 2-4 word badge title (e.g. "Catalog Uploads / कैटलॉग अपलोड") or null.',
     '"calloutDescription" is a concise 1-sentence actionable instruction or null.',
-    '"actionType" is the action to perform: "point" (only highlight, no click), "click", "open_link", "type", "select", "check", "uncheck", "scroll", "form_fill", "multi_step", or "inspect".',
-    "BILINGUAL GUIDANCE: Match the user's language. If the user asks in Hindi or Hinglish (e.g. 'kahan click karu?', 'form kaise bharun?', 'error kyu hai?'), answer in clear, helpful, natural conversational Hindi / Hinglish.",
+    '"actionType" is the action to perform: "point" (only highlight, no click), "click", "open_link", "type", "fill", "select", "check", "uncheck", "scroll", "form_fill", "multi_step", "inspect", "web_search", "open_website", "search_submit", "ask_clarification", or "explain_page".',
+    "BILINGUAL GUIDANCE: Match the user's language. If the user asks in Hindi or Hinglish (e.g. 'kahan click karu?', 'form kaise bharun?', 'error kyu hai?', 'buddy isme kch likh do'), answer in clear, helpful, natural conversational Hindi / Hinglish.",
   ];
 
   const sections: string[] = [corePrompt, extensionRules.join("\n")];
@@ -96,13 +104,19 @@ export type BuddyActionType =
   | "click"
   | "open_link"
   | "type"
+  | "fill"
   | "select"
   | "check"
   | "uncheck"
   | "scroll"
   | "form_fill"
   | "multi_step"
-  | "inspect";
+  | "inspect"
+  | "web_search"
+  | "open_website"
+  | "search_submit"
+  | "ask_clarification"
+  | "explain_page";
 
 export interface PlannedActionStep {
   title: string;
@@ -118,6 +132,8 @@ export interface BuddyReply {
   highlight: string | null;
   confidence: "high" | "medium" | "low";
   needs: string | null;
+  needsClarification?: boolean;
+  clarificationQuestion?: string | null;
   emotion: "neutral" | "thinking" | "happy" | "concerned" | "curious" | "celebrate";
   calloutTitle?: string | null;
   calloutDescription?: string | null;
@@ -136,6 +152,7 @@ const VALID_ACTION_TYPES = new Set<BuddyActionType>([
   "click",
   "open_link",
   "type",
+  "fill",
   "select",
   "check",
   "uncheck",
@@ -143,6 +160,11 @@ const VALID_ACTION_TYPES = new Set<BuddyActionType>([
   "form_fill",
   "multi_step",
   "inspect",
+  "web_search",
+  "open_website",
+  "search_submit",
+  "ask_clarification",
+  "explain_page",
 ]);
 
 const VALID_STEP_ACTIONS = new Set<PlannedActionStep["action"]>([
@@ -161,6 +183,8 @@ const FALLBACK: BuddyReply = {
   highlight: null,
   confidence: "low",
   needs: null,
+  needsClarification: false,
+  clarificationQuestion: null,
   emotion: "neutral",
   calloutTitle: null,
   calloutDescription: null,
@@ -241,6 +265,11 @@ export function parseBuddyReply(raw: string): BuddyReply {
               ? parsed.confidence
               : "low",
           needs: typeof parsed.needs === "string" && parsed.needs.trim() ? parsed.needs : null,
+          needsClarification: Boolean(parsed.needsClarification),
+          clarificationQuestion:
+            typeof parsed.clarificationQuestion === "string" && parsed.clarificationQuestion.trim()
+              ? parsed.clarificationQuestion.trim()
+              : null,
           emotion: (
             ["neutral", "thinking", "happy", "concerned", "curious", "celebrate"] as const
           ).includes(parsed.emotion as BuddyReply["emotion"])

@@ -42,6 +42,7 @@ const bodySchema = z.object({
       "classify",
       "deep_research",
       "browser_action",
+      "interpret_command",
       "file_analysis",
       "general",
     ])
@@ -85,6 +86,15 @@ const bodySchema = z.object({
       availableFields: z.array(z.string().max(60)).max(30),
     })
     .optional(),
+  actionContext: z
+    .object({
+      lastTargetField: z.string().max(120).nullable().optional(),
+      lastActionType: z.string().max(40).nullable().optional(),
+      pendingSlotType: z.string().max(40).nullable().optional(),
+      activeElementLabel: z.string().max(120).nullable().optional(),
+      recentFields: z.array(z.string().max(80)).max(15).optional(),
+    })
+    .optional(),
 });
 
 export const Route = createFileRoute("/api/public/extension/ask")({
@@ -121,6 +131,7 @@ export const Route = createFileRoute("/api/public/extension/ask")({
               customBuddyId: parsed.customBuddyId,
               screenshotBase64: parsed.screenshotBase64,
               uploadedDocumentSummary: parsed.uploadedDocumentSummary,
+              actionContext: parsed.actionContext,
             });
             return extensionJsonResponse(request, result);
           } else {
@@ -139,6 +150,7 @@ export const Route = createFileRoute("/api/public/extension/ask")({
               customBuddyId: parsed.customBuddyId,
               screenshotBase64: parsed.screenshotBase64,
               uploadedDocumentSummary: parsed.uploadedDocumentSummary,
+              actionContext: parsed.actionContext,
             });
             return extensionJsonResponse(request, { ...result, guest: true });
           }
