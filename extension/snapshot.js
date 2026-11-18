@@ -3,7 +3,7 @@
 (() => {
   const MAX_ELEMENTS = 100;
   const SENSITIVE =
-    /pass(?:word|wd)?|otp|\bpin\b|cvv|cvc|credit.?card|debit.?card|card.?number|secret|token|ssn|aadhaar/i;
+    /pass(?:word|wd)?|otp|(?<!postal[\s_-])(?<![a-z0-9])pin(?![a-z0-9]|[\s_-]*code\b)|cvv|cvc|credit.?card|debit.?card|card.?number|secret|token|ssn|aadhaar/i;
   let n = 0;
 
   const inViewport = (el) => {

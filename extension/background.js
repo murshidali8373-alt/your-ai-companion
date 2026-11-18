@@ -156,6 +156,19 @@ async function sendTabMessageToBridge(tabId, message, traceId) {
   return attempt.resp;
 }
 
+function sanitizeScriptArg(val) {
+  if (val === undefined || val === null) return null;
+  if (typeof val !== "object") return val;
+  if (Array.isArray(val)) return val.map((item) => sanitizeScriptArg(item));
+  const out = {};
+  for (const [k, v] of Object.entries(val)) {
+    if (v !== undefined) {
+      out[k] = sanitizeScriptArg(v);
+    }
+  }
+  return out;
+}
+
 async function runTabScript({ tabId, target, files, func, args, label = "script" }) {
   const startedAt = Date.now();
   const resolvedTarget = target || { tabId };
@@ -163,7 +176,11 @@ async function runTabScript({ tabId, target, files, func, args, label = "script"
     const injectSpec = { target: resolvedTarget };
     if (files) injectSpec.files = files;
     if (func) injectSpec.func = func;
-    if (args !== undefined) injectSpec.args = args;
+    if (args !== undefined) {
+      injectSpec.args = Array.isArray(args)
+        ? args.map((a) => sanitizeScriptArg(a))
+        : [sanitizeScriptArg(args)];
+    }
     const results = await chrome.scripting.executeScript(injectSpec);
     const frameErrors = (results || [])
       .filter((r) => r?.error)
@@ -407,6 +424,12 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   }
   if (msg.type === "NAVIGATE_TAB") {
     navigateTab(msg.url, msg.tabId).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
+    );
+    return true;
+  }
+  if (msg.type === "NAVIGATE_HISTORY") {
+    navigateHistory(msg.direction).then(safeReply, (e) =>
       safeReply({ ok: false, error: String(e?.message || e) }),
     );
     return true;
@@ -2420,7 +2443,7 @@ async function smartFillForm(fields, options = {}) {
       }
 
       const SENSITIVE =
-        /pass(?:word|wd)?|otp|\bpin\b|cvv|cvc|secret|token|ssn|aadhaar|credit.?card|debit.?card|card.?number/i;
+        /pass(?:word|wd)?|otp|(?<!postal[\s_-])(?<![a-z0-9])pin(?![a-z0-9]|[\s_-]*code\b)|cvv|cvc|secret|token|ssn|aadhaar|credit.?card|debit.?card|card.?number/i;
       const SUBMIT_PATTERN =
         /submit|sign\s*in|log\s*in|proceed|confirm|continue|checkout|purchase|pay|place\s*order|delete|send/i;
 
@@ -2582,7 +2605,7 @@ async function smartFillForm(fields, options = {}) {
         const fieldDescriptor = `${el.name || ""} ${el.id || ""} ${el.type || ""} ${el.autocomplete || ""} ${el.placeholder || ""}`;
         const isPasswordOrFinancial =
           el.type === "password" ||
-          /pass(?:word|wd)?|otp|\bpin\b|cvv|cvc|secret|token|credit.?card|debit.?card|card.?number/i.test(fieldDescriptor);
+          /pass(?:word|wd)?|otp|(?<!postal[\s_-])(?<![a-z0-9])pin(?![a-z0-9]|[\s_-]*code\b)|cvv|cvc|secret|token|credit.?card|debit.?card|card.?number/i.test(fieldDescriptor);
         const isSensitive =
           el.type === "password" ||
           SENSITIVE.test(fieldDescriptor);
@@ -2676,13 +2699,19 @@ async function smartFillForm(fields, options = {}) {
           "permanentaddress",
           "residentialaddress",
         ],
+        pata: ["address", "street", "line1", "addressline1", "fulladdress", "location"],
         city: ["shehar", "town", "district", "municipality"],
+        shehar: ["city", "town", "district"],
         state: ["rajya", "province", "region"],
+        rajya: ["state", "province", "region"],
         country: ["desh", "nation"],
+        desh: ["country", "nation"],
         pincode: ["zip", "zipcode", "postalcode", "pin", "postal"],
+        pin: ["pincode", "zip", "zipcode", "postalcode", "postal"],
         search: ["query", "q", "searchbox", "find", "keyword", "searchinput"],
         describe: ["prompt", "description", "details", "idea", "app", "message", "describeanapp"],
         message: ["comment", "comments", "note", "notes", "msg", "description", "remarks", "body", "sandesh"],
+        msg: ["message", "comment", "comments", "note", "notes", "description", "remarks", "body", "sandesh"],
         comment: ["message", "note", "notes", "feedback", "review"],
         subject: ["title", "topic", "heading"],
         company: ["organization", "org", "firm", "business", "businessname", "legalname"],
@@ -2869,6 +2898,29 @@ async function smartFillForm(fields, options = {}) {
             }
           }
 
+          const isTextBoxLike =
+            !isCheckbox && !isRadio && candidate.tagName !== "SELECT" && !isCe;
+          if (
+            isTextBoxLike &&
+            typeof candidate.maxLength === "number" &&
+            candidate.maxLength > 0 &&
+            candidate.type !== "date" &&
+            strVal.length > candidate.maxLength
+          ) {
+            results.skipped.push({
+              key,
+              field:
+                candidate.name ||
+                candidate.id ||
+                candidate.placeholder ||
+                candidate.getAttribute?.("aria-label") ||
+                key,
+              value: check.isSensitive ? "••••••" : strVal,
+              reason: `Value length (${strVal.length}) exceeds field maxlength (${candidate.maxLength})`,
+            });
+            continue;
+          }
+
           if (candidate.tagName === "SELECT") {
             const normVal = normalize(strVal);
             const opt = [...candidate.options].find(
@@ -3043,32 +3095,40 @@ async function smartFillForm(fields, options = {}) {
 
           // Post-action verification check
           let verified = false;
+          let actualReadback = "";
           if (isCheckbox) {
             const desired =
               typeof val === "boolean"
                 ? val
                 : !/^(false|0|no|uncheck|off|nahi)$/i.test(strVal.trim());
-            verified =
+            const checkedNow =
               candidate.type === "checkbox"
-                ? candidate.checked === desired
-                : candidate.getAttribute?.("aria-checked") === String(desired);
-          } else if (isRadio) {
-            verified =
-              candidate.type === "radio"
-                ? candidate.checked === true
+                ? Boolean(candidate.checked)
                 : candidate.getAttribute?.("aria-checked") === "true";
+            verified = checkedNow === desired;
+            actualReadback = String(checkedNow);
+          } else if (isRadio) {
+            const checkedNow =
+              candidate.type === "radio"
+                ? Boolean(candidate.checked)
+                : candidate.getAttribute?.("aria-checked") === "true";
+            verified = checkedNow === true;
+            actualReadback = String(checkedNow);
           } else if (candidate.tagName === "SELECT") {
             const selText = candidate.options?.[candidate.selectedIndex]?.text || "";
+            actualReadback = selText || candidate.value || "";
             verified =
-              normalize(candidate.value) === normalize(strVal) ||
-              normalize(selText).includes(normalize(strVal)) ||
-              candidate.value === strVal;
+              Boolean(candidate.value) &&
+              (normalize(candidate.value) === normalize(strVal) ||
+                normalize(selText).includes(normalize(strVal)) ||
+                candidate.value === strVal);
           } else if (
             candidate.getAttribute?.("role") === "combobox" ||
             candidate.getAttribute?.("role") === "listbox"
           ) {
             const comboVal =
               candidate.value || candidate.innerText || candidate.textContent || "";
+            actualReadback = comboVal;
             verified =
               comboVal === strVal ||
               comboVal.includes(strVal) ||
@@ -3077,30 +3137,43 @@ async function smartFillForm(fields, options = {}) {
             const verifiedValue = isCe
               ? candidate.innerText || candidate.textContent || ""
               : candidate.value || "";
+            actualReadback = verifiedValue;
             verified =
               verifiedValue === strVal ||
               verifiedValue.includes(strVal) ||
-              normalize(verifiedValue).includes(normalize(strVal));
+              (normalize(strVal).length > 0 && normalize(verifiedValue).includes(normalize(strVal)));
           }
 
+          const fieldLabel =
+            candidate.name ||
+            candidate.id ||
+            candidate.placeholder ||
+            candidate.getAttribute?.("aria-label") ||
+            key;
           const maskedVal = check.isSensitive
-            ? /aadhaar|aadhar/i.test(`${key} ${candidate.name || ""} ${candidate.id || ""}`) && strVal.replace(/\D/g, "").length >= 4
+            ? /aadhaar|aadhar/i.test(`${key} ${candidate.name || ""} ${candidate.id || ""}`) &&
+              strVal.replace(/\D/g, "").length >= 4
               ? `XXXX-XXXX-${strVal.replace(/\D/g, "").slice(-4)}`
               : "••••••"
             : strVal;
 
-          results.filled.push({
-            key,
-            field:
-              candidate.name ||
-              candidate.id ||
-              candidate.placeholder ||
-              candidate.getAttribute?.("aria-label") ||
+          if (verified) {
+            results.filled.push({
               key,
-            value: maskedVal,
-            verified,
-          });
-          successfullyFilled.push(candidate);
+              field: fieldLabel,
+              value: maskedVal,
+              verified: true,
+            });
+            successfullyFilled.push(candidate);
+          } else {
+            results.errors.push({
+              key,
+              field: fieldLabel,
+              error: actualReadback
+                ? `Field rejected or altered value (got "${check.isSensitive ? "••••••" : String(actualReadback).slice(0, 60)}")`
+                : `Field "${fieldLabel}" rejected or cleared the value`,
+            });
+          }
         } catch (err) {
           results.errors.push({ key, error: String(err?.message || err) });
         }
@@ -3404,6 +3477,23 @@ async function findContentOnPage(query, options = {}) {
         return !hasMatchingChild || el.children.length === 0;
       });
 
+      const wantsSearchInput = /\bsearch\s*(?:box|bar|input|field)\b/i.test(searchQuery);
+      const isSearchInputEl = (el) => {
+        if (!el) return false;
+        const role = el.getAttribute?.("role") || "";
+        const isEditable =
+          el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          role === "searchbox" ||
+          role === "textbox" ||
+          role === "combobox";
+        if (!isEditable || el.type === "submit" || el.type === "button" || el.type === "hidden") {
+          return false;
+        }
+        const meta = `${el.type || ""} ${el.name || ""} ${el.id || ""} ${el.getAttribute?.("placeholder") || ""} ${el.getAttribute?.("aria-label") || ""}`.toLowerCase();
+        return el.type === "search" || role === "searchbox" || meta.includes("search") || meta.includes("query");
+      };
+
       // Score and sort candidates
       const scoreEl = (el) => {
         const text = getElementSearchText(el);
@@ -3415,14 +3505,37 @@ async function findContentOnPage(query, options = {}) {
           if (tokenMatchesText(text, tok)) s += 15;
         }
         if (["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A"].includes(el.tagName)) s += 20;
-        if (["textbox", "button", "tab", "combobox"].includes(el.getAttribute?.("role"))) s += 15;
+        if (["textbox", "button", "tab", "combobox", "searchbox"].includes(el.getAttribute?.("role"))) s += 15;
+        if (wantsSearchInput) {
+          if (isSearchInputEl(el)) s += 120;
+          else if (el.tagName === "BUTTON" || el.type === "submit") s -= 80;
+        }
         s -= Math.min(40, Math.floor(text.length / 20));
         return s;
       };
 
-      leafCandidates.sort((a, b) => scoreEl(b) - scoreEl(a));
+      const filteredCandidates = wantsSearchInput
+        ? (() => {
+            const onlyInputs = leafCandidates.filter(isSearchInputEl);
+            if (onlyInputs.length > 0) return onlyInputs;
+            const deepSearchInputs = queryAllDeep(
+              'input[type="search"], [role="searchbox"], input[placeholder*="search" i], input[name*="search" i], input[aria-label*="search" i], input[id*="search" i]',
+            ).filter(isVisible);
+            return deepSearchInputs.length > 0 ? deepSearchInputs : leafCandidates;
+          })()
+        : leafCandidates;
 
-      const matches = leafCandidates.slice(0, 30).map((el, idx) => {
+      filteredCandidates.sort((a, b) => scoreEl(b) - scoreEl(a));
+      const finalPool = filteredCandidates;
+
+      const topCandidateScore = finalPool[0] ? scoreEl(finalPool[0]) : 0;
+      const tiedCandidates = finalPool.filter((el, idx) => {
+        if (idx === 0) return true;
+        const sc = scoreEl(el);
+        return sc >= topCandidateScore - 2 && !finalPool[0].contains(el) && !el.contains(finalPool[0]);
+      });
+
+      const matches = finalPool.slice(0, 30).map((el, idx) => {
         const fullText = normalize(
           el.innerText ||
             el.getAttribute?.("placeholder") ||
@@ -3468,12 +3581,13 @@ async function findContentOnPage(query, options = {}) {
         };
       }
 
+      const targetIdx = typeof opts?.targetIndex === "number" ? opts.targetIndex : 0;
+      const isAmbiguousFind = tiedCandidates.length > 1 && typeof opts?.targetIndex !== "number";
+      const targetMatch = matches[targetIdx] || matches[0];
       let scrolled = false;
-      const targetIndex = typeof opts?.targetIndex === "number" ? opts.targetIndex : 0;
-      const targetMatch = matches[targetIndex] || matches[0];
 
-      if (opts?.scroll !== false && leafCandidates[targetIndex || 0]) {
-        const targetEl = leafCandidates[targetIndex || 0];
+      if (opts?.scroll !== false && !isAmbiguousFind && finalPool[targetIdx || 0]) {
+        const targetEl = finalPool[targetIdx || 0];
 
         let parent = targetEl.parentElement;
         while (parent && parent !== document.body && parent !== document.documentElement) {
@@ -3500,13 +3614,17 @@ async function findContentOnPage(query, options = {}) {
         ok: true,
         query: searchQuery,
         totalMatches: matches.length,
+        ambiguous: isAmbiguousFind,
+        ambiguousCandidates: isAmbiguousFind ? matches.slice(0, tiedCandidates.length).slice(0, 6) : undefined,
         allTokensMatched,
-        topScore: leafCandidates[0] ? scoreEl(leafCandidates[0]) : 0,
+        topScore: topCandidateScore,
         matches,
         targetMatch,
         firstSelector: targetMatch?.selector,
         scrolled,
-        message: `Found ${matches.length} match${matches.length > 1 ? "es" : ""} for "${searchQuery}".`,
+        message: isAmbiguousFind
+          ? `Found ${tiedCandidates.length} equally matching elements for "${searchQuery}".`
+          : `Found ${matches.length} match${matches.length > 1 ? "es" : ""} for "${searchQuery}".`,
       };
   };
 
@@ -3553,7 +3671,7 @@ async function findContentOnPage(query, options = {}) {
     }
   }
 
-  if (result.ok && result.firstSelector && options?.highlight !== false) {
+  if (result.ok && !result.ambiguous && result.firstSelector && options?.highlight !== false) {
     await clearHighlightOverlay();
     if (targetFrameId === 0) {
       await highlightElement(
@@ -3592,7 +3710,7 @@ async function executeAction(action, selector, value, options = {}) {
       }
       const normalize = (t) => (t || "").replace(/\s+/g, " ").trim();
       const SENSITIVE =
-        /pass(?:word|wd)?|otp|\bpin\b|cvv|cvc|secret|token|ssn|aadhaar|credit.?card|debit.?card|card.?number/i;
+        /pass(?:word|wd)?|otp|(?<!postal[\s_-])(?<![a-z0-9])pin(?![a-z0-9]|[\s_-]*code\b)|cvv|cvc|secret|token|ssn|aadhaar|credit.?card|debit.?card|card.?number/i;
 
       const queryAllDeep = (selectorStr, root = document) => {
         const out = [...root.querySelectorAll(selectorStr)];
@@ -3787,8 +3905,12 @@ async function executeAction(action, selector, value, options = {}) {
             });
           }
           targetEl.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
-          await new Promise((r) => setTimeout(r, 420));
-          const afterTop = targetEl.getBoundingClientRect().top;
+          await waitForScrollSettle(() => ({
+            x: hasScrollParent ? scrollParent.scrollLeft : window.scrollX || document.documentElement.scrollLeft || 0,
+            y: hasScrollParent ? scrollParent.scrollTop : window.scrollY || document.documentElement.scrollTop || 0,
+          }), 800);
+          const elRectAfter = targetEl.getBoundingClientRect();
+          const afterTop = elRectAfter.top;
           const afterWinY = window.scrollY || document.documentElement.scrollTop || 0;
           const afterParentY = hasScrollParent ? scrollParent.scrollTop : 0;
           const movedPx = Math.round(
@@ -3798,16 +3920,74 @@ async function executeAction(action, selector, value, options = {}) {
               Math.abs(afterParentY - beforeParentY),
             ),
           );
+          const vw = window.innerWidth || document.documentElement.clientWidth || 1200;
+          const vh = window.innerHeight || document.documentElement.clientHeight || 800;
+          const inViewport =
+            (elRectAfter.width > 0 || elRectAfter.height > 0) &&
+            elRectAfter.bottom > 0 &&
+            elRectAfter.top < vh &&
+            elRectAfter.right > 0 &&
+            elRectAfter.left < vw;
+          const elLabel = normalize(targetEl.innerText || targetEl.tagName).slice(0, 40);
+          if (!inViewport && movedPx === 0) {
+            return {
+              ok: false,
+              action: "scroll",
+              direction: "to_element",
+              movedPx,
+              inViewport: false,
+              message: `Could not bring "${elLabel}" into the visible viewport.`,
+            };
+          }
           return {
             ok: true,
             action: "scroll",
             direction: "to_element",
             movedPx,
-            message: `Scrolled to "${normalize(targetEl.innerText || targetEl.tagName).slice(0, 40)}" successfully.`,
+            inViewport,
+            message: inViewport
+              ? `Scrolled to "${elLabel}" successfully.`
+              : `Scrolled toward "${elLabel}" (${movedPx}px), though element remains partially outside viewport.`,
           };
         }
 
         let container = opts?.containerSelector ? queryDeepSelector(opts.containerSelector) : null;
+        if (!container && opts?.containerText) {
+          const ctQuery = normalize(opts.containerText).toLowerCase();
+          const wantH = direction === "left" || direction === "right";
+          const scrollableBoxes = queryAllDeep(
+            "main, [role='main'], [role='region'], aside, div, section, ul, ol, table, tbody",
+          ).filter((el) => {
+            if (!isVisible(el) || el === document.body || el === document.documentElement) return false;
+            const cs = window.getComputedStyle(el);
+            return wantH
+              ? (cs.overflowX === "auto" || cs.overflowX === "scroll" || cs.overflow === "auto" || cs.overflow === "scroll") &&
+                  el.scrollWidth > el.clientWidth + 20
+              : (cs.overflowY === "auto" || cs.overflowY === "scroll" || cs.overflow === "auto" || cs.overflow === "scroll") &&
+                  el.scrollHeight > el.clientHeight + 20;
+          });
+          container =
+            scrollableBoxes.find((el) => {
+              const labelText = normalize(
+                `${el.getAttribute?.("aria-label") || ""} ${el.id || ""} ${el.className || ""} ${el.querySelector?.("h1,h2,h3,h4,h5,h6,strong,legend")?.innerText || ""}`,
+              ).toLowerCase();
+              if (labelText.includes(ctQuery)) return true;
+              const prevHeading = el.previousElementSibling;
+              const prevTxt = normalize(prevHeading?.innerText || "").toLowerCase();
+              return prevTxt && prevTxt.includes(ctQuery);
+            }) ||
+            scrollableBoxes.find((el) =>
+              normalize(el.innerText || "").toLowerCase().includes(ctQuery),
+            ) ||
+            null;
+          if (!container) {
+            return {
+              ok: false,
+              action: "scroll",
+              message: `Could not find scrollable "${opts.containerText}" area on this page.`,
+            };
+          }
+        }
 
         const findBestScrollContainer = (wantHoriz) => {
           const scrollCands = queryAllDeep(
@@ -3935,6 +4115,55 @@ async function executeAction(action, selector, value, options = {}) {
         };
       }
 
+      // Helper: build stable CSS selector & nearby section context label
+      const getUniqueSelector = (node) => {
+        if (!node) return undefined;
+        const nodeRoot = node.getRootNode?.() || document;
+        const safeCount = (s) => {
+          try {
+            return (nodeRoot.querySelectorAll ? nodeRoot.querySelectorAll(s) : document.querySelectorAll(s)).length;
+          } catch {
+            return 0;
+          }
+        };
+        if (node.id && safeCount(`#${CSS.escape(node.id)}`) === 1) {
+          return `#${CSS.escape(node.id)}`;
+        }
+        const parts = [];
+        let cur = node;
+        while (cur && cur.nodeType === 1 && cur !== nodeRoot && parts.length < 5) {
+          let p = cur.tagName.toLowerCase();
+          if (cur.id && safeCount(`#${CSS.escape(cur.id)}`) === 1) {
+            parts.unshift(`#${CSS.escape(cur.id)}`);
+            break;
+          }
+          const parent = cur.parentElement;
+          if (parent) {
+            const same = [...parent.children].filter((c) => c.tagName === cur.tagName);
+            if (same.length > 1) p += `:nth-of-type(${same.indexOf(cur) + 1})`;
+          }
+          parts.unshift(p);
+          cur = parent;
+        }
+        return parts.join(" > ");
+      };
+
+      const getContextLabel = (node) => {
+        const container = node.closest?.(
+          "section, article, .card, .service-card, form, header, nav, footer, aside, dialog, tr, li",
+        );
+        if (container) {
+          const heading = container.querySelector?.("h1,h2,h3,h4,h5,h6,legend,.card-title,strong");
+          const hTxt = normalize(heading?.innerText || container.getAttribute?.("aria-label") || "");
+          if (hTxt && hTxt !== normalize(node.innerText || "")) {
+            return hTxt.slice(0, 50);
+          }
+          const tag = container.tagName.toLowerCase();
+          if (["header", "nav", "footer", "form", "aside", "dialog"].includes(tag)) return tag;
+        }
+        return undefined;
+      };
+
       // --- 2. CLICK & BUTTON PRESS ACTION ---
       if (
         act === "click" ||
@@ -3948,16 +4177,28 @@ async function executeAction(action, selector, value, options = {}) {
 
         if ((sel === "__CURRENT__" || val === "__CURRENT__") && opts?.fallbackSelector) {
           el = queryDeepSelector(opts.fallbackSelector);
+          if (!el) {
+            return {
+              ok: false,
+              stale: true,
+              message: "The previously highlighted element is no longer present on this page.",
+            };
+          }
         }
 
         if (!el && sel && sel !== "__CURRENT__") {
           el = queryDeepSelector(sel);
+          if (!el && !val && !opts?.text) {
+            return {
+              ok: false,
+              stale: true,
+              message: "Target element is no longer on this page.",
+            };
+          }
         }
 
         if (!el && (val === "__CURRENT__" || opts?.text === "__CURRENT__")) {
-          if (opts?.fallbackSelector) {
-            el = queryDeepSelector(opts.fallbackSelector);
-          } else if (
+          if (
             document.activeElement &&
             document.activeElement !== document.body &&
             isVisible(document.activeElement)
@@ -4040,7 +4281,7 @@ async function executeAction(action, selector, value, options = {}) {
             ).toLowerCase();
           };
 
-          let bestScore = 0;
+          const scoredCandidates = [];
           for (const cand of clickables) {
             const t = getElementText(cand);
             if (!t) continue; // NEVER match empty elements!
@@ -4065,10 +4306,55 @@ async function executeAction(action, selector, value, options = {}) {
             }
             if (score > 0) {
               score -= Math.min(20, Math.floor(t.length / 25));
+              scoredCandidates.push({ el: cand, score, normText: t });
             }
-            if (score > bestScore) {
-              bestScore = score;
-              el = cand;
+          }
+
+          // Deduplicate nested elements (e.g. a button inside a wrapper with [tabindex])
+          scoredCandidates.sort((a, b) => b.score - a.score);
+          const uniqueCandidates = [];
+          for (const c of scoredCandidates) {
+            const nested = uniqueCandidates.some(
+              (kept) => kept.el.contains(c.el) || c.el.contains(kept.el),
+            );
+            if (!nested) uniqueCandidates.push(c);
+          }
+
+          if (uniqueCandidates.length > 0) {
+            if (typeof opts?.candidateIndex === "number" && opts.candidateIndex >= 1) {
+              el = uniqueCandidates[opts.candidateIndex - 1]?.el || null;
+            } else {
+              const topScore = uniqueCandidates[0].score;
+              const tied = uniqueCandidates.filter(
+                (c, i) =>
+                  i === 0 ||
+                  c.score === topScore ||
+                  (c.score >= topScore - 2 && c.normText === uniqueCandidates[0].normText),
+              );
+              if (
+                tied.length > 1 &&
+                act !== "submit" &&
+                act !== "click_submit" &&
+                act !== "click_delete"
+              ) {
+                return {
+                  ok: false,
+                  ambiguous: true,
+                  action: "click",
+                  target: val || opts?.text || cleanTarget,
+                  candidates: tied.slice(0, 8).map((c, idx) => ({
+                    index: idx + 1,
+                    text: normalize(
+                      c.el.innerText || c.el.value || c.el.getAttribute?.("aria-label") || c.normText,
+                    ).slice(0, 60),
+                    context: getContextLabel(c.el) || null,
+                    tag: c.el.tagName.toLowerCase(),
+                    selector: getUniqueSelector(c.el),
+                  })),
+                  message: `Found ${tied.length} matching controls for "${val || opts?.text}". Please clarify which one.`,
+                };
+              }
+              el = uniqueCandidates[0].el;
             }
           }
 
@@ -4179,6 +4465,28 @@ async function executeAction(action, selector, value, options = {}) {
           }
         }
 
+        // Capture visible status, alert, error, or confirmation feedback shown by the page
+        const feedbackEls = queryAllDeep(
+          '[role="alert"], [role="status"], [aria-live], .alert, .error, .error-message, .form-error, .invalid-feedback, .success, .toast, .notice',
+        ).filter((node) => isVisible(node) && !node.contains(el));
+        const pageFeedback = [];
+        let hasErrorFeedback = false;
+        for (const fb of feedbackEls) {
+          const fbTxt = normalize(fb.innerText || fb.textContent || "").slice(0, 180);
+          if (!fbTxt || fbTxt === clickedText || pageFeedback.includes(fbTxt)) continue;
+          pageFeedback.push(fbTxt);
+          if (
+            fb.getAttribute?.("role") === "alert" ||
+            fb.classList?.contains("error") ||
+            fb.classList?.contains("form-error") ||
+            fb.classList?.contains("invalid-feedback") ||
+            /\b(?:error|failed|invalid|required|please\s+fix|missing|fix:|cannot|must\s+accept)\b/i.test(fbTxt)
+          ) {
+            hasErrorFeedback = true;
+          }
+          if (pageFeedback.length >= 3) break;
+        }
+
         const isNowChecked =
           typeof el.checked === "boolean"
             ? el.checked
@@ -4194,6 +4502,9 @@ async function executeAction(action, selector, value, options = {}) {
         } else if (stateChange === "selected") {
           outcomeMsg += " Selection updated.";
         }
+        if (pageFeedback.length > 0) {
+          outcomeMsg += ` Page reported: "${pageFeedback[0]}"`;
+        }
 
         return {
           ok: true,
@@ -4203,6 +4514,8 @@ async function executeAction(action, selector, value, options = {}) {
           stateChange,
           urlBefore,
           urlAfter: window.location.href,
+          pageFeedback: pageFeedback.length > 0 ? pageFeedback : undefined,
+          hasErrorFeedback,
           message: outcomeMsg,
         };
       }
@@ -4314,6 +4627,24 @@ async function executeAction(action, selector, value, options = {}) {
           el.getAttribute?.("contenteditable") === "true" ||
           el.getAttribute?.("contenteditable") === "" ||
           el.getAttribute?.("contenteditable") === "plaintext-only";
+        if (
+          !isCe &&
+          el.tagName !== "SELECT" &&
+          el.type !== "checkbox" &&
+          el.type !== "radio" &&
+          el.type !== "date" &&
+          typeof el.maxLength === "number" &&
+          el.maxLength > 0 &&
+          strVal.length > el.maxLength
+        ) {
+          return {
+            ok: false,
+            verified: false,
+            action: "type",
+            field: el.name || el.id || el.placeholder || el.tagName.toLowerCase(),
+            message: `Refused to type: value length (${strVal.length}) exceeds field maxlength (${el.maxLength}).`,
+          };
+        }
 
         if (el.tagName === "SELECT") {
           const opt = [...el.options].find(
@@ -4339,6 +4670,11 @@ async function executeAction(action, selector, value, options = {}) {
           }
           try {
             el.dispatchEvent(
+              new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: strVal }),
+            );
+          } catch {}
+          try {
+            el.dispatchEvent(
               new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: strVal }),
             );
           } catch {}
@@ -4361,18 +4697,21 @@ async function executeAction(action, selector, value, options = {}) {
         }
 
         const actualValue = isCe ? el.innerText || el.textContent : el.value;
-        const verified = Boolean(
+        const fieldLabel = el.name || el.id || el.placeholder || el.tagName.toLowerCase();
+        const verified =
           actualValue !== undefined &&
-            actualValue !== null &&
-            actualValue.toString().includes(strVal.slice(0, Math.min(strVal.length, 8))),
-        );
+          actualValue !== null &&
+          (actualValue === strVal ||
+            (strVal.length > 0 && actualValue.toString().includes(strVal)));
 
         return {
-          ok: true,
+          ok: verified,
           verified,
           action: "type",
-          field: el.name || el.id || el.placeholder || el.tagName.toLowerCase(),
-          message: `Filled "${el.name || el.id || el.placeholder || "input"}" with requested value.`,
+          field: fieldLabel,
+          message: verified
+            ? `Filled "${fieldLabel}" with requested value.`
+            : `Field "${fieldLabel}" rejected or cleared the typed value.`,
         };
       }
 
@@ -4529,12 +4868,15 @@ async function executeAction(action, selector, value, options = {}) {
           el.type === "checkbox" || el.type === "radio"
             ? el.checked
             : el.getAttribute?.("aria-checked") === "true";
+        const okChecked = nowChecked === shouldCheck;
 
         return {
-          ok: true,
-          verified: nowChecked === shouldCheck,
+          ok: okChecked,
+          verified: okChecked,
           action: act,
-          message: `${shouldCheck ? "Checked" : "Unchecked"} "${el.name || el.id || val || "checkbox"}".`,
+          message: okChecked
+            ? `${shouldCheck ? "Checked" : "Unchecked"} "${el.name || el.id || val || "checkbox"}".`
+            : `Checkbox "${el.name || el.id || val || "checkbox"}" did not change to ${shouldCheck ? "checked" : "unchecked"}.`,
         };
       }
 
@@ -4558,12 +4900,58 @@ async function executeAction(action, selector, value, options = {}) {
       // --- 8. OPEN LINK ACTION ---
       if (act === "open_link" || act === "open") {
         let el = sel ? queryDeepSelector(sel) : null;
+        if (sel && !el && !val && !opts?.text) {
+          return {
+            ok: false,
+            stale: true,
+            message: "Target link is no longer present on this page.",
+          };
+        }
         if (!el && (val || opts?.text)) {
           const needle = String(val || opts?.text).trim().toLowerCase();
           const links = queryAllDeep('a[href], [role="link"]').filter(isVisible);
-          el =
-            links.find((a) => normalize(a.innerText || a.getAttribute("aria-label") || a.title || "").toLowerCase() === needle) ||
-            links.find((a) => normalize(a.innerText || a.getAttribute("aria-label") || a.title || a.getAttribute("href") || "").toLowerCase().includes(needle));
+          const linkScores = [];
+          for (const a of links) {
+            const txt = normalize(a.innerText || a.getAttribute("aria-label") || a.title || "").toLowerCase();
+            const hrefStr = (a.getAttribute("href") || "").toLowerCase();
+            let s = 0;
+            if (txt === needle) s = 100;
+            else if (txt.startsWith(needle)) s = 75;
+            else if (txt.includes(needle)) s = 55;
+            else if (hrefStr.includes(needle)) s = 40;
+            if (s > 0) linkScores.push({ el: a, score: s, normText: txt });
+          }
+          linkScores.sort((a, b) => b.score - a.score);
+          if (linkScores.length > 0) {
+            if (typeof opts?.candidateIndex === "number" && opts.candidateIndex >= 1) {
+              el = linkScores[opts.candidateIndex - 1]?.el || null;
+            } else {
+              const topScore = linkScores[0].score;
+              const tiedLinks = linkScores.filter(
+                (c, i) =>
+                  i === 0 ||
+                  c.score === topScore ||
+                  (c.score >= topScore - 2 && c.normText === linkScores[0].normText),
+              );
+              if (tiedLinks.length > 1) {
+                return {
+                  ok: false,
+                  ambiguous: true,
+                  action: "open_link",
+                  target: val || opts?.text,
+                  candidates: tiedLinks.slice(0, 8).map((c, idx) => ({
+                    index: idx + 1,
+                    text: normalize(c.el.innerText || c.el.getAttribute("aria-label") || c.el.href || "").slice(0, 60),
+                    context: getContextLabel(c.el) || null,
+                    tag: c.el.tagName.toLowerCase(),
+                    selector: getUniqueSelector(c.el),
+                  })),
+                  message: `Found ${tiedLinks.length} links matching "${val || opts?.text}". Please choose which one.`,
+                };
+              }
+              el = linkScores[0].el;
+            }
+          }
         }
         if (!el) {
           return {
@@ -4832,10 +5220,12 @@ async function navigateTab(url, tabId) {
 
   await chrome.tabs.update(targetTabId, { url });
 
-  // Wait for status complete with timeout
-  await new Promise((resolve) => {
+  // Wait for status complete with timeout tracking
+  const completed = await new Promise((resolve) => {
+    let settled = false;
     const listener = (id, changeInfo) => {
       if (id === targetTabId && changeInfo.status === "complete") {
+        settled = true;
         chrome.tabs.onUpdated?.removeListener?.(listener);
         resolve(true);
       }
@@ -4843,18 +5233,103 @@ async function navigateTab(url, tabId) {
     chrome.tabs.onUpdated?.addListener?.(listener);
     setTimeout(() => {
       chrome.tabs.onUpdated?.removeListener?.(listener);
-      resolve(true);
+      resolve(settled);
     }, 5000);
   });
 
   const updatedTab = await chrome.tabs.get(targetTabId).catch(() => null);
+  const finalUrl = updatedTab?.url || url;
+  const isErrorPage = /^(?:chrome-error|about:neterror):/i.test(finalUrl);
+  const isComplete = Boolean(completed || updatedTab?.status === "complete");
+  const ok = !isErrorPage && isComplete;
+
   return {
-    ok: true,
+    ok,
+    timedOut: !isComplete,
+    errorPage: isErrorPage,
     tabId: targetTabId,
-    url: updatedTab?.url || url,
+    url: finalUrl,
     title: updatedTab?.title,
-    navigated: true,
+    navigated: ok,
+    message: isErrorPage
+      ? `Page failed to load (${finalUrl}).`
+      : !isComplete
+        ? `Timed out waiting for ${finalUrl} to finish loading.`
+        : `Navigated to ${finalUrl}.`,
   };
+}
+
+async function navigateHistory(direction = "back") {
+  const dir = String(direction || "back").toLowerCase();
+  const tab = await activeTab();
+  if (!tab?.id || !tab.url || RESTRICTED.test(tab.url)) {
+    return { ok: false, message: "Cannot navigate history on this browser tab." };
+  }
+  const waitComplete = () =>
+    new Promise((resolve) => {
+      let settled = false;
+      const listener = (id, changeInfo) => {
+        if (id === tab.id && changeInfo.status === "complete") {
+          settled = true;
+          chrome.tabs.onUpdated?.removeListener?.(listener);
+          resolve(true);
+        }
+      };
+      chrome.tabs.onUpdated?.addListener?.(listener);
+      setTimeout(() => {
+        chrome.tabs.onUpdated?.removeListener?.(listener);
+        resolve(settled);
+      }, 4500);
+    });
+
+  try {
+    if (dir === "reload" || dir === "refresh") {
+      await chrome.tabs.reload(tab.id);
+      const completed = await waitComplete();
+      const updated = await chrome.tabs.get(tab.id).catch(() => null);
+      return {
+        ok: Boolean(completed || updated?.status === "complete"),
+        direction: "reload",
+        url: updated?.url || tab.url,
+        title: updated?.title || tab.title,
+        message: `Refreshed page (${updated?.title || updated?.url || "current tab"}).`,
+      };
+    }
+    if (dir === "forward") {
+      if (typeof chrome.tabs.goForward !== "function") {
+        return { ok: false, message: "Browser forward navigation API unavailable." };
+      }
+      await chrome.tabs.goForward(tab.id);
+      await waitComplete();
+      const updated = await chrome.tabs.get(tab.id).catch(() => null);
+      return {
+        ok: true,
+        direction: "forward",
+        url: updated?.url || tab.url,
+        title: updated?.title,
+        message: `Went forward to ${updated?.url || "next page"}.`,
+      };
+    }
+    if (typeof chrome.tabs.goBack !== "function") {
+      return { ok: false, message: "Browser back navigation API unavailable." };
+    }
+    await chrome.tabs.goBack(tab.id);
+    await waitComplete();
+    const updated = await chrome.tabs.get(tab.id).catch(() => null);
+    return {
+      ok: true,
+      direction: "back",
+      url: updated?.url || tab.url,
+      title: updated?.title,
+      message: `Went back to ${updated?.url || "previous page"}.`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      direction: dir,
+      message: String(err?.message || err || `Could not go ${dir} in browser history.`),
+    };
+  }
 }
 
 async function getAllTabs() {

@@ -23,6 +23,7 @@ import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthenticatedBuddiesNewRouteImport } from './routes/_authenticated/buddies.new'
 import { Route as ApiPublicExtensionAskRouteImport } from './routes/api/public/extension/ask'
 import { Route as ApiPublicExtensionBuddiesRouteImport } from './routes/api/public/extension/buddies'
+import { Route as ApiPublicExtensionExtractDocumentRouteImport } from './routes/api/public/extension/extract-document'
 import { Route as ApiPublicExtensionHealthRouteImport } from './routes/api/public/extension/health'
 import { Route as ApiPublicExtensionMemoriesRouteImport } from './routes/api/public/extension/memories'
 import { Route as ApiPublicExtensionModelsRouteImport } from './routes/api/public/extension/models'
@@ -99,6 +100,12 @@ const ApiPublicExtensionBuddiesRoute =
     path: '/api/public/extension/buddies',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiPublicExtensionExtractDocumentRoute =
+  ApiPublicExtensionExtractDocumentRouteImport.update({
+    id: '/api/public/extension/extract-document',
+    path: '/api/public/extension/extract-document',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicExtensionHealthRoute =
   ApiPublicExtensionHealthRouteImport.update({
     id: '/api/public/extension/health',
@@ -143,6 +150,7 @@ export interface FileRoutesByFullPath {
   '/buddies/new': typeof AuthenticatedBuddiesNewRoute
   '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
   '/api/public/extension/buddies': typeof ApiPublicExtensionBuddiesRoute
+  '/api/public/extension/extract-document': typeof ApiPublicExtensionExtractDocumentRoute
   '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
   '/api/public/extension/memories': typeof ApiPublicExtensionMemoriesRoute
   '/api/public/extension/models': typeof ApiPublicExtensionModelsRoute
@@ -163,6 +171,7 @@ export interface FileRoutesByTo {
   '/buddies/new': typeof AuthenticatedBuddiesNewRoute
   '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
   '/api/public/extension/buddies': typeof ApiPublicExtensionBuddiesRoute
+  '/api/public/extension/extract-document': typeof ApiPublicExtensionExtractDocumentRoute
   '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
   '/api/public/extension/memories': typeof ApiPublicExtensionMemoriesRoute
   '/api/public/extension/models': typeof ApiPublicExtensionModelsRoute
@@ -185,6 +194,7 @@ export interface FileRoutesById {
   '/_authenticated/buddies/new': typeof AuthenticatedBuddiesNewRoute
   '/api/public/extension/ask': typeof ApiPublicExtensionAskRoute
   '/api/public/extension/buddies': typeof ApiPublicExtensionBuddiesRoute
+  '/api/public/extension/extract-document': typeof ApiPublicExtensionExtractDocumentRoute
   '/api/public/extension/health': typeof ApiPublicExtensionHealthRoute
   '/api/public/extension/memories': typeof ApiPublicExtensionMemoriesRoute
   '/api/public/extension/models': typeof ApiPublicExtensionModelsRoute
@@ -207,6 +217,7 @@ export interface FileRouteTypes {
     | '/buddies/new'
     | '/api/public/extension/ask'
     | '/api/public/extension/buddies'
+    | '/api/public/extension/extract-document'
     | '/api/public/extension/health'
     | '/api/public/extension/memories'
     | '/api/public/extension/models'
@@ -227,6 +238,7 @@ export interface FileRouteTypes {
     | '/buddies/new'
     | '/api/public/extension/ask'
     | '/api/public/extension/buddies'
+    | '/api/public/extension/extract-document'
     | '/api/public/extension/health'
     | '/api/public/extension/memories'
     | '/api/public/extension/models'
@@ -248,6 +260,7 @@ export interface FileRouteTypes {
     | '/_authenticated/buddies/new'
     | '/api/public/extension/ask'
     | '/api/public/extension/buddies'
+    | '/api/public/extension/extract-document'
     | '/api/public/extension/health'
     | '/api/public/extension/memories'
     | '/api/public/extension/models'
@@ -263,6 +276,7 @@ export interface RootRouteChildren {
   PrivacyRoute: typeof PrivacyRoute
   ApiPublicExtensionAskRoute: typeof ApiPublicExtensionAskRoute
   ApiPublicExtensionBuddiesRoute: typeof ApiPublicExtensionBuddiesRoute
+  ApiPublicExtensionExtractDocumentRoute: typeof ApiPublicExtensionExtractDocumentRoute
   ApiPublicExtensionHealthRoute: typeof ApiPublicExtensionHealthRoute
   ApiPublicExtensionMemoriesRoute: typeof ApiPublicExtensionMemoriesRoute
   ApiPublicExtensionModelsRoute: typeof ApiPublicExtensionModelsRoute
@@ -370,6 +384,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicExtensionBuddiesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/extension/extract-document': {
+      id: '/api/public/extension/extract-document'
+      path: '/api/public/extension/extract-document'
+      fullPath: '/api/public/extension/extract-document'
+      preLoaderRoute: typeof ApiPublicExtensionExtractDocumentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/extension/health': {
       id: '/api/public/extension/health'
       path: '/api/public/extension/health'
@@ -456,6 +477,8 @@ const rootRouteChildren: RootRouteChildren = {
   PrivacyRoute: PrivacyRoute,
   ApiPublicExtensionAskRoute: ApiPublicExtensionAskRoute,
   ApiPublicExtensionBuddiesRoute: ApiPublicExtensionBuddiesRoute,
+  ApiPublicExtensionExtractDocumentRoute:
+    ApiPublicExtensionExtractDocumentRoute,
   ApiPublicExtensionHealthRoute: ApiPublicExtensionHealthRoute,
   ApiPublicExtensionMemoriesRoute: ApiPublicExtensionMemoriesRoute,
   ApiPublicExtensionModelsRoute: ApiPublicExtensionModelsRoute,

@@ -48,7 +48,7 @@ export const Route = createFileRoute("/api/public/extension/health")({
 
         let auth: Awaited<ReturnType<typeof verifyBearer>> = null;
         try {
-          auth = await verifyBearer(request.headers.get("authorization"));
+          auth = await verifyBearer(request?.headers.get("authorization") ?? null);
         } catch (error) {
           console.error("[extension/health] auth", error);
         }

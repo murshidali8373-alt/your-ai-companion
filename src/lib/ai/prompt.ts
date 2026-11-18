@@ -200,7 +200,7 @@ export function parseBuddyReply(raw: string): BuddyReply {
         if (Array.isArray(parsed.steps)) {
           for (const s of parsed.steps) {
             if (!s || typeof s !== "object") continue;
-            const stepObj = s as Record<string, unknown>;
+            const stepObj = s as Partial<Record<keyof PlannedActionStep, unknown>>;
             const stepAction = String(stepObj.action || "click").toLowerCase();
             if (!VALID_STEP_ACTIONS.has(stepAction as PlannedActionStep["action"])) continue;
             cleanSteps.push({

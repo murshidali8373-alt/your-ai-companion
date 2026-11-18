@@ -5,7 +5,7 @@
  */
 
 export const SENSITIVE_KEY_PATTERN =
-  /(password|passwd|pwd|otp|one[\s_-]?time|\bpin\b|cvv|cvc|card[\s_-]?number|credit[\s_-]?card|private[\s_-]?key|secret|api[\s_-]?key|access[\s_-]?token|bearer|seed[\s_-]?phrase|mnemonic|aadhaar|social[\s_-]?security|\bssn\b)/i;
+  /(password|passwd|pwd|otp|one[\s_-]?time|(?<!postal[\s_-])(?<![a-z0-9])pin(?![a-z0-9]|[\s_-]*code\b)|cvv|cvc|card[\s_-]?number|credit[\s_-]?card|private[\s_-]?key|secret|api[\s_-]?key|access[\s_-]?token|bearer|seed[\s_-]?phrase|mnemonic|aadhaar|social[\s_-]?security|\bssn\b)/i;
 
 export const SENSITIVE_VALUE_PATTERN =
   /(-----BEGIN [A-Z ]*PRIVATE KEY-----|\bsk-[A-Za-z0-9]{16,}|\bcvv\b\s*[:=]|\botp\b\s*[:=]|password\s*[:=]|\b\d{4}\s?\d{4}\s?\d{4}\s?\d{4}\b)/i;

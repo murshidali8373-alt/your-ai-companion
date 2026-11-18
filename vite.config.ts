@@ -4,6 +4,7 @@
 //     nitro (build-only using cloudflare as a default target), VITE_* env injection, @ path alias,
 //     React/TanStack dedupe, error logger plugins, and sandbox detection (port/host/strictPort).
 // You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 import type { Plugin } from "vite";
 import { buildExtensionCorsHeadersForOrigin } from "./src/lib/extension-cors.server";
@@ -15,7 +16,7 @@ function extensionCorsDevPlugin(): Plugin {
     configureServer(server) {
       server.middlewares.stack.unshift({
         route: "",
-        handle(req, res, next) {
+        handle(req: IncomingMessage, res: ServerResponse, next: () => void) {
           const url = req.url ?? "";
           if (req.method === "OPTIONS" && url.startsWith("/api/public/extension/")) {
             const originHeader = Array.isArray(req.headers.origin)

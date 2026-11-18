@@ -444,6 +444,28 @@ let currentAnswer = "";
 let lastHighlightSelector = null;
 let lastCallout = { title: null, description: null };
 let pendingAction = null;
+let pendingDisambiguation = null;
+const sessionActionLog = [];
+
+function sanitizeLogSummary(text) {
+  return String(text || "")
+    .replace(/\b(\d{4})[\s-]?(\d{4})[\s-]?(\d{4})[\s-]?(\d{4})\b/g, "XXXX-XXXX-XXXX-$4")
+    .replace(/\b(\d{4})[\s-]?(\d{4})[\s-]?(\d{4})\b/g, "XXXX-XXXX-$3")
+    .replace(/\b([A-Z]{5})([0-9]{4})([A-Z])\b/g, "XXXXXX$2$3");
+}
+
+function recordSessionAction(summary, status = "confirmed") {
+  const icon = status === "failed" ? "✗" : status === "unconfirmed" ? "?" : "✓";
+  sessionActionLog.push({
+    ts: new Date().toLocaleTimeString(),
+    status,
+    icon,
+    summary: sanitizeLogSummary(summary),
+  });
+  if (sessionActionLog.length > 50) {
+    sessionActionLog.shift();
+  }
+}
 let recognition = null;
 let isRecognizing = false;
 let isMuted = false;
@@ -1715,56 +1737,87 @@ async function checkPageForErrors() {
   }
 }
 
-async function executeScroll(direction = "down", amount = 450, targetText = null, announceInChat = false) {
+async function executeScroll(
+  direction = "down",
+  amount = 450,
+  targetText = null,
+  announceInChat = false,
+  targetContainerText = null,
+) {
   const active = getActiveBuddy();
   const isHindi = active.defaultLanguage !== "english";
   setRigEmotion("working", "Scrolling");
-  $("statusText").textContent = targetText
-    ? `Scrolling to "${targetText}"…`
-    : `Scrolling page ${direction}…`;
+  $("statusText").textContent = targetContainerText
+    ? `Scrolling "${targetContainerText}" ${direction}…`
+    : targetText
+      ? `Scrolling to "${targetText}"…`
+      : `Scrolling page ${direction}…`;
 
   const res = await sendRuntimeMessage({
     type: "EXECUTE_ACTION",
     action: "scroll",
     value: direction,
-    options: { direction, amount, targetText },
+    options: {
+      direction,
+      amount,
+      targetText,
+      containerText: targetContainerText || undefined,
+    },
   });
 
   if (res?.ok) {
+    recordSessionAction(
+      res.message ||
+        (targetContainerText
+          ? `Scrolled "${targetContainerText}" ${direction}`
+          : targetText
+            ? `Scrolled to "${targetText}"`
+            : `Scrolled page ${direction}`),
+      "confirmed",
+    );
     $("statusText").textContent = res.message || `Scrolled ${direction}.`;
     if (res.hasMoreBelow !== undefined && $("pageCompletenessBanner")) {
       $("pageCompletenessBanner").hidden = !res.hasMoreBelow;
     }
     if (announceInChat) {
       const msg = isHindi
-        ? targetText
-          ? `📜 "${targetText}" tak scroll kar diya hai.`
-          : `📜 Page ${direction} scroll kar diya hai.${res.movedPx ? ` (${res.movedPx}px)` : ""}`
+        ? targetContainerText
+          ? `📜 "${targetContainerText}" area ko ${direction} scroll kar diya hai.${res.movedPx ? ` (${res.movedPx}px)` : ""}`
+          : targetText
+            ? `📜 "${targetText}" tak scroll kar diya hai.`
+            : `📜 Page ${direction} scroll kar diya hai.${res.movedPx ? ` (${res.movedPx}px)` : ""}`
         : res.message || `Scrolled ${direction}.`;
       appendHistory("buddy", msg);
       speakResponse(msg, "happy");
     }
-  } else if (announceInChat) {
-    const failMsg =
-      res?.message ||
-      (isHindi ? `Page ko "${targetText || direction}" scroll nahi kiya ja saka.` : `Could not scroll ${direction}.`);
-    $("statusText").textContent = failMsg;
-    appendHistory("buddy", `⚠️ ${failMsg}`);
+  } else {
+    recordSessionAction(res?.message || `Scroll ${targetContainerText || targetText || direction} failed`, "failed");
+    if (announceInChat) {
+      const failMsg =
+        res?.message ||
+        (isHindi
+          ? `Page ko "${targetContainerText || targetText || direction}" scroll nahi kiya ja saka.`
+          : `Could not scroll ${direction}.`);
+      $("statusText").textContent = failMsg;
+      appendHistory("buddy", `⚠️ ${failMsg}`);
+    }
   }
   setTimeout(() => setRigEmotion("idle", "Idle"), 1000);
 }
 
-async function executeFind(query, mode = "find") {
+async function executeFind(query, mode = "find", extraOpts = {}) {
   setRigEmotion("thinking", mode === "point" ? "Pointing" : "Finding");
   $("statusText").textContent =
     mode === "point" ? `Pointing to "${query}"…` : `Searching page for "${query}"…`;
   const active = getActiveBuddy();
+  const isHindi = active.defaultLanguage !== "english";
   const res = await sendRuntimeMessage({
     type: "FIND_CONTENT",
     query,
     options: {
       scroll: true,
       highlight: true,
+      targetIndex: typeof extraOpts.targetIndex === "number" ? extraOpts.targetIndex : undefined,
       title: mode === "point" ? `Pointing: ${query}` : `Match: ${query}`,
       buddyVisual: {
         outfit: active.outfit,
@@ -1773,6 +1826,30 @@ async function executeFind(query, mode = "find") {
       },
     },
   });
+  if (res?.ok && res.ambiguous && Array.isArray(res.ambiguousCandidates) && res.ambiguousCandidates.length > 1) {
+    pendingDisambiguation = {
+      action: mode === "point" ? "point" : "find",
+      target: query,
+      candidates: res.ambiguousCandidates.map((c, idx) => ({
+        index: idx + 1,
+        text: c.textSnippet || c.fullText || query,
+        selector: c.selector,
+        tag: c.tag,
+      })),
+    };
+    const listText = pendingDisambiguation.candidates
+      .map((c) => `${c.index}. "${c.text}" (${c.tag})`)
+      .join("\n");
+    const askWhichMsg = isHindi
+      ? `🤔 Is page par "${query}" se match karne wale ${pendingDisambiguation.candidates.length} barabar options mile:\n${listText}\nKripya batayein kaunsa chahiye ("pehla", "doosra", ya number 1-${pendingDisambiguation.candidates.length})?`
+      : `🤔 Found ${pendingDisambiguation.candidates.length} matching elements for "${query}":\n${listText}\nWhich one do you mean? Reply with 1-${pendingDisambiguation.candidates.length} (e.g. "first", "second").`;
+    setRigEmotion("confused", "Which one?");
+    $("statusText").textContent = `Clarification needed for "${query}"`;
+    appendHistory("buddy", askWhichMsg);
+    recordSessionAction(`Asked clarification among ${pendingDisambiguation.candidates.length} "${query}" matches`, "unconfirmed");
+    speakResponse(askWhichMsg, "confused");
+    return;
+  }
   if (res?.ok && res.totalMatches > 0) {
     setRigEmotion("pointing", mode === "point" ? "Pointing!" : "Found!");
     lastHighlightSelector = res.firstSelector;
@@ -1782,7 +1859,7 @@ async function executeFind(query, mode = "find") {
     };
     if ($("highlightBtn")) $("highlightBtn").hidden = false;
     pointArmAtElement();
-    const isHindi = active.defaultLanguage !== "english";
+    recordSessionAction(`Found "${query}" (${res.totalMatches} match)`, "confirmed");
     const msg =
       mode === "point"
         ? isHindi
@@ -1802,7 +1879,7 @@ async function executeFind(query, mode = "find") {
     );
   } else {
     setRigEmotion("idle", "Not found");
-    const isHindi = active.defaultLanguage !== "english";
+    recordSessionAction(`Could not find "${query}" on page`, "failed");
     const msg =
       res && res.ok === false && res.message
         ? res.message
@@ -1939,15 +2016,40 @@ function stripBuddyPrefix(text) {
 function normalizeFillTarget(raw) {
   return String(raw || "")
     .trim()
-    .replace(/^(?:is\s+page\s+(?:par|pe|mein|me)|page\s+(?:par|pe|mein|me)|is\s+form\s+(?:mein|me)|form\s+(?:mein|me)|ye|yeh|is|the|a|an|my|apna|mera)\s+/i, "")
-    .replace(/\s+(?:field|input|box|textbox|textarea|area|dropdown|select|ki|ka|ke|par|pe|ko)$/i, "")
+    .replace(
+      /^(?:is\s+page\s+(?:par|pe|pr|mein|me|main)|page\s+(?:par|pe|pr|mein|me|main)|is\s+form\s+(?:mein|me|main)|form\s+(?:mein|me|main)|ye|yeh|is|the|a|an|my|apna|mera|yha|yaha|yahan)\s+/i,
+      "",
+    )
+    .replace(/\s+(?:field|input|box|textbox|textarea|area|dropdown|select|ki|ka|ke|par|pe|pr|ko)$/i, "")
     .trim()
     .toLowerCase();
 }
 
+function resolveOrdinalChoiceIndex(text) {
+  const clean = String(text || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\b(?:option|number|no\.?|wala|wali|wale|select|click|open|pick|choose|karo|kro|(?:kar|kr)\s*do)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!clean) return null;
+  if (/^(?:1|1st|first|one|ek|pehla|pahla|pehli|pehle)$/.test(clean)) return 1;
+  if (/^(?:2|2nd|second|two|do|doosra|dusra|doosri|dusri)$/.test(clean)) return 2;
+  if (/^(?:3|3rd|third|three|teen|teesra|tisra|teesri|tisri)$/.test(clean)) return 3;
+  if (/^(?:4|4th|fourth|four|chaar|chautha|chauthi)$/.test(clean)) return 4;
+  if (/^(?:5|5th|fifth|five|paanch|panchva|paanchva)$/.test(clean)) return 5;
+  if (/^(?:6|6th|sixth|six|chhatha)$/.test(clean)) return 6;
+  if (/^(?:7|7th|seventh|seven|saatva)$/.test(clean)) return 7;
+  if (/^(?:8|8th|eighth|eight|aathva)$/.test(clean)) return 8;
+  return null;
+}
+
 function extractFillDetails(text) {
   const cleaned = stripBuddyPrefix(text)
-    .replace(/^(?:is\s+form\s+(?:mein|me|main)|form\s+(?:mein|me|main)|is\s+page\s+(?:mein|me|par|pe))\s+/i, "")
+    .replace(
+      /^(?:is\s+form\s+(?:mein|me|main)|form\s+(?:mein|me|main)|is\s+page\s+(?:mein|me|main|par|pe|pr))\s+/i,
+      "",
+    )
     .trim();
   const overwrite = /\b(?:change|update|replace|overwrite|badal|badlo|modify)\b/i.test(cleaned);
   const fields = {};
@@ -1959,20 +2061,26 @@ function extractFillDetails(text) {
     );
   if (
     !hasFillVerbOrAssign &&
-    /\b(?:point|highlight|click|press|tap|dabao|scroll|find|locate|dhoondho|dhundo|kaha|kahan|kidhar|where)\b/i.test(
+    (/\b(?:point|highlight|click|press|tap|dabao|scroll|find|locate|dhoondho|dhundo|kaha|kahan|kidhar|where)\b/i.test(
       cleaned,
-    )
+    ) ||
+      /\bsearch\s*(?:karo|kro|(?:kar|kr)\s*do|karein|for)\b/i.test(cleaned))
   ) {
     return { fields: null, explicitPairs: null, overwrite, explicitUserProvided: false };
   }
 
+  const trailingVerbSuffix =
+    "(?:fill\\s+(?:(?:kar|kr)\\s*do|(?:kar|kr)o|karein)|fill|type\\s+(?:(?:kar|kr)\\s*do|(?:kar|kr)o)|type|likh\\s*(?:do|de|kar|kr)?|likho|daal\\s*(?:do|de)?|daalo|bhar\\s*(?:do|de)?|bharo|enter\\s*(?:(?:kar|kr)\\s*do|(?:kar|kr)o)?|set\\s*(?:(?:kar|kr)\\s*do|(?:kar|kr)o)|(?:kar|kr)\\s*do|(?:kar|kr)o)";
+
   // 1. Explicit key: value or key = value
   const keyValRegex =
-    /\b(name|naam|fullname|legal_name|trade_name|email|phone|mobile|mobilenumber|city|state|country|pincode|pin|zip|gstin|pan|dob|gender|father_name|category|bio|notes?|address|pata|search|describe|description|prompt|message|comment|company|subject|title|username|password)\s*[:=]\s*([^,;\n]+)/gi;
+    /\b(name|naam|fullname|legal_name|trade_name|email|phone|mobile|mobilenumber|city|state|country|pincode|pin|zip|gstin|pan|dob|gender|father_name|category|bio|notes?|address|pata|search|describe|description|prompt|message|msg|comment|company|subject|title|username|password)\s*[:=]\s*([^,;\n]+)/gi;
   let m;
   while ((m = keyValRegex.exec(cleaned)) !== null) {
     const key = m[1].toLowerCase();
-    const val = m[2].replace(/\s+(?:fill|type|likho|likh\s+do|daalo|daal\s+do|bharo|bhar\s+do|karo|kar\s+do).*$/i, "").trim();
+    const val = m[2]
+      .replace(new RegExp(`\\s+${trailingVerbSuffix}.*$`, "i"), "")
+      .trim();
     if (val) {
       fields[key] = val;
       explicitPairs.push({ target: key, value: val, overwrite });
@@ -1982,24 +2090,39 @@ function extractFillDetails(text) {
     return { fields, explicitPairs, overwrite, explicitUserProvided: true };
   }
 
-  // Split multi-field instructions cleanly (e.g. "Pehle naam Murshad fill karo, phir mobile 9876543210 fill karo" or "fill name X and fill email Y")
+  // Split multi-field instructions cleanly (without mutating values inside clauses)
   const clauses = cleaned
-    .split(/\s*(?:,|;|\bphir\b|\bfir\b|\bthen\b|\band then\b|\buske baad\b|\b(?:and|aur)\b(?=\s+(?:fill|type|enter|write|set|likh|likho|daal|daalo|bhar|bharo|naam|name|full\s*name|email|phone|mobile|address|pata|city|state|country|pincode|pin|zip|gstin|gst|pan|dob|date\s*of\s*birth|father\s*name|gender|company|category|bio|message|comment|subject|title|username)\b))\s*/i)
+    .split(
+      /\s*(?:,|;|\bphir\b|\bfir\b|\bthen\b|\band then\b|\buske baad\b|\b(?:and|aur)\b(?=\s+(?:fill|type|enter|write|set|likh|likho|daal|daalo|bhar|bharo|naam|name|full\s*name|email|phone|mobile|address|pata|city|state|country|pincode|pin|zip|gstin|gst|pan|dob|date\s*of\s*birth|father\s*name|gender|company|category|bio|message|msg|comment|subject|title|username)\b))\s*/i,
+    )
     .map((c) => c.replace(/^(?:pehle|first|aur|and|also|next)\s+/i, "").trim())
     .filter(Boolean);
 
   const KNOWN_FIELD_ALIASES =
-    "(?:full\\s*name|legal\\s*name|trade\\s*name|first\\s*name|last\\s*name|father\\s*name|user\\s*name|date\\s*of\\s*birth|dob|gender|category|bio|mobile\\s*(?:number|no)?|phone\\s*(?:number|no)?|pin\\s*code|zip\\s*code|email\\s*(?:id|address)?|aadhaar\\s*(?:number|no)?|aadhar\\s*(?:number|no)?|naam|name|mail|email|phone|mobile|address|pata|city|state|country|pincode|pin|zip|gstin|gst|pan|search|describe|description|prompt|message|comment|comments|note|notes|company|subject|title|username|password)";
+    "(?:full\\s*name|legal\\s*name|trade\\s*name|first\\s*name|last\\s*name|father\\s*name|user\\s*name|date\\s*of\\s*birth|dob|gender|category|bio|mobile\\s*(?:number|no)?|phone\\s*(?:number|no)?|pin\\s*code|zip\\s*code|email\\s*(?:id|address)?|aadhaar\\s*(?:number|no)?|aadhar\\s*(?:number|no)?|naam|name|mail|email|phone|mobile|address|pata|city|state|country|pincode|pin|zip|gstin|gst|pan|search|describe|description|prompt|message|msg|comment|comments|note|notes|company|subject|title|username|password)";
+
+  const patternARegex = new RegExp(
+    `^(.+?)\\s+(?:mein|me|main|per|par|pe|pr|in|into)\\s+["']?(.+?)["']?\\s*(?:${trailingVerbSuffix})?[.!?\\s]*$`,
+    "i",
+  );
+  const patternBRegex =
+    /^(?:fill|type|enter|write|put|set|likho|likh\s+do|daalo|daal\s+do|bharo)\s+["']?(.+?)["']?\s+(?:in|into|inside|mein|me|main|par|pe|pr)\s+(?:the\s+)?(.+?)[.!?\s]*$/i;
+  const patternCRegex1 =
+    /^(?:fill|type|populate)\s+(?:this(?:\s+box|\s+field)?|it)\s+(?:with|as)\s+["']?(.+?)["']?[.!?\s]*$/i;
+  const patternCRegex2 =
+    /^(?:isko|is\s+box\s+ko|is\s+field\s+ko|yha|yaha|yahan)\s+["']?(.+?)["']?\s+(?:se\s+)?(?:fill|bhar|type|likh|daal)\s*(?:(?:kar|kr)\s*do|(?:kar|kr)o|do)?[.!?\s]*$/i;
+  const knownFieldValRe = new RegExp(
+    `\\b(${KNOWN_FIELD_ALIASES})\\s+(?:change\\s+karke\\s+|update\\s+karke\\s+|as\\s+|is\\s+|to\\s+|ko\\s+|ka\\s+|:)?["']?(.+?)["']?(?:\\s+${trailingVerbSuffix})?[.!?\\s]*$`,
+    "i",
+  );
 
   for (const clause of clauses) {
-    // Pattern A: "<field> (box|field|input)? mein/me/main/in/into <value> (fill|type|likh|daal|bhar|enter|set|kar)?"
-    let match = clause.match(
-      /^(.+?)\s+(?:mein|me|main|per|par|in|into)\s+["']?(.+?)["']?\s*(?:fill\s+kar\s*do|fill\s+karo|fill\s+karein|fill|type\s+kar\s*do|type\s+karo|type|likh\s+do|likho|daal\s+do|daalo|bhar\s+do|bharo|enter\s+karo|enter|set\s+karo|kar\s+do|karo)?[.!?\s]*$/i,
-    );
+    // Pattern A: "<field> (box|field|input)? mein/me/main/per/par/pr/in/into <value> (fill|type|likh|daal|bhar|kr do)?"
+    let match = clause.match(patternARegex);
     if (match) {
       const rawTarget = match[1].trim();
       const rawVal = match[2].trim();
-      if (/^(?:is|ye|yeh|isko|is\s*box|this|this\s*box|this\s*field|yahan)$/i.test(rawTarget)) {
+      if (/^(?:is|ye|yeh|isko|is\s*box|this|this\s*box|this\s*field|yahan|yaha|yha)$/i.test(rawTarget)) {
         explicitPairs.push({ target: "__CURRENT__", value: rawVal, overwrite });
         continue;
       }
@@ -2012,13 +2135,11 @@ function extractFillDetails(text) {
     }
 
     // Pattern B: "(fill|type|enter|write|likho|daalo|set) <value> in/into/mein <field>"
-    match = clause.match(
-      /^(?:fill|type|enter|write|put|set|likho|likh\s+do|daalo|daal\s+do|bharo)\s+["']?(.+?)["']?\s+(?:in|into|inside|mein|me|main|par)\s+(?:the\s+)?(.+?)[.!?\s]*$/i,
-    );
+    match = clause.match(patternBRegex);
     if (match) {
       const rawVal = match[1].trim();
       const rawTarget = match[2].trim();
-      if (/^(?:this|this\s*box|this\s*field|it|here|isko|yahan)$/i.test(rawTarget)) {
+      if (/^(?:this|this\s*box|this\s*field|it|here|isko|yahan|yaha|yha)$/i.test(rawTarget)) {
         explicitPairs.push({ target: "__CURRENT__", value: rawVal, overwrite });
         continue;
       }
@@ -2031,22 +2152,13 @@ function extractFillDetails(text) {
     }
 
     // Pattern C: "isko/this <value> se fill/bhar kar do" or "fill this with <value>"
-    match = clause.match(
-      /^(?:fill|type|populate)\s+(?:this(?:\s+box|\s+field)?|it)\s+(?:with|as)\s+["']?(.+?)["']?[.!?\s]*$/i,
-    ) ||
-      clause.match(
-        /^(?:isko|is\s+box\s+ko|is\s+field\s+ko)\s+["']?(.+?)["']?\s+(?:se\s+)?(?:fill|bhar|type|likh|daal)\s*(?:kar\s*do|karo|do)?[.!?\s]*$/i,
-      );
+    match = clause.match(patternCRegex1) || clause.match(patternCRegex2);
     if (match && match[1]) {
       explicitPairs.push({ target: "__CURRENT__", value: match[1].trim(), overwrite });
       continue;
     }
 
-    // Pattern D: "<knownField> (as|is|change karke|update karke|ko)? <value> (fill|type|likh|daal|bhar|kar do)?"
-    const knownFieldValRe = new RegExp(
-      `\\b(${KNOWN_FIELD_ALIASES})\\s+(?:change\\s+karke\\s+|update\\s+karke\\s+|as\\s+|is\\s+|to\\s+|ko\\s+|ka\\s+|:)?["']?(.+?)["']?(?:\\s+(?:fill\\s+kar\\s*do|fill\\s+karo|fill|type\\s+karo|type|likh\\s+do|likho|daal\\s+do|daalo|bhar\\s+do|bharo|kar\\s*do|karo))?[.!?\\s]*$`,
-      "i",
-    );
+    // Pattern D: "<knownField> (as|is|change karke|update karke|ko)? <value> (fill|type|likh|daal|bhar|kar do|kr do)?"
     match = clause.match(knownFieldValRe);
     if (match && match[1] && match[2]) {
       const rawT = match[1].toLowerCase().replace(/\s+/g, "");
@@ -2070,14 +2182,15 @@ function extractFillDetails(text) {
         aadhaar: "aadhaarnumber",
         aadhar: "aadhaarnumber",
         aadharnumber: "aadhaarnumber",
+        msg: "message",
       };
       const mappedKey = keyMap[rawT] || rawT;
       const cleanVal = match[2]
-        .replace(/\s+(?:fill\s+kar\s*do|fill\s+karo|fill|type\s+karo|type|likh\s+do|likho|daal\s+do|daalo|bhar\s+do|bharo|kar\s*do|karo)$/i, "")
+        .replace(new RegExp(`\\s+${trailingVerbSuffix}$`, "i"), "")
         .trim();
       if (
         cleanVal &&
-        !/^(?:karo|kar\s*do|fill|bharo|bhar\s*do|daalo|daal\s*do|field|input|box)$/i.test(cleanVal)
+        !/^(?:karo|kro|(?:kar|kr)\s*do|fill|bharo|bhar\s*do|daalo|daal\s*do|field|input|box)$/i.test(cleanVal)
       ) {
         fields[mappedKey] = cleanVal;
         explicitPairs.push({ target: mappedKey, value: cleanVal, overwrite });
@@ -2142,16 +2255,80 @@ function parseActionIntent(text) {
     return { type: "HELP" };
   }
 
-  // 3. SCROLL (up, down, left, right, top, bottom, or scroll-to-element)
+  // 2b. BROWSER HISTORY (BACK / FORWARD / REFRESH)
+  if (
+    /^(?:go\s+back|back|previous\s+page|pichle\s+page\s+(?:par|pe|pr)\s+(?:jao|wapas\s+jao|chalo)|wapas\s+jao|peeche\s+(?:jao|chalo))[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
+    return { type: "HISTORY_NAV", direction: "back" };
+  }
+  if (
+    /^(?:go\s+forward|forward|next\s+history|aage\s+(?:jao|badho)|agle\s+page\s+(?:par|pe|pr)\s+(?:jao|chalo))[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
+    return { type: "HISTORY_NAV", direction: "forward" };
+  }
+  if (
+    /^(?:refresh|reload|refresh\s+(?:the\s+|this\s+)?page|reload\s+(?:the\s+|this\s+)?page|page\s+(?:ko\s+)?(?:refresh|reload)\s*(?:karo|kro|(?:kar|kr)\s*do)?)[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
+    return { type: "HISTORY_NAV", direction: "reload" };
+  }
+
+  // 2c. PAGE INVENTORY ("Is page par kya kya hai") — works locally without AI key
+  if (
+    /^(?:is\s+page\s+(?:par|pe|pr|mein|me|main)\s+kya\s+(?:kya\s+)?(?:hai|h|he)|page\s+(?:par|pe|pr|mein|me|main)\s+kya\s+(?:kya\s+)?(?:hai|h|he)|what\s+is\s+on\s+(?:this\s+)?page|what'?s\s+on\s+(?:this\s+)?page|list\s+(?:page\s+)?(?:elements|fields|buttons|controls))[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
+    return { type: "PAGE_INVENTORY" };
+  }
+
+  // 2d. SESSION ACTIVITY LOG ("ab tak kya kiya")
+  if (
+    /^(?:ab\s+(?:tak|tk)\s+kya\s+(?:kiya|kya|kra|kara)(?:\s+hai)?|aapne\s+kya\s+kiya|what\s+(?:did\s+you\s+do|have\s+you\s+done)|action\s+log|activity\s+log)[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
+    return { type: "ACTIVITY_LOG" };
+  }
+
+  // 3. SCROLL (named container, scroll-to-element, or directional)
+  const namedContainerScrollMatch =
+    lower.match(
+      /^(.+?)\s+(?:ko|box\s+ko|area\s+ko|section\s+ko|panel\s+ko)\s+(neeche|niche|upar|left|right|baayein|daayein|down|up)\s+scroll\s*(?:karo|kro|(?:kar|kr)\s*do|karein)?[.!?\s]*$/i,
+    ) ||
+    lower.match(
+      /^scroll\s+(?:the\s+)?(.+?)\s+(down|up|left|right)[.!?\s]*$/i,
+    );
+  if (namedContainerScrollMatch) {
+    const rawName = namedContainerScrollMatch[1]
+      .replace(/^(?:is\s+page\s+(?:ke|par|pr)|page\s+(?:ke|par|pr)|the|this)\s+/i, "")
+      .replace(/\s+(?:ko|box|area|section|panel)$/i, "")
+      .trim();
+    const rawDir = namedContainerScrollMatch[2].toLowerCase();
+    if (rawName && !/^(?:page|window|screen|to|thoda|slightly)$/i.test(rawName)) {
+      const dirMap = { neeche: "down", niche: "down", upar: "up", baayein: "left", daayein: "right" };
+      return {
+        type: "SCROLL",
+        direction: dirMap[rawDir] || rawDir,
+        targetContainerText: rawName,
+      };
+    }
+  }
+
   const scrollToTargetMatch =
-    lower.match(/^(.+?)\s+(?:tak|par|pe)\s+scroll\s*(?:karo|kar\s*do|karein)?[.!?\s]*$/i) ||
+    lower.match(/^(.+?)\s+(?:tak|par|pe|pr)\s+scroll\s*(?:karo|kro|(?:kar|kr)\s*do|karein)?[.!?\s]*$/i) ||
     lower.match(/^scroll\s+(?:to|until)\s+(?:the\s+)?(.+?)(?:\s+is\s+visible)?[.!?\s]*$/i);
   if (
     scrollToTargetMatch &&
-    !/^(?:top|bottom|up|down|left|right|last|end|neeche|upar)$/i.test(scrollToTargetMatch[1].trim())
+    !/^(?:top|bottom|up|down|left|right|last|end|neeche|niche|upar)$/i.test(scrollToTargetMatch[1].trim())
   ) {
     const cleanScrollTarget = scrollToTargetMatch[1]
-      .replace(/^(?:is\s+page\s+(?:ke|par)|page\s+(?:ke|par)|the)\s+/i, "")
+      .replace(/^(?:is\s+page\s+(?:ke|par|pr)|page\s+(?:ke|par|pr)|the)\s+/i, "")
       .trim();
     if (cleanScrollTarget) {
       return { type: "SCROLL", direction: "to_element", target: cleanScrollTarget };
@@ -2159,7 +2336,7 @@ function parseActionIntent(text) {
   }
 
   if (
-    /^(?:(?:thoda|thoda\s+aur|aur|please|ab)?\s*)?(?:scroll\s+(?:down|up|left|right|to\s+top|top|to\s+bottom|bottom)|(?:neeche|niche|upar|left|right|baayein|daayein)\s+scroll(?:\s+karo|\s+kar\s*do|\s+karein)?|(?:page\s+ko\s+)?(?:neeche|niche|upar)\s+(?:jao|le\s+jao|karo|kardo)|neeche\s+jao|upar\s+jao|page\s+down|page\s+up|(?:page\s+ke\s+)?(?:last|bottom|end|aakhir)\s+(?:mein|me|par)\s+(?:jao|le\s+jao)|(?:page\s+ke\s+)?(?:top|shuru)\s+(?:mein|me|par)\s+(?:jao|le\s+jao))[.!?\s]*$/i.test(
+    /^(?:(?:thoda|thoda\s+aur|aur|please|ab)?\s*)?(?:scroll\s+(?:down|up|left|right|to\s+top|top|to\s+bottom|bottom)|(?:neeche|niche|upar|left|right|baayein|daayein)\s+scroll(?:\s*(?:karo|kro|(?:kar|kr)\s*do|karein))?|(?:page\s+ko\s+)?(?:neeche|niche|upar)\s+(?:jao|le\s+jao|(?:kar|kr)o|(?:kar|kr)do)|neeche\s+jao|upar\s+jao|page\s+down|page\s+up|(?:page\s+ke\s+)?(?:last|bottom|end|aakhir)\s+(?:mein|me|par|pr)\s+(?:jao|le\s+jao)|(?:page\s+ke\s+)?(?:top|shuru)\s+(?:mein|me|par|pr)\s+(?:jao|le\s+jao))[.!?\s]*$/i.test(
       lower,
     )
   ) {
@@ -2174,7 +2351,7 @@ function parseActionIntent(text) {
 
   // 3b. FORM INSPECT ("Yahan kya fill karna hai?", "What information does this form require?")
   if (
-    /(?:yahan|yaha|is\s+page\s+(?:par|pe)|is\s+form\s+(?:mein|me|main)|form\s+(?:mein|me|main)|here)\s+kya\s+(?:fill|bharna|bhar|daalna|enter|likhna|details|info|information)\s*(?:karna\s+(?:h|hai|he)|h|hai|he|chahiye)?/i.test(
+    /(?:yahan|yaha|yha|is\s+page\s+(?:par|pe|pr)|is\s+form\s+(?:mein|me|main)|form\s+(?:mein|me|main)|here)\s+kya\s+(?:fill|bharna|bhar|daalna|enter|likhna|details|info|information)\s*(?:karna\s+(?:h|hai|he)|h|hai|he|chahiye)?/i.test(
       lower,
     ) ||
     /(?:what\s+(?:information|info|details|fields)\s+(?:does\s+this\s+form\s+require|do\s+i\s+need\s+to\s+fill|should\s+i\s+fill|are\s+required)|which\s+fields\s+(?:are\s+required|to\s+fill)|is\s+form\s+ke\s+liye\s+kya\s+(?:chahiye|details\s+chahiye))/i.test(
@@ -2184,19 +2361,41 @@ function parseActionIntent(text) {
     return { type: "FORM_INSPECT" };
   }
 
+  // 3c. IN-PAGE EXPLICIT SEARCH ("122 search karo is page par", "is page par pension search kr do")
+  if (!/\b(?:fill|type|likh|likho|daal|daalo|bhar|bharo|enter|click|press|dabao|open|kholo)\b/i.test(lower)) {
+    const inPageSearchMatch =
+      lower.match(
+        /^(?:is\s+page\s+(?:par|pe|pr|mein|me|main)|page\s+(?:par|pe|pr|mein|me|main)|yahan|yaha|yha|on\s+this\s+page|in\s+this\s+page)\s+(.+?)\s+(?:search|find|locate|dhoondho|dhundo)\s*(?:karo|kro|(?:kar|kr)\s*do|karein)?[.!?\s]*$/i,
+      ) ||
+      lower.match(
+        /^(.+?)\s+(?:search|find|locate|dhoondho|dhundo)\s*(?:karo|kro|(?:kar|kr)\s*do|karein)?\s+(?:is\s+page\s+(?:par|pe|pr|mein|me|main)|page\s+(?:par|pe|pr|mein|me|main)|yahan|yaha|yha|on\s+this\s+page|in\s+this\s+page|here)[.!?\s]*$/i,
+      ) ||
+      lower.match(
+        /^(?:search|find|locate)\s+["']?(.+?)["']?\s+(?:on\s+this\s+page|in\s+this\s+page|here|is\s+page\s+(?:par|pe|pr|mein|me))[.!?\s]*$/i,
+      );
+    if (inPageSearchMatch?.[1]) {
+      const cleanQ = inPageSearchMatch[1]
+        .replace(/^(?:the|a|an|ye|yeh)\s+/i, "")
+        .trim();
+      if (cleanQ) {
+        return { type: "FIND", target: cleanQ, inPageOnly: true };
+      }
+    }
+  }
+
   // 4. EXTRACT / SEARCH DATA (check early for "search karke ... nikaalo")
   if (
     /(?:search|dhoondh|dhundh)\s+karke.*(?:nikaalo|nikalo|lao|batao|copy)/i.test(lower) ||
     /^(?:extract|copy|nikaalo|nikalo)\s+(?:the\s+)?(?:order(?:\s*id)?s?|table|data|details|info|information)/i.test(
       lower,
     ) ||
-    /(?:order(?:\s*id)?s?|table|data|details|information)\s+(?:nikaalo|nikalo|copy\s+karo|extract\s+karo)/i.test(
+    /(?:order(?:\s*id)?s?|table|data|details|information)\s+(?:nikaalo|nikalo|copy\s+(?:karo|kro|(?:kar|kr)\s*do)|extract\s+(?:karo|kro|(?:kar|kr)\s*do))/i.test(
       lower,
     )
   ) {
     let target = stripped
       .replace(/^(?:search\s+karke|extract|copy|dhoondh\s+ke|dhundh\s+ke)\s+/i, "")
-      .replace(/\s+(?:nikaalo|nikalo|lao|batao|copy\s+karo|extract\s+karo)$/i, "")
+      .replace(/\s+(?:nikaalo|nikalo|lao|batao|copy\s+(?:karo|kro)|extract\s+(?:karo|kro))$/i, "")
       .trim();
     return { type: "EXTRACT", target: target || "data" };
   }
@@ -2205,7 +2404,7 @@ function parseActionIntent(text) {
   const isDocBackedFill =
     /(?:aadhaar|aadhar|pan\s+card|pan\s+details|uploaded\s+(?:id|document|doc|file|pdf|image)|document\s+(?:se|details|info)|id\s+(?:se|details))/i.test(
       lower,
-    ) && /\b(?:fill|type|likh|likho|daal|daalo|bhar|bharo|enter|kar\s*do|karo)\b/i.test(lower);
+    ) && /\b(?:fill|type|likh|likho|daal|daalo|bhar|bharo|enter|(?:kar|kr)\s*do|(?:kar|kr)o)\b/i.test(lower);
 
   const isFieldFromDoc =
     /(?:is\s+field\s+(?:mein|me|main)|isko|this\s+field)\s+.*?(?:aadhaar|aadhar|pan|dob|address|pincode|name)\s*(?:number|no)?\s*(?:daal|daalo|fill|likho|enter)/i.test(
@@ -2229,12 +2428,12 @@ function parseActionIntent(text) {
 
   const fillDetails = extractFillDetails(stripped);
   const isFormTrigger =
-    /(?:form\s+(?:fill|bhar|bharo)|fill\s+(?:the\s+|this\s+|is\s+page\s+ka\s+)?form|is\s+page\s+ka\s+form\s+(?:fill|bhar)|auto\s*fill|fill\s+(?:all\s+)?(?:inputs|fields)|form\s+bhar\s+do|is\s+form\s+ko\s+bharo|\bisko\s+fill\s+kar\s*(?:do|o)?|\bis\s+(?:box|field|input)\s+ko\s+fill\s+kar\s*(?:do|o)?|fill\s+this\s*(?:box|field|input)?)/i.test(
+    /(?:form\s+(?:fill|bhar|bharo)|fill\s+(?:the\s+|this\s+|is\s+page\s+ka\s+)?form|is\s+page\s+ka\s+form\s+(?:fill|bhar)|auto\s*fill|fill\s+(?:all\s+)?(?:inputs|fields)|form\s+bhar\s+do|is\s+form\s+ko\s+bharo|\bisko\s+fill\s+(?:(?:kar|kr)\s*(?:do|o))?|\bis\s+(?:box|field|input)\s+ko\s+fill\s+(?:(?:kar|kr)\s*(?:do|o))?|fill\s+this\s*(?:box|field|input)?)/i.test(
       lower,
     );
   const hasSingleFillVerb =
     /\b(?:fill|type|likh|likho|daal|daalo|bhar|bharo|enter)\b/i.test(lower) &&
-    !/\b(?:click|press|dabao|scroll|point|highlight|find|open|kholo)\b/i.test(lower);
+    !/\b(?:click|press|dabao|scroll|point|highlight|find|kholo)\b/i.test(lower);
 
   if (fillDetails.explicitPairs && hasSingleFillVerb) {
     return {
@@ -2247,10 +2446,6 @@ function parseActionIntent(text) {
   }
 
   // 6. MULTI-STEP TASK
-  // Matches chained commands like:
-  // - "Meesho dashboard open karo, pending orders find karo, first order open karo aur uska order ID batao"
-  // - "Buddy, profile tab open karo, edit button click karo, meri uploaded ID se naam aur address fill karo."
-  // - "Pehle naam fill karo, phir mobile number"
   const hasStepDelimiters =
     /(?:,\s*(?:aur|then|and then|uske baad|phir|fir)\s*|\s+(?:aur|then|and then|uske baad|phir|fir)\s+|;\s*|,\s+)/i.test(
       lower,
@@ -2264,7 +2459,6 @@ function parseActionIntent(text) {
     (hasStepDelimiters && actionVerbs.length >= 2) ||
     (/^pehle\b.+\b(?:phir|fir|uske baad|then)\b/i.test(lower) && actionVerbs.length >= 1)
   ) {
-    // Special case: "Pehle naam fill karo, phir mobile number" (multi-field fill without navigation/clicks)
     if (
       /\b(?:fill|type|likh|daal|bhar)\b/i.test(lower) &&
       !/\b(?:open|click|press|dabao|kholo|scroll|find|point|extract|copy)\b/i.test(lower)
@@ -2278,13 +2472,12 @@ function parseActionIntent(text) {
           explicitUserProvided: fillDetails.explicitUserProvided,
         };
       }
-      // Extract requested field names with no values provided (so Buddy checks uploaded doc or asks cleanly instead of inventing!)
       const segs = lower
         .split(/\s*(?:,|;|\bphir\b|\bfir\b|\bthen\b|\band then\b|\buske baad\b)\s*/i)
         .map((s) =>
           s
             .replace(/^(?:pehle|first|aur|and|next)\s+/i, "")
-            .replace(/\s+(?:fill\s+kar\s*do|fill\s+karo|fill|type\s+karo|bharo|bhar\s+do|likho|daalo)[.!?\s]*$/i, "")
+            .replace(/\s+(?:fill\s+(?:(?:kar|kr)\s*do|(?:kar|kr)o)|fill|type\s+(?:karo|kro)|bharo|bhar\s*do|likho|daalo)[.!?\s]*$/i, "")
             .trim(),
         )
         .filter((s) => s.length > 0);
@@ -2309,8 +2502,8 @@ function parseActionIntent(text) {
 
   // 8. SELECT / DROPDOWN COMMAND
   const selectMatch =
-    lower.match(/^(?:select|choose|chuno)\s+["']?(.+?)["']?\s+(?:in|from|mein|me)\s+(?:the\s+)?(.+?)(?:\s+dropdown|\s+select)?[.!?\s]*$/i) ||
-    lower.match(/^(.+?)\s+(?:dropdown\s+)?(?:mein|me|main)\s+["']?(.+?)["']?\s+(?:select|choose|chuno)\s*(?:karo|kar\s*do)?[.!?\s]*$/i);
+    lower.match(/^(?:select|choose|chuno)\s+["']?(.+?)["']?\s+(?:in|from|mein|me|main)\s+(?:the\s+)?(.+?)(?:\s+dropdown|\s+select)?[.!?\s]*$/i) ||
+    lower.match(/^(.+?)\s+(?:dropdown\s+)?(?:mein|me|main|par|pe|pr)\s+["']?(.+?)["']?\s+(?:select|choose|chuno)\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i);
   if (selectMatch) {
     const isFirstPattern = /^(?:select|choose|chuno)\b/i.test(lower);
     const val = (isFirstPattern ? selectMatch[1] : selectMatch[2]).trim();
@@ -2319,7 +2512,7 @@ function parseActionIntent(text) {
       return { type: "SELECT", targetField, value: val };
     }
   }
-  const simpleSelectMatch = lower.match(/^(.+?)\s+(?:select\s+karo|select\s+kar\s*do|choose\s+karo|chuno)[.!?\s]*$/i);
+  const simpleSelectMatch = lower.match(/^(.+?)\s+(?:select\s+(?:karo|kro|(?:kar|kr)\s*do)|choose\s+(?:karo|kro)|chuno)[.!?\s]*$/i);
   if (simpleSelectMatch && !/\bradio\b/i.test(lower)) {
     const words = simpleSelectMatch[1].trim().split(/\s+/);
     if (words.length >= 2) {
@@ -2354,13 +2547,13 @@ function parseActionIntent(text) {
 
   // 9. CHECKBOX / RADIO COMMAND
   const uncheckMatch =
-    lower.match(/^(.+?)\s+(?:checkbox\s+)?(?:uncheck|untick)\s*(?:karo|kar\s*do)?[.!?\s]*$/i) ||
+    lower.match(/^(.+?)\s+(?:checkbox\s+)?(?:uncheck|untick)\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i) ||
     lower.match(/^(?:uncheck|untick)\s+(?:the\s+)?(.+?)(?:\s+checkbox)?[.!?\s]*$/i);
   if (uncheckMatch) {
     return { type: "CHECK", target: normalizeFillTarget(uncheckMatch[1]), checked: false };
   }
   const checkMatch =
-    lower.match(/^(.+?)\s+(?:checkbox\s+)?(?:check|tick)\s*(?:karo|kar\s*do)?[.!?\s]*$/i) ||
+    lower.match(/^(.+?)\s+(?:checkbox\s+)?(?:check|tick)\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i) ||
     lower.match(/^(?:check|tick)\s+(?:the\s+)?(.+?)(?:\s+checkbox)?[.!?\s]*$/i);
   if (checkMatch) {
     return { type: "CHECK", target: normalizeFillTarget(checkMatch[1]), checked: true };
@@ -2368,7 +2561,7 @@ function parseActionIntent(text) {
 
   // 10. POINT / HIGHLIGHT ACTION (STRICT: NEVER CLICKS)
   const pointTrailingMatch = lower.match(
-    /(.+?)\s+(?:par\s+point\s+karo|pe\s+point\s+karo|ko\s+point\s+karo|par\s+point|pe\s+point|point\s+karo|point\s+kar\s*do|point\s+kijiye|highlight\s+karo|highlight\s+kar\s*do)[.!?\s]*$/i,
+    /(.+?)\s+(?:(?:par|pe|pr|ko)\s+)?(?:point\s*(?:karo|kro|(?:kar|kr)\s*do|kijiye)?|highlight\s*(?:karo|kro|(?:kar|kr)\s*do|kijiye)?)[.!?\s]*$/i,
   );
   const pointLeadingMatch = lower.match(
     /^(?:point\s+(?:to|at|on)|highlight)\s+(?:the\s+)?(.+?)[.!?\s]*$/i,
@@ -2376,7 +2569,8 @@ function parseActionIntent(text) {
   if (pointTrailingMatch || pointLeadingMatch) {
     const raw = pointTrailingMatch ? pointTrailingMatch[1] : pointLeadingMatch[1];
     const clean = raw
-      .replace(/^(?:is\s+page\s+(?:par|pe|se)|page\s+(?:par|pe|se)|ye|yeh|wo|woh|is|this|the|a|an|kripya|please)\s+/i, "")
+      .replace(/^(?:(?:ab|now|phir|fir|then|yha|yaha|yahan)\s+)?(?:is\s+page\s+(?:par|pe|pr|se)|page\s+(?:par|pe|pr|se)|ye|yeh|wo|woh|is|this|the|a|an|kripya|please)\s+/i, "")
+      .replace(/^(?:ab|now|phir|fir)\s+/i, "")
       .replace(/\s+(?:button|tab|link|icon|menu|bar|option|field|input|box)$/i, "")
       .trim();
     if (clean.length > 0) {
@@ -2384,12 +2578,25 @@ function parseActionIntent(text) {
     }
   }
 
-  // 11. CLICK / PRESS / TAP ACTION
+  // 10b. STANDALONE SUBMIT COMMAND ("Submit karo", "Submit kr do", "Form submit karo")
+  if (/^(?:(?:ab|now|phir|fir)\s+)?(?:(?:is|the|this)\s+)?(?:form\s+)?submit\s*(?:karo|kro|(?:kar|kr)\s*do|kijiye|kar\s+dein)?[.!?\s]*$/i.test(lower)) {
+    return { type: "CLICK", target: "submit", isConsequential: true };
+  }
+
+  // 11. CLICK / PRESS / TAP ACTION (supports "ab click karo", "Login pr click kr do", etc.)
+  if (
+    /^(?:(?:ab|now|phir|fir|then|yahan|yaha|yha|here|isko|this|is\s+(?:par|pe|pr)|us\s+(?:par|pe|pr))\s+)?(?:(?:par|pe|pr|ko)\s+)?(?:click\s*(?:karo|kro|(?:kar|kr)\s*do|kijiye|do)?|press\s*(?:karo|kro|(?:kar|kr)\s*do)|tap\s*(?:karo|kro|(?:kar|kr)\s*do)|dabao|daba\s*do)[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
+    return { type: "CLICK", target: "__CURRENT__", isConsequential: false };
+  }
+
   const clickTrailingMatch = lower.match(
-    /(.+?)\s+(?:par\s+click\s+karo|pe\s+click\s+karo|ko\s+click\s+karo|par\s+click|pe\s+click|click\s+karo|click\s+kar\s*do|click\s+kijiye|click\s+do|dabao|daba\s+do|press\s+karo|press\s+kar\s*do|press\s+kijiye|tap\s+karo|khol\s+do|kholo|open\s+karo|select\s+karo)[.!?\s]*$/i,
+    /(.+?)\s+(?:par\s+click\s*(?:karo|kro|(?:kar|kr)\s*do)?|pe\s+click\s*(?:karo|kro|(?:kar|kr)\s*do)?|pr\s+click\s*(?:karo|kro|(?:kar|kr)\s*do)?|ko\s+click\s*(?:karo|kro|(?:kar|kr)\s*do)?|click\s+karo|click\s+kro|click\s+(?:kar|kr)\s*do|click\s+kijiye|click\s+do|dabao|daba\s+do|press\s+(?:karo|kro|(?:kar|kr)\s*do|kijiye)|tap\s+(?:karo|kro|(?:kar|kr)\s*do)|khol\s+do|kholo|open\s+(?:karo|kro|(?:kar|kr)\s*do)|select\s+(?:karo|kro|(?:kar|kr)\s*do))[.!?\s]*$/i,
   );
   const clickLeadingMatch = lower.match(
-    /^(?:click|press|tap|dabao|open|kholo)\s+(?:on\s+)?(?:the\s+)?(.+)[.!?\s]*$/i,
+    /^(?:(?:ab|now|phir|fir)\s+)?(?:click|press|tap|dabao|open|kholo)\s+(?:on\s+)?(?:the\s+)?(.+)[.!?\s]*$/i,
   );
 
   if (
@@ -2401,12 +2608,13 @@ function parseActionIntent(text) {
     !lower.includes("where")
   ) {
     let raw = clickTrailingMatch ? clickTrailingMatch[1] : clickLeadingMatch[1];
-    if (/^(?:yahan|yaha|here|isko|this|is\s+par|is\s+pe|us\s+par)$/i.test(raw.trim())) {
+    raw = raw.replace(/^(?:ab|now|phir|fir|then)\s+/i, "").trim();
+    if (/^(?:yahan|yaha|yha|here|isko|this|is\s+par|is\s+pe|is\s+pr|us\s+par)$/i.test(raw)) {
       return { type: "CLICK", target: "__CURRENT__", isConsequential: false };
     }
     let clean = raw
-      .replace(/^(?:is\s+page\s+(?:par|pe|se)|page\s+(?:par|pe|se)|ye|yeh|wo|woh|the|a|an|kripya|please|jaldi)\s+/i, "")
-      .replace(/\s+(?:button|tab|link|icon|menu|bar|option|radio|checkbox)$/i, "")
+      .replace(/^(?:is\s+page\s+(?:par|pe|pr|se)|page\s+(?:par|pe|pr|se)|ye|yeh|wo|woh|the|a|an|kripya|please|jaldi)\s+/i, "")
+      .replace(/\s+(?:button|btn|tab|link|icon|menu|bar|option|radio|checkbox)$/i, "")
       .trim();
 
     if (clean.length > 0) {
@@ -2420,7 +2628,7 @@ function parseActionIntent(text) {
 
   // 12. FIND / LOCATE ACTION (STRICT: NEVER CLICKS)
   const findTrailingMatch = lower.match(
-    /(.+?)\s+(?:find\s+karo|locate\s+karo|search\s+karo|dhoondho|dhundo|dhoondh\s+ke\s+dikhao|kaha(?:n)?\s+(?:hai|h|he)|kidhar\s+(?:hai|h|he)|kdr\s+(?:hai|h|he)|khaa\s+(?:hai|h|he)|kha\s+(?:hai|h|he|karna\s+h)|dikhao|batao)[.!?\s]*$/i,
+    /(.+?)\s+(?:find\s*(?:karo|kro|(?:kar|kr)\s*do)|locate\s*(?:karo|kro|(?:kar|kr)\s*do)|search\s*(?:karo|kro|(?:kar|kr)\s*do)|dhoondho|dhundo|dhoondh\s+ke\s+dikhao|kaha(?:n)?\s+(?:hai|h|he)|kidhar\s+(?:hai|h|he)|kdr\s+(?:hai|h|he)|khaa\s+(?:hai|h|he)|kha\s+(?:hai|h|he|karna\s+h)|dikhao|batao)[.!?\s]*$/i,
   );
   const findLeadingMatch = lower.match(
     /^(?:find|locate|search(?:\s+for)?|where\s+is|where's|wheres|where\s+are|show\s+me|dhoondho|dhundo)\s+(?:the\s+)?(.+)[.!?\s]*$/i,
@@ -2434,7 +2642,8 @@ function parseActionIntent(text) {
   ) {
     let raw = findTrailingMatch ? findTrailingMatch[1] : findLeadingMatch[1];
     let clean = raw
-      .replace(/^(?:is\s+page\s+(?:par|pe|se)|page\s+(?:par|pe|se)|ye|yeh|wo|woh|the|a|an|kripya|please)\s+/i, "")
+      .replace(/^(?:(?:ab|now|phir|fir|yha|yaha|yahan)\s+)?(?:is\s+page\s+(?:par|pe|pr|se)|page\s+(?:par|pe|pr|se)|ye|yeh|wo|woh|the|a|an|kripya|please)\s+/i, "")
+      .replace(/^(?:ab|now|phir|fir)\s+/i, "")
       .replace(/\s+(?:button|tab|link|icon|menu|bar|option|field|box)$/i, "")
       .trim();
 
@@ -2445,7 +2654,7 @@ function parseActionIntent(text) {
 
   // 13. EXPLAIN PAGE
   if (
-    /^(?:explain\s+(?:this\s+)?page|page\s+explain\s+karo|summarize\s+page|what\s+is\s+this\s+page)[.!?\s]*$/i.test(
+    /^(?:explain\s+(?:this\s+)?page|page\s+explain\s+(?:karo|kro|(?:kar|kr)\s*do)|summarize\s+page|what\s+is\s+this\s+page)[.!?\s]*$/i.test(
       lower,
     )
   ) {
@@ -2504,10 +2713,119 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     return true;
   }
 
+  if (intent.type === "HISTORY_NAV") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    setRigEmotion("working", intent.direction === "reload" ? "Refreshing…" : "Navigating…");
+    $("statusText").textContent = `Executing browser ${intent.direction}…`;
+    const res = await sendRuntimeMessage({ type: "NAVIGATE_HISTORY", direction: intent.direction });
+    if (res?.ok) {
+      setRigEmotion("happy", "Done!");
+      lastHighlightSelector = null;
+      const msg = res.message || `Navigated ${intent.direction}.`;
+      recordSessionAction(msg, "confirmed");
+      $("statusText").textContent = msg;
+      appendHistory("buddy", `🌐 ${msg}`);
+      speakResponse(msg, "happy");
+    } else {
+      setRigEmotion("error", "Failed");
+      const failMsg = res?.message || `Could not go ${intent.direction}.`;
+      recordSessionAction(failMsg, "failed");
+      $("statusText").textContent = failMsg;
+      appendHistory("buddy", `⚠️ ${failMsg}`);
+    }
+    return true;
+  }
+
+  if (intent.type === "PAGE_INVENTORY") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    setRigEmotion("thinking", "Scanning…");
+    $("statusText").textContent = "Inspecting active webpage elements…";
+    const snapRes = await sendRuntimeMessage({ type: "GET_PAGE_SNAPSHOT" });
+    if (!snapRes?.ok || !snapRes.snapshot) {
+      setRigEmotion("error", "Unreadable");
+      const errMsg = "Unable to read the active webpage right now.";
+      recordSessionAction("Page inventory failed", "failed");
+      $("statusText").textContent = errMsg;
+      appendHistory("buddy", `⚠️ ${errMsg}`);
+      return true;
+    }
+    const snap = snapRes.snapshot;
+    const parts = [];
+    parts.push(`📄 **${snap.title || "Current Page"}** (${snap.url || ""})`);
+    if (snap.headings?.length) {
+      parts.push(
+        `• Headings (${snap.headings.length}): ${snap.headings.slice(0, 6).map((h) => h.name || h.text).filter(Boolean).join(" | ")}`,
+      );
+    }
+    if (snap.forms?.length) {
+      const formItems = snap.forms.slice(0, 12).map((f) => {
+        const lbl = f.name || f.placeholder || f.role || f.tag;
+        const optTxt = f.options?.length ? ` [options: ${f.options.slice(0, 5).join(", ")}]` : "";
+        return `${lbl}${optTxt}`;
+      });
+      parts.push(`• Form Fields (${snap.forms.length}): ${formItems.join(", ")}`);
+    }
+    if (snap.controls?.length) {
+      const btnItems = snap.controls
+        .slice(0, 14)
+        .map((c) => c.name || c.text)
+        .filter(Boolean);
+      parts.push(`• Buttons & Links (${snap.controls.length}): ${btnItems.join(", ")}`);
+    }
+    if (snap.scrollableContainers?.length) {
+      const boxNames = snap.scrollableContainers.map(
+        (sc) => sc.ariaLabel || sc.selector || sc.tag,
+      );
+      parts.push(`• Scrollable Areas (${snap.scrollableContainers.length}): ${boxNames.join(", ")}`);
+    }
+    if (snap.alerts?.length) {
+      parts.push(`• Page Alerts (${snap.alerts.length}): ${snap.alerts.slice(0, 3).map((a) => a.errorMessage || a.name).filter(Boolean).join(" | ")}`);
+    }
+    const summaryMsg = parts.join("\n");
+    setRigEmotion("happy", "Ready");
+    recordSessionAction(`Listed page inventory (${snap.forms?.length || 0} fields, ${snap.controls?.length || 0} controls)`, "confirmed");
+    $("statusText").textContent = "Listed visible page structure.";
+    appendHistory("buddy", summaryMsg);
+    speakResponse(
+      isHindi
+        ? `Is page par ${snap.forms?.length || 0} form fields aur ${snap.controls?.length || 0} buttons/links hain.`
+        : `This page has ${snap.forms?.length || 0} form fields and ${snap.controls?.length || 0} controls.`,
+      "happy",
+    );
+    return true;
+  }
+
+  if (intent.type === "ACTIVITY_LOG") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    setRigEmotion("happy", "Log");
+    if (sessionActionLog.length === 0) {
+      const emptyMsg = isHindi
+        ? "📋 Abhi tak is session mein koi browser action execute nahi kiya gaya hai."
+        : "📋 No browser actions have been executed in this session yet.";
+      $("statusText").textContent = "Activity log is empty.";
+      appendHistory("buddy", emptyMsg);
+      return true;
+    }
+    const lines = sessionActionLog.map((e, i) => `${i + 1}. ${e.icon} [${e.ts}] ${e.summary}`);
+    const logMsg = `📋 **Session Activity Log (${sessionActionLog.length}):**\n${lines.join("\n")}`;
+    $("statusText").textContent = `Showing ${sessionActionLog.length} session actions.`;
+    appendHistory("buddy", logMsg);
+    return true;
+  }
+
   if (intent.type === "SCROLL") {
     appendHistory("user", trimmed);
     $("promptInput").value = "";
-    await executeScroll(intent.direction, 450, intent.target || null, true);
+    await executeScroll(
+      intent.direction,
+      450,
+      intent.target || null,
+      true,
+      intent.targetContainerText || null,
+    );
     return true;
   }
 
@@ -2519,15 +2837,18 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     const res = await sendRuntimeMessage({ type: "NAVIGATE_TAB", url: intent.url });
     if (res?.ok) {
       setRigEmotion("happy", "Opened!");
+      lastHighlightSelector = null;
       const msg = isHindi
         ? `🌐 Tab ko ${res.url || intent.url} par navigate kar diya hai.`
         : `🌐 Navigated to ${res.url || intent.url}.`;
+      recordSessionAction(`Navigated to ${res.url || intent.url}`, "confirmed");
       $("statusText").textContent = msg;
       appendHistory("buddy", msg);
       speakResponse(msg, "happy");
     } else {
       setRigEmotion("error", "Blocked");
       const failMsg = res?.message || `Could not open ${intent.url}.`;
+      recordSessionAction(`Navigate to ${intent.url} failed: ${failMsg}`, "failed");
       $("statusText").textContent = failMsg;
       appendHistory("buddy", `⚠️ ${failMsg}`);
     }
@@ -2557,12 +2878,14 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       const msg = isHindi
         ? `✅ Dropdown mein "${intent.value}" select kar diya hai.`
         : `✅ ${res.message}`;
+      recordSessionAction(`Selected "${intent.value}"`, "confirmed");
       $("statusText").textContent = msg;
       appendHistory("buddy", msg);
       speakResponse(msg, "happy");
     } else {
       setRigEmotion("idle", "Notice");
       const failMsg = res?.message || `Could not select "${intent.value}" on this page.`;
+      recordSessionAction(failMsg, "failed");
       $("statusText").textContent = failMsg;
       appendHistory("buddy", `⚠️ ${failMsg}`);
     }
@@ -2584,12 +2907,14 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       const msg = isHindi
         ? `✅ "${intent.target}" ko ${intent.checked ? "check" : "uncheck"} kar diya hai.`
         : `✅ ${res.message}`;
+      recordSessionAction(`${intent.checked ? "Checked" : "Unchecked"} "${intent.target}"`, "confirmed");
       $("statusText").textContent = msg;
       appendHistory("buddy", msg);
       speakResponse(msg, "happy");
     } else {
       setRigEmotion("idle", "Notice");
       const failMsg = res?.message || `Could not find checkbox "${intent.target}".`;
+      recordSessionAction(failMsg, "failed");
       $("statusText").textContent = failMsg;
       appendHistory("buddy", `⚠️ ${failMsg}`);
     }
@@ -2717,28 +3042,65 @@ async function executeNaturalBrowserAction(intent, trimmed) {
 
     const res = await sendRuntimeMessage({
       type: "EXECUTE_ACTION",
-      action: "click",
-      selector: intent.target === "__CURRENT__" ? lastHighlightSelector || undefined : undefined,
+      action: intent.action || "click",
+      selector:
+        intent.selector ||
+        (intent.target === "__CURRENT__" ? lastHighlightSelector || undefined : undefined),
       value: intent.target,
-      options: { fallbackSelector: lastHighlightSelector || undefined },
+      options: {
+        fallbackSelector: lastHighlightSelector || undefined,
+        candidateIndex: intent.candidateIndex,
+      },
     });
 
+    if (res?.ambiguous && Array.isArray(res.candidates) && res.candidates.length > 1) {
+      pendingDisambiguation = {
+        action: res.action || intent.action || "click",
+        target: intent.target,
+        candidates: res.candidates,
+      };
+      const listText = res.candidates
+        .map((c) => `${c.index}. "${c.text}"${c.context ? ` — [${c.context}]` : ` (${c.tag})`}`)
+        .join("\n");
+      const askMsg = isHindi
+        ? `🤔 Page par "${intent.target}" ke ${res.candidates.length} alag-alag controls mile:\n${listText}\nKaunsa click karna hai? ("pehla", "doosra", ya number 1-${res.candidates.length} likhein)`
+        : `🤔 Found ${res.candidates.length} controls matching "${intent.target}":\n${listText}\nWhich one should I click? Reply with 1-${res.candidates.length} (e.g. "first", "second").`;
+      setRigEmotion("confused", "Which one?");
+      $("statusText").textContent = `Clarification needed for "${intent.target}"`;
+      appendHistory("buddy", askMsg);
+      recordSessionAction(`Asked user to pick among ${res.candidates.length} "${intent.target}" controls`, "unconfirmed");
+      speakResponse(askMsg, "confused");
+      return true;
+    }
+
+    if (res?.stale) {
+      lastHighlightSelector = null;
+    }
+
     if (res?.ok) {
-      setRigEmotion("success", "Clicked!");
+      const hasErrFb = Boolean(res.hasErrorFeedback);
+      setRigEmotion(hasErrFb ? "concerned" : "success", hasErrFb ? "Notice" : "Clicked!");
       const clickedName = res.text || intent.target;
       let outcome = isHindi
         ? `Maine page par "${clickedName}" click kar diya hai!`
         : `Successfully clicked "${clickedName}"!`;
       if (res.stateChange === "navigated") {
+        lastHighlightSelector = null;
         outcome += isHindi ? ` Page naye URL par navigate ho gaya.` : ` Page navigated.`;
       } else if (res.stateChange === "modal_opened") {
         outcome += isHindi ? ` Dialog/popup open ho gaya.` : ` Modal dialog opened.`;
       } else if (res.stateChange === "toggled" || res.stateChange === "selected") {
         outcome += ` (${res.stateChange})`;
       }
+      if (Array.isArray(res.pageFeedback) && res.pageFeedback.length > 0) {
+        outcome += isHindi
+          ? `\nPage ka jawab: "${res.pageFeedback[0]}"`
+          : `\nPage reported: "${res.pageFeedback[0]}"`;
+      }
+      recordSessionAction(outcome, hasErrFb ? "unconfirmed" : "confirmed");
       $("statusText").textContent = outcome;
-      appendHistory("buddy", `✅ ${outcome}`);
-      speakResponse(outcome, "success");
+      appendHistory("buddy", `${hasErrFb ? "⚠️" : "✅"} ${outcome}`);
+      speakResponse(outcome, hasErrFb ? "concerned" : "success");
     } else {
       setRigEmotion("error", "Not found");
       const failMsg =
@@ -2746,6 +3108,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
         (isHindi
           ? `Active page par "${intent.target}" button nahi mila. Kripya check karein ya page scroll karein.`
           : `Could not find button "${intent.target}" on this page.`);
+      recordSessionAction(failMsg, "failed");
       $("statusText").textContent = failMsg;
       appendHistory("buddy", `⚠️ ${failMsg}`);
     }
@@ -3007,6 +3370,55 @@ async function sendQuery(question, intent) {
     }
   }
 
+  // 0b. Ordinal disambiguation follow-up ("pehla", "doosra", "teesra", "2", "2nd option")
+  if (pendingDisambiguation && Array.isArray(pendingDisambiguation.candidates)) {
+    const pickedIdx = resolveOrdinalChoiceIndex(trimmed);
+    const active = getActiveBuddy();
+    const isHindi = active.defaultLanguage !== "english";
+    if (pickedIdx !== null) {
+      if (pickedIdx >= 1 && pickedIdx <= pendingDisambiguation.candidates.length) {
+        const chosen = pendingDisambiguation.candidates[pickedIdx - 1];
+        const disAction = pendingDisambiguation.action;
+        const disTarget = pendingDisambiguation.target;
+        pendingDisambiguation = null;
+
+        if (disAction === "point" || disAction === "find") {
+          appendHistory("user", trimmed);
+          $("promptInput").value = "";
+          await executeFind(disTarget, disAction, { targetIndex: pickedIdx - 1 });
+          return;
+        }
+
+        const isConseq =
+          /purchase|buy|pay|delete|remove account|confirm payment|place\s*order|checkout|confirm\s*order|\bsubmit\b|file\s*return/i.test(
+            `${chosen.text || ""} ${disTarget || ""}`,
+          );
+        await executeNaturalBrowserAction(
+          {
+            type: "CLICK",
+            action: disAction === "open_link" ? "open_link" : "click",
+            target: chosen.text || disTarget,
+            selector: chosen.selector,
+            candidateIndex: pickedIdx,
+            isConsequential: isConseq,
+          },
+          trimmed,
+        );
+        return;
+      } else {
+        appendHistory("user", trimmed);
+        $("promptInput").value = "";
+        const rangeMsg = isHindi
+          ? `⚠️ Sirf ${pendingDisambiguation.candidates.length} options hain (1 se ${pendingDisambiguation.candidates.length} ke beech batayein).`
+          : `⚠️ Please choose a number between 1 and ${pendingDisambiguation.candidates.length}.`;
+        appendHistory("buddy", rangeMsg);
+        return;
+      }
+    }
+    // New unrelated command clears stale disambiguation
+    pendingDisambiguation = null;
+  }
+
   // 1. Unified Natural Language Browser Action Intent Parser & Dispatcher
   const parsed = parseActionIntent(trimmed);
   const handled = await executeNaturalBrowserAction(parsed, trimmed);
@@ -3170,9 +3582,25 @@ async function sendQuery(question, intent) {
           selector: res.targetSelector || undefined,
           value: res.targetText || undefined,
         });
-        if (clickRes?.ok) {
-          setRigEmotion("happy", execActionName === "open_link" ? "Opened!" : "Clicked!");
-          const clickedMsg =
+        if (clickRes?.ambiguous && Array.isArray(clickRes.candidates) && clickRes.candidates.length > 1) {
+          pendingDisambiguation = {
+            action: execActionName,
+            target: actionLabel,
+            candidates: clickRes.candidates,
+          };
+          const listText = clickRes.candidates
+            .map((c) => `${c.index}. "${c.text}"${c.context ? ` — [${c.context}]` : ` (${c.tag})`}`)
+            .join("\n");
+          const askMsg = isHindi
+            ? `🤔 "${actionLabel}" ke ${clickRes.candidates.length} controls mile:\n${listText}\nKaunsa chahiye?`
+            : `🤔 Found ${clickRes.candidates.length} controls matching "${actionLabel}":\n${listText}\nWhich one should I pick?`;
+          setRigEmotion("confused", "Which one?");
+          $("statusText").textContent = askMsg;
+          appendHistory("buddy", askMsg);
+        } else if (clickRes?.ok) {
+          const hasErrFb = Boolean(clickRes.hasErrorFeedback);
+          setRigEmotion(hasErrFb ? "concerned" : "happy", hasErrFb ? "Notice" : execActionName === "open_link" ? "Opened!" : "Clicked!");
+          let clickedMsg =
             execActionName === "open_link"
               ? isHindi
                 ? `Maine link "${clickRes.text || res.targetText}" khol diya hai${clickRes.newUrl ? ` (${clickRes.newUrl})` : ""}!`
@@ -3180,11 +3608,17 @@ async function sendQuery(question, intent) {
               : isHindi
                 ? `Maine page par "${clickRes.text || res.targetText}" click kar diya hai!`
                 : `Clicked "${clickRes.text || res.targetText}"!`;
+          if (Array.isArray(clickRes.pageFeedback) && clickRes.pageFeedback.length > 0) {
+            clickedMsg += `\nPage reported: "${clickRes.pageFeedback[0]}"`;
+          }
+          recordSessionAction(clickedMsg, hasErrFb ? "unconfirmed" : "confirmed");
           $("statusText").textContent = clickedMsg;
-          appendHistory("buddy", `✅ ${clickedMsg}`);
+          appendHistory("buddy", `${hasErrFb ? "⚠️" : "✅"} ${clickedMsg}`);
         } else if (clickRes && !clickRes.ok) {
+          if (clickRes.stale) lastHighlightSelector = null;
           setRigEmotion("confused", "Blocked");
           const failMsg = clickRes.message || `Could not ${execActionName} "${res.targetText || "target"}".`;
+          recordSessionAction(failMsg, "failed");
           $("statusText").textContent = failMsg;
           appendHistory("buddy", `⚠️ ${failMsg}`);
         }
@@ -3314,7 +3748,7 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
   $("statusText").textContent = "Inspecting & filling form fields on active page…";
 
   const SENSITIVE_FIELD_RE =
-    /pass|otp|\bpin\b|cvv|cvc|secret|token|card|aadhaar|aadhar|\bpan\b|ifsc|account/i;
+    /pass|otp|(?<!postal[\s_-])(?<![a-z0-9])pin(?![a-z0-9]|[\s_-]*code\b)|cvv|cvc|secret|token|card|aadhaar|aadhar|\bpan\b|ifsc|account/i;
   const hasExplicit = Boolean(extraOpts?.explicitPairs?.length) || Boolean(sampleData);
 
   const candidateKeys = [
@@ -3457,17 +3891,40 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
             preserved.length > 0
               ? ` (${preserved.length} pehle se bhare fields ko safe rakha gaya hai)`
               : ""
-          }`
+          }${skipped.length > 0 ? `\n🛡️ Skipped: ${skipped.map((s) => `${s.key} (${s.reason})`).join(", ")}` : ""}${errors.length > 0 ? `\n⚠️ Failed: ${errors.map((e) => `${e.key} (${e.error})`).join(", ")}` : ""}`
         : `📝 Filled & verified ${filled.length} field(s): ${filled.map(formatFieldDisplay).join(", ")}.${
             preserved.length > 0 ? ` Preserved ${preserved.length} existing field(s).` : ""
-          }`;
+          }${skipped.length > 0 ? `\n🛡️ Skipped: ${skipped.map((s) => `${s.key} (${s.reason})`).join(", ")}` : ""}${errors.length > 0 ? `\n⚠️ Failed: ${errors.map((e) => `${e.key} (${e.error})`).join(", ")}` : ""}`;
+      recordSessionAction(
+        `Filled & verified ${filled.length} field(s): ${filled.map(formatFieldDisplay).join(", ")}`,
+        errors.length > 0 ? "unconfirmed" : "confirmed",
+      );
       appendHistory("buddy", summaryMsg);
       speakResponse(summaryMsg, targetEmotion);
+    } else if (errors.length > 0) {
+      setRigEmotion("error", "Rejected");
+      const errDetail = errors.map((e) => `${e.key}: ${e.error}`).join("; ");
+      const rejectMsg = isHindi
+        ? `⚠️ Page ne value accept nahi ki ya clear kar di: ${errDetail}`
+        : `⚠️ Field rejected or cleared value: ${errDetail}`;
+      recordSessionAction(rejectMsg, "failed");
+      $("statusText").textContent = rejectMsg;
+      appendHistory("buddy", rejectMsg);
+    } else if (skipped.length > 0 && hasExplicit) {
+      setRigEmotion("concerned", "Skipped");
+      const skipDetail = skipped.map((s) => `${s.key === "__CURRENT__" ? "target box" : s.key}: ${s.reason}`).join("; ");
+      const skipMsg = isHindi
+        ? `🛡️ Yeh field(s) skip kiye gaye: ${skipDetail}`
+        : `🛡️ Refused / skipped: ${skipDetail}`;
+      recordSessionAction(skipMsg, "failed");
+      $("statusText").textContent = skipMsg;
+      appendHistory("buddy", skipMsg);
     } else if (preserved.length > 0) {
       setRigEmotion("idle", "Preserved");
       const presMsg = isHindi
         ? `🔒 Field "${preserved.map((p) => p.field).join(", ")}" mein pehle se data bhara hua hai. Agar aap badalna chahte hain to "change karke <nayi value> kar do" bolein.`
         : `🔒 Existing data in "${preserved.map((p) => p.field).join(", ")}" was preserved. Say "change <field> to <value>" if you want to overwrite it.`;
+      recordSessionAction(`Preserved existing values in ${preserved.map((p) => p.field).join(", ")}`, "confirmed");
       $("statusText").textContent = "Existing field values preserved.";
       appendHistory("buddy", presMsg);
     } else {
@@ -3475,6 +3932,7 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
       const notFoundMsg = isHindi
         ? `⚠️ Is page par matching editable input field nahi mila. Kripya pehle field par point karein ya page scroll karein.`
         : `⚠️ Could not find matching editable input field on this page.`;
+      recordSessionAction(notFoundMsg, "failed");
       $("statusText").textContent = notFoundMsg;
       appendHistory("buddy", notFoundMsg);
     }
@@ -4619,13 +5077,23 @@ if ($("confirmApproveBtn")) {
       });
 
       if (res?.ok) {
-        setRigEmotion("happy", "Done");
-        $("statusText").textContent = res.message || "Action finished successfully.";
-        appendHistory("buddy", `✅ Done: ${res.message || "Action completed."}`);
+        const hasErrFb = Boolean(res.hasErrorFeedback);
+        setRigEmotion(hasErrFb ? "concerned" : "happy", hasErrFb ? "Notice" : "Done");
+        let doneText = res.message || "Action finished successfully.";
+        if (Array.isArray(res.pageFeedback) && res.pageFeedback.length > 0 && !doneText.includes(res.pageFeedback[0])) {
+          doneText += ` Page reported: "${res.pageFeedback[0]}"`;
+        }
+        recordSessionAction(doneText, hasErrFb ? "unconfirmed" : "confirmed");
+        $("statusText").textContent = doneText;
+        appendHistory("buddy", hasErrFb ? `⚠️ ${doneText}` : `✅ Done: ${doneText}`);
+        speakResponse(doneText, hasErrFb ? "concerned" : "happy");
       } else {
+        if (res?.stale) lastHighlightSelector = null;
         setRigEmotion("error", "Notice");
-        $("statusText").textContent = res?.message || "Action failed or was blocked.";
-        appendHistory("buddy", `⚠️ ${res?.message || "Action could not be completed on this page."}`);
+        const failText = res?.message || "Action failed or was blocked.";
+        recordSessionAction(failText, "failed");
+        $("statusText").textContent = failText;
+        appendHistory("buddy", `⚠️ ${failText}`);
       }
     } catch {
       setRigEmotion("idle", "Idle");
@@ -4791,6 +5259,7 @@ if ($("clearChatBtn")) {
     conversationBuffer.length = 0;
     chrome.storage.local.remove("conversationBuffer").catch(() => {});
     pendingAction = null;
+    pendingDisambiguation = null;
     if ($("confirmCard")) $("confirmCard").hidden = true;
     if ($("consequentialApprovalCard")) $("consequentialApprovalCard").hidden = true;
     if ($("taskPlanCard")) $("taskPlanCard").hidden = true;

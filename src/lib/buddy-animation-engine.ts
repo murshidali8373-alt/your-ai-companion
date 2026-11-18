@@ -59,7 +59,7 @@ const EXPLICIT_PRIVACY_RE =
   /\b(?:privacy(?:\s+mode)?|look\s+away|turn\s+away|close\s+(?:your\s+)?eyes|hide\s+(?:your\s+)?eyes|don'?t\s+look|do\s+not\s+look|mat\s+dekho|nazar\s+hatao|aankh(?:ein|en)?\s+band|muh\s+ghuma)\b/i;
 
 const SENSITIVE_FIELD_RE =
-  /\b(?:password|passcode|passphrase|pin\s*(?:code|number)?|otp|one[\s-]*time|cvv|cvc|security\s*code|card\s*(?:number|no|num)|credit\s*card|debit\s*card|atm\s*pin|aadhaar|aadhar|pan\s*(?:card|number|no)|bank\s*account|account\s*number|ifsc|routing\s*number|secret\s*key|api\s*key|private\s*key|ssn|social\s*security)\b/i;
+  /\b(?:password|passcode|passphrase|(?<!postal[\s_-])(?<![a-z0-9])pin(?:\s*number)?(?![a-z0-9]|[\s_-]*code\b)|otp|one[\s-]*time|cvv|cvc|security\s*code|card\s*(?:number|no|num)|credit\s*card|debit\s*card|atm\s*pin|aadhaar|aadhar|pan\s*(?:card|number|no)|bank\s*account|account\s*number|ifsc|routing\s*number|secret\s*key|api\s*key|private\s*key|ssn|social\s*security)\b/i;
 
 const POSITIVE_NEWS_RE =
   /\b(?:awesome|great\s+job|well\s+done|thank\s*you|thanks|shukriya|dhanyavaad|bahut\s+badiya|mast|shabash|yay|congrats|approved|order\s+placed|payment\s+received)\b/i;

@@ -1,0 +1,6 @@
+{
+  "name": "AI Buddy",
+  "description": "AI Buddy understands the page you are on, explains it in your language, and points at exactly what to do next.",
+  "requestFramePermissions": [],
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
