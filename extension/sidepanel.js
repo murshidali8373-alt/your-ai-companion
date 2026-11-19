@@ -3842,7 +3842,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
         const f = emptyFormFields[0];
         nextField = {
           index: 1,
-          label: f.label || f.placeholder || f.name || f.id || "next field",
+          label: f.name || f.label || f.placeholder || f.id || "next field",
           selector: f.selector,
           name: f.name || f.id || "",
           type: f.type || f.tag || "text",
@@ -3853,7 +3853,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
           lastFilled: activeFormSession?.lastFilled || null,
           remainingFields: emptyFormFields.map((ef, i) => ({
             index: i + 1,
-            label: ef.label || ef.placeholder || ef.name || ef.id || `field ${i + 1}`,
+            label: ef.name || ef.label || ef.placeholder || ef.id || `field ${i + 1}`,
             selector: ef.selector,
             name: ef.name || ef.id || "",
             type: ef.type || ef.tag || "text",
@@ -4708,7 +4708,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
         .filter((f) => f.visible !== false && !f.disabled && !String(f.value || "").trim())
         .map((f, idx) => ({
           index: idx + 1,
-          label: f.label || f.placeholder || f.name || f.id || `Field ${idx + 1}`,
+          label: f.name || f.label || f.placeholder || f.id || `Field ${idx + 1}`,
           selector: f.selector,
           name: f.name || f.id || "",
           type: f.type || f.tag || "text",
@@ -4820,6 +4820,7 @@ async function sendQuery(question, intent, options = {}) {
     pendingDisambiguation,
     hasPendingAction: Boolean(pendingAction),
     session: sessionTaskContext,
+    activeFormSession,
   };
 
   // 0. Automatic Privacy Gesture Trigger (never logs sensitive data, turns head+torso away & closes eyes)
