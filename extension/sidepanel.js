@@ -449,10 +449,14 @@ const DEFAULT_PROVIDER_META = {
 let busy = false;
 let currentAnswer = "";
 let lastHighlightSelector = null;
+let lastHighlightFrameId = 0;
+let lastPointCoords = null;
 let lastCallout = { title: null, description: null };
 let pendingAction = null;
 let pendingDisambiguation = null;
 let pendingSlot = null;
+let activeFormSession = null;
+let pendingAutoListenAfterSpeech = false;
 const sessionTaskContext = {
   lastActionType: null,
   lastTargetField: null,
@@ -463,6 +467,57 @@ const sessionTaskContext = {
   lastActionProposal: null,
 };
 const sessionActionLog = [];
+
+function maybeAutoActivateMic({ reason = "incomplete_command", deferUntilSpeechEnd = false } = {}) {
+  const allowedReasons = new Set([
+    "incomplete_form_fill",
+    "incomplete_search",
+    "missing_value",
+    "next_form_field",
+  ]);
+  if (!allowedReasons.has(reason)) return false;
+
+  try {
+    window.__buddyAutoMicLog = window.__buddyAutoMicLog || [];
+    window.__buddyAutoMicLog.push({ reason, deferUntilSpeechEnd, at: Date.now() });
+  } catch {}
+
+  if (isLiveVoiceMode || isRecognizing || busy || pendingAction) return false;
+  if (!recognition) {
+    // Keep text input focused & ready without error spam when browser has no SpeechRecognition
+    return false;
+  }
+
+  if (deferUntilSpeechEnd && isBuddySpeaking) {
+    pendingAutoListenAfterSpeech = true;
+    return true;
+  }
+
+  pendingAutoListenAfterSpeech = false;
+  const attemptStart = () => {
+    if (isLiveVoiceMode || isRecognizing || busy || pendingAction) return;
+    if (!pendingSlot && !activeFormSession?.awaitingField) return;
+    startVoiceListening();
+  };
+
+  if (navigator.permissions?.query) {
+    navigator.permissions
+      .query({ name: "microphone" })
+      .then((perm) => {
+        if (perm?.state === "denied") {
+          const denyMsg =
+            "Microphone permission is blocked. Type your reply below or allow mic access in Chrome.";
+          updateVoiceUiState("error", denyMsg);
+          return;
+        }
+        attemptStart();
+      })
+      .catch(() => attemptStart());
+    return true;
+  }
+  attemptStart();
+  return true;
+}
 
 function recordTaskContext({ actionType, targetField, targetSelector, options, items, proposal } = {}) {
   if (actionType) sessionTaskContext.lastActionType = actionType;
@@ -572,8 +627,14 @@ const BuddyStateManager = {
   },
   handleTabSwitch(tabId) {
     lastHighlightSelector = null;
+    lastHighlightFrameId = 0;
+    lastPointCoords = null;
     lastCallout = { title: null, description: null };
     pendingAction = null;
+    pendingDisambiguation = null;
+    pendingSlot = null;
+    activeFormSession = null;
+    pendingAutoListenAfterSpeech = false;
     if ($("highlightBtn")) $("highlightBtn").hidden = true;
     if ($("confirmCard")) $("confirmCard").hidden = true;
     if ($("pageCompletenessBanner")) $("pageCompletenessBanner").hidden = true;
@@ -639,14 +700,16 @@ function initBuddy3DStage() {
   }
 }
 
-function setRigEmotion(emotion, label) {
+function setRigEmotion(emotion, label, extra = {}) {
   const rt = window.Buddy3DRuntime;
   const canonical = rt?.normalizeCompanionState
     ? rt.normalizeCompanionState(emotion)
     : String(emotion || "idle").toLowerCase();
 
   const now = Date.now();
+  const hasExplicitPointCoords = canonical === "pointing" && typeof extra?.targetYRatio === "number";
   if (
+    !hasExplicitPointCoords &&
     rt?.shouldTransitionCompanionState &&
     currentEmotion === canonical &&
     now - lastEmotionChangedAt < 120
@@ -721,13 +784,27 @@ function setRigEmotion(emotion, label) {
       if (armLeft) armLeft.setAttribute("transform", "translate(2, -3)");
       if (armRight) armRight.removeAttribute("transform");
       break;
-    case "pointing":
+    case "pointing": {
       browLeft.setAttribute("transform", "translate(40, 36) rotate(-5)");
       browRight.setAttribute("transform", "translate(61, 36) rotate(5)");
       setMouthShape("smile");
-      if (armLeft) armLeft.setAttribute("transform", "rotate(52 34 62) scale(1.15 1)");
+      const yRatio =
+        typeof extra?.targetYRatio === "number"
+          ? Math.max(0, Math.min(1, extra.targetYRatio))
+          : 0.5;
+      const pointAngle = Math.round(52 + (0.5 - yRatio) * 44);
+      if (armLeft) armLeft.setAttribute("transform", `rotate(${pointAngle} 34 62) scale(1.15 1)`);
       if (armRight) armRight.removeAttribute("transform");
+      if (buddy3dViewer?.lookAt) {
+        const lookX =
+          typeof extra?.targetXRatio === "number"
+            ? Math.max(-1, Math.min(1, extra.targetXRatio * 2 - 1))
+            : -0.75;
+        const lookY = Math.max(-1, Math.min(1, yRatio * 2 - 1));
+        buddy3dViewer.lookAt(lookX, lookY);
+      }
       break;
+    }
     case "confused":
       browLeft.setAttribute("transform", "translate(40, 36) rotate(-12)");
       browRight.setAttribute("transform", "translate(61, 36) rotate(10)");
@@ -1130,10 +1207,12 @@ window.__buddyVoiceController = {
     isLiveVoiceMode,
     isRecognizing,
     isBuddySpeaking,
+    pendingAutoListenAfterSpeech,
   }),
   toggleLiveVoice,
   startVoiceListening,
   interruptBuddySpeech,
+  maybeAutoActivateMic,
 };
 
 // Speech recognition setup
@@ -1510,7 +1589,14 @@ function cleanTextForSpeech(text) {
 let speechWatchdogTimer = null;
 let speechKeepAliveInterval = null;
 
-function speakResponse(text, finishEmotion = "idle") {
+function speakResponse(text, finishEmotion = "idle", speechOpts = {}) {
+  const autoListenReason =
+    typeof speechOpts?.autoListenReason === "string"
+      ? speechOpts.autoListenReason
+      : speechOpts?.autoListenOnFinish
+        ? "missing_value"
+        : null;
+
   const clearSpeechTimers = () => {
     if (speechWatchdogTimer) {
       clearTimeout(speechWatchdogTimer);
@@ -1542,6 +1628,10 @@ function speakResponse(text, finishEmotion = "idle") {
           startVoiceListening();
         }
       }, 360);
+    } else if (autoListenReason && !busy && !pendingAction) {
+      setTimeout(() => {
+        maybeAutoActivateMic({ reason: autoListenReason, deferUntilSpeechEnd: false });
+      }, 120);
     }
     return;
   }
@@ -1565,10 +1655,21 @@ function speakResponse(text, finishEmotion = "idle") {
           startVoiceListening();
         }
       }, 360);
+    } else if ((autoListenReason || pendingAutoListenAfterSpeech) && !busy && !pendingAction) {
+      const reason = autoListenReason || "missing_value";
+      pendingAutoListenAfterSpeech = false;
+      updateVoiceUiState("idle");
+      setTimeout(() => {
+        maybeAutoActivateMic({ reason, deferUntilSpeechEnd: false });
+      }, 180);
     } else if (!isRecognizing) {
       updateVoiceUiState("idle");
     }
   };
+
+  if (autoListenReason) {
+    pendingAutoListenAfterSpeech = true;
+  }
 
   try {
     window.speechSynthesis.cancel();
@@ -1638,19 +1739,22 @@ let pointTimerId = null;
  * Articulates the connected arm from Buddy's shoulder,
  * and commands the active page to extend the connected arm toward the element.
  */
-async function pointArmAtElement() {
-  setRigEmotion("pointing", "Pointing");
+async function pointArmAtElement(coords = null) {
+  const initialCoords =
+    coords && typeof coords.targetYRatio === "number" ? coords : lastPointCoords || {};
+  setRigEmotion("pointing", "Pointing", initialCoords);
   const active = getActiveBuddy();
   if (pointTimerId) {
     clearTimeout(pointTimerId);
     pointTimerId = null;
   }
 
-  if (lastHighlightSelector) {
+  if (lastHighlightSelector && !coords?.skipHighlightRpc) {
     try {
       const res = await sendRuntimeMessage({
         type: "HIGHLIGHT",
         selector: lastHighlightSelector,
+        frameId: lastHighlightFrameId || 0,
         title: lastCallout.title,
         description: lastCallout.description,
         buddyVisual: {
@@ -1665,6 +1769,13 @@ async function pointArmAtElement() {
         setRigEmotion("idle", "Idle");
         return;
       }
+      if (res && typeof res.targetYRatio === "number") {
+        lastPointCoords = {
+          targetXRatio: res.targetXRatio,
+          targetYRatio: res.targetYRatio,
+        };
+        setRigEmotion("pointing", "Pointing", lastPointCoords);
+      }
     } catch {
       if ($("statusText")) {
         $("statusText").textContent = "Could not highlight target on this page.";
@@ -1672,6 +1783,11 @@ async function pointArmAtElement() {
       setRigEmotion("idle", "Idle");
       return;
     }
+  } else if (coords && typeof coords.targetYRatio === "number") {
+    lastPointCoords = {
+      targetXRatio: coords.targetXRatio,
+      targetYRatio: coords.targetYRatio,
+    };
   }
 
   pointTimerId = setTimeout(() => {
@@ -1916,7 +2032,8 @@ async function checkPageForErrors() {
       return;
     }
 
-    const alerts = snapshot.alerts || [];
+    const rawAlerts = snapshot.alerts || [];
+    const alerts = rawAlerts.filter((a) => String(a?.errorMessage || a?.name || "").trim().length > 0);
     const invalidForms = (snapshot.forms || []).filter((f) => f.invalid);
 
     const banner = $("pageErrorBanner");
@@ -1926,7 +2043,8 @@ async function checkPageForErrors() {
     if (alerts.length > 0 || invalidForms.length > 0) {
       const parts = [];
       if (alerts.length > 0) {
-        parts.push(`${alerts.length} alert(s): "${alerts[0].name.slice(0, 60)}"`);
+        const firstAlertText = String(alerts[0].errorMessage || alerts[0].name || "").trim();
+        parts.push(`${alerts.length} alert(s): "${firstAlertText.slice(0, 80)}"`);
       }
       if (invalidForms.length > 0) {
         parts.push(`${invalidForms.length} invalid form field(s) require attention.`);
@@ -2038,12 +2156,17 @@ async function executeFind(query, mode = "find", extraOpts = {}) {
       candidates: res.ambiguousCandidates.map((c, idx) => ({
         index: idx + 1,
         text: c.textSnippet || c.fullText || query,
+        context: c.context || "",
         selector: c.selector,
         tag: c.tag,
       })),
     };
+    recordTaskContext({
+      actionType: mode === "point" ? "point" : "find",
+      items: res.matches || res.ambiguousCandidates,
+    });
     const listText = pendingDisambiguation.candidates
-      .map((c) => `${c.index}. "${c.text}" (${c.tag})`)
+      .map((c) => `${c.index}. "${c.text}"${c.context ? ` — [${c.context}]` : ` (${c.tag})`}`)
       .join("\n");
     const askWhichMsg = isHindi
       ? `🤔 Is page par "${query}" se match karne wale ${pendingDisambiguation.candidates.length} barabar options mile:\n${listText}\nKripya batayein kaunsa chahiye ("pehla", "doosra", ya number 1-${pendingDisambiguation.candidates.length})?`
@@ -2056,14 +2179,28 @@ async function executeFind(query, mode = "find", extraOpts = {}) {
     return;
   }
   if (res?.ok && res.totalMatches > 0) {
-    setRigEmotion("pointing", mode === "point" ? "Pointing!" : "Found!");
+    const pointCoords =
+      typeof res.targetYRatio === "number"
+        ? {
+            skipHighlightRpc: true,
+            targetXRatio: res.targetXRatio,
+            targetYRatio: res.targetYRatio,
+          }
+        : null;
+    setRigEmotion("pointing", mode === "point" ? "Pointing!" : "Found!", pointCoords || {});
     lastHighlightSelector = res.firstSelector;
+    lastHighlightFrameId = typeof res.frameId === "number" ? res.frameId : 0;
+    recordTaskContext({
+      actionType: mode === "point" ? "point" : "find",
+      targetSelector: res.firstSelector,
+      items: res.matches || [],
+    });
     lastCallout = {
       title: mode === "point" ? `Pointing: ${query}` : `Match: ${query}`,
       description: res.targetMatch?.textSnippet || `Located "${query}" (no click performed).`,
     };
     if ($("highlightBtn")) $("highlightBtn").hidden = false;
-    pointArmAtElement();
+    pointArmAtElement(pointCoords);
     recordSessionAction(`Found "${query}" (${res.totalMatches} match)`, "confirmed");
     const msg =
       mode === "point"
@@ -2255,8 +2392,26 @@ function normalizeHinglishCommand(rawText) {
   return out.replace(/__Q(\d+)__/g, (_m, idx) => quotes[Number(idx)] || "");
 }
 
+function resolvePositionalFieldTarget(raw) {
+  const s = String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\b(?:field|input|box|textbox|textarea|area|dropdown|select|jagah|wal[aei]|wle|number|no\.?)\b/gi, " ")
+    .replace(/\b(?:mein|me|main|par|pe|pr|ko|ka|ki|ke|the|is|this)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!s) return null;
+  if (/^(?:1|1st|first|pehl[aei]|pahl[aei])$/.test(s)) return "__INDEX_0__";
+  if (/^(?:2|2nd|second|doosr[aei]|dusr[aei])$/.test(s)) return "__INDEX_1__";
+  if (/^(?:3|3rd|third|teesr[aei]|tisr[aei])$/.test(s)) return "__INDEX_2__";
+  if (/^(?:4|4th|fourth|chauth[aei])$/.test(s)) return "__INDEX_3__";
+  if (/^(?:5|5th|fifth|paanchv[aei]|panchv[aei])$/.test(s)) return "__INDEX_4__";
+  if (/^(?:last|final|aakhri|akhri|aakhiri)$/.test(s)) return "__INDEX_LAST__";
+  return null;
+}
+
 function normalizeFillTarget(raw) {
-  return String(raw || "")
+  const cleaned = String(raw || "")
     .trim()
     .replace(
       /^(?:is\s+page\s+(?:par|pe|pr|mein|me|main)|page\s+(?:par|pe|pr|mein|me|main)|is\s+form\s+(?:mein|me|main)|form\s+(?:mein|me|main)|ye|yeh|is|the|a|an|my|apna|mera|yha|yaha|yahan)\s+/i,
@@ -2270,36 +2425,40 @@ function normalizeFillTarget(raw) {
       /\s+(?:field|input|box|textbox|textarea|area|dropdown|select|jagah|waa?l[aei]|ki|ka|ke|par|pe|pr|ko)$/i,
       "",
     )
-    .replace(
-      /\s+(?:waa?l[aei]|wle)$/i,
-      "",
-    )
+    .replace(/\s+(?:waa?l[aei]|wle)$/i, "")
     .trim()
     .toLowerCase();
+  const positional = resolvePositionalFieldTarget(raw);
+  if (positional) return positional;
+  if (cleaned === "surname" || cleaned === "family name") return "lastname";
+  return cleaned;
 }
 
 function resolveOrdinalChoiceIndex(text) {
   const clean = String(text || "")
     .trim()
     .toLowerCase()
-    .replace(/\b(?:option|number|no\.?|wala|wali|wale|select|click|open|pick|choose|karo|kro|(?:kar|kr)\s*do)\b/gi, " ")
+    .replace(
+      /\b(?:ab|now|phir|fir|then|option|number|no\.?|waa?l[aei]|wle|select|click|open|kholo|pick|choose|karo|kro|(?:kar|kr)\s*do|par|pe|pr|ko|ki|ke|mein|me|main)\b/gi,
+      " ",
+    )
     .replace(/\s+/g, " ")
     .trim();
   if (!clean) return null;
-  if (/^(?:1|1st|first|one|ek|pehla|pahla|pehli|pehle)$/.test(clean)) return 1;
-  if (/^(?:2|2nd|second|two|do|doosra|dusra|doosri|dusri)$/.test(clean)) return 2;
-  if (/^(?:3|3rd|third|three|teen|teesra|tisra|teesri|tisri)$/.test(clean)) return 3;
-  if (/^(?:4|4th|fourth|four|chaar|chautha|chauthi)$/.test(clean)) return 4;
-  if (/^(?:5|5th|fifth|five|paanch|panchva|paanchva)$/.test(clean)) return 5;
-  if (/^(?:6|6th|sixth|six|chhatha)$/.test(clean)) return 6;
-  if (/^(?:7|7th|seventh|seven|saatva)$/.test(clean)) return 7;
-  if (/^(?:8|8th|eighth|eight|aathva)$/.test(clean)) return 8;
+  if (/^(?:1|1st|first|one|ek|pehl[aei]|pahl[aei])$/.test(clean)) return 1;
+  if (/^(?:2|2nd|second|two|do|doosr[aei]|dusr[aei])$/.test(clean)) return 2;
+  if (/^(?:3|3rd|third|three|teen|teesr[aei]|tisr[aei])$/.test(clean)) return 3;
+  if (/^(?:4|4th|fourth|four|chaar|chauth[aei])$/.test(clean)) return 4;
+  if (/^(?:5|5th|fifth|five|paanch|panchv[aei]|paanchv[aei])$/.test(clean)) return 5;
+  if (/^(?:6|6th|sixth|six|chhath[aei])$/.test(clean)) return 6;
+  if (/^(?:7|7th|seventh|seven|saatv[aei])$/.test(clean)) return 7;
+  if (/^(?:8|8th|eighth|eight|aathv[aei])$/.test(clean)) return 8;
   return null;
 }
 
 function isNonValuePlaceholder(rawVal) {
   const normVal = normalizeHinglishCommand(String(rawVal || "").trim().toLowerCase());
-  return /^(?:kuch|kch|something|anything|kuch\s+bhi|anything|text|value|data|details|ye|yeh|isko|isme|karo|kro|kar\s*do|kr\s*do|fill|bharo|bhar\s*do|daalo|daal\s*do|likho|likh\s*do|type)$/i.test(
+  return /^(?:kuch|kch|kuch\s+bhi|something|anything|text|value|data|details|info|information|ye|yeh|ye\s*wal[aei]|yeh\s*wal[aei]|is\s*wal[aei]|isko|isme|is\s*(?:box|field|input)|this|this\s*(?:box|field|input)|the\s*(?:box|field|input)|it|yahan|yaha|yha|karo|kro|kar\s*do|kr\s*do|krdo|kar\s*de|fill|bharo|bhar\s*do|daalo|daal\s*do|likho|likh\s*do|type|form|all\s+fields|fields|inputs|page|errors?|issues?)$/i.test(
     normVal,
   );
 }
@@ -2330,6 +2489,20 @@ function extractFillDetails(text) {
   const overwrite = /\b(?:change|update|replace|overwrite|badal|badlo|modify)\b/i.test(cleaned);
   const fields = {};
   const explicitPairs = [];
+
+  if (
+    /\b(?:analyze|analyse|explain|why\s+(?:they|it|this)|occurred|step-by-step|instructions\s+to\s+fix|samjhao|kyun\s+(?:hua|aaya|aa\s+rha|aa\s+raha))\b/i.test(
+      cleaned,
+    )
+  ) {
+    return {
+      fields: null,
+      explicitPairs: null,
+      overwrite,
+      explicitUserProvided: false,
+      hasExplicitNoSubmit,
+    };
+  }
 
   const hasFillVerbOrAssign =
     /\b(?:fill|type|likh|likho|lkh|lkho|daal|daalo|dalo|bhar|bharo|enter|set|populate|change|update|replace)\b|[:=]/i.test(
@@ -2375,13 +2548,20 @@ function extractFillDetails(text) {
   // Split multi-field instructions cleanly (without mutating values inside clauses)
   const clauses = cleaned
     .split(
-      /\s*(?:,|;|\bphir\b|\bfir\b|\bthen\b|\band then\b|\buske baad\b|\b(?:and|aur)\b(?=\s+(?:fill|type|enter|write|set|likh|likho|daal|daalo|dalo|bhar|bharo|naam|name|full\s*name|email|phone|mobile|address|pata|city|state|country|pincode|pin|zip|gstin|gst|pan|dob|date\s*of\s*birth|father\s*name|gender|company|category|bio|message|msg|comment|subject|title|username)\b))\s*/i,
+      /\s*(?:,|;|\bphir\b|\bfir\b|\bthen\b|\band then\b|\buske baad\b|\b(?:and|aur)\b(?=\s+(?:fill|type|enter|write|set|likh|likho|daal|daalo|dalo|bhar|bharo|naam|name|full\s*name|first\s*name|last\s*name|surname|family\s*name|first\s*field|second\s*field|last\s*field|doosr[ae]\s*field|email|phone|mobile|address|pata|city|state|country|pincode|pin|zip|gstin|gst|pan|dob|date\s*of\s*birth|father\s*name|gender|company|category|bio|message|msg|comment|subject|title|username)\b))\s*/i,
     )
-    .map((c) => c.replace(/^(?:pehle|first|aur|and|also|next)\s+/i, "").trim())
+    .map((c) =>
+      c
+        .replace(
+          /^(?:(?:pehle|first)\s+(?!field\b|box\b|input\b|textbox\b|dropdown\b|wal[aei]\b)|(?:aur|and|also|next)\s+)/i,
+          "",
+        )
+        .trim(),
+    )
     .filter(Boolean);
 
   const KNOWN_FIELD_ALIASES =
-    "(?:full\\s*name|legal\\s*name|trade\\s*name|first\\s*name|last\\s*name|father\\s*name|user\\s*name|date\\s*of\\s*birth|dob|gender|category|bio|mobile\\s*(?:number|no)?|phone\\s*(?:number|no)?|pin\\s*code|zip\\s*code|email\\s*(?:id|address)?|aadhaar\\s*(?:number|no)?|aadhar\\s*(?:number|no)?|naam|name|mail|email|phone|mobile|address|pata|city|state|country|pincode|pin|zip|gstin|gst|pan|search|describe|description|prompt|message|msg|chat|comment|comments|note|notes|company|subject|title|username|password)";
+    "(?:full\\s*name|legal\\s*name|trade\\s*name|first\\s*name|last\\s*name|surname|family\\s*name|father\\s*name|user\\s*name|date\\s*of\\s*birth|dob|gender|category|bio|mobile\\s*(?:number|no)?|phone\\s*(?:number|no)?|pin\\s*code|zip\\s*code|email\\s*(?:id|address)?|aadhaar\\s*(?:number|no)?|aadhar\\s*(?:number|no)?|naam|name|mail|email|phone|mobile|address|pata|city|state|country|pincode|pin|zip|gstin|gst|pan|search|describe|description|prompt|message|msg|chat|comment|comments|note|notes|company|subject|title|username|password)";
 
   const patternARegex = new RegExp(
     `^(.+?)\\s+(?:mein|me|main|per|par|pe|pr|in|into)\\s+["']?(.+?)["']?\\s*(?:${trailingVerbSuffix})?[.!?\\s]*$`,
@@ -2428,8 +2608,8 @@ function extractFillDetails(text) {
     }
 
     // Pattern A: "<field> (wale)? (box|field|input)? mein/me/main/per/par/pr/in/into <value> (fill|type|likh|daal|bhar|kr do)?"
-    match = clause.match(patternARegex);
-    if (match) {
+    match = hasFillVerbOrAssign ? clause.match(patternARegex) : null;
+    if (match && !/\b(?:give|tell|show|help|ask|explain|send|let|teach|guide|write)\s+me\b/i.test(clause)) {
       const rawTarget = match[1]
         .trim()
         .replace(/^(?:fill|type|enter|write|put|set)\s+/i, "")
@@ -2482,6 +2662,8 @@ function extractFillDetails(text) {
       const keyMap = {
         naam: "name",
         fullname: "name",
+        surname: "lastname",
+        familyname: "lastname",
         dateofbirth: "dob",
         mobilenumber: "phone",
         mobileno: "phone",
@@ -2509,6 +2691,51 @@ function extractFillDetails(text) {
         fields[mappedKey] = cleanVal;
         explicitPairs.push({ target: mappedKey, value: cleanVal, overwrite });
         continue;
+      }
+    }
+
+    // Pattern F: Value-first fill without naming a field (e.g. "1234 FILL KR DO", "9560798373 YE FILL KR DO",
+    // "9560798373 isme fill kr do", "hello world likh do", "fill 1234", "type hello world")
+    if (
+      clauses.length === 1 &&
+      hasFillVerbOrAssign &&
+      !/\b(?:click|press|dabao|scroll|point|highlight|find|kholo|open)\b/i.test(clause)
+    ) {
+      const bareVerbEndRe =
+        /^(?:["']([^"']+)["']|(.+?))\s+(?:(?:ye|yeh|isko|isme|yahan|yaha|yha|ye\s+wal[aei]|is\s+(?:box|field|input)(?:\s+(?:mein|me|main|ko))?)\s+)?(?:(?:fill|type|likh|likho|lkh|lkho|daal|daalo|dalo|bhar|bharo|enter)\s*(?:(?:kar|kr)\s*do|krdo|(?:kar|kr)\s*de|(?:kar|kr)o|karein|do|de)?)[.!?\s]*$/i;
+      const bareVerbStartRe =
+        /^(?:fill|type|likho|lkho|likh\s+do|enter|daalo|dalo|daal\s+do|bharo)\s+(?:(?:in|into|inside)\s+(?:this(?:\s+box|\s+field)?|it|here)\s+)?(?:["']([^"']+)["']|(.+?))[.!?\s]*$/i;
+      const fMatch = clause.match(bareVerbEndRe) || clause.match(bareVerbStartRe);
+      if (fMatch) {
+        const rawCandidate = (fMatch[1] || fMatch[2] || "").trim();
+        const candidateClean = rawCandidate
+          .replace(/^(?:isme|isko|is\s*box\s*(?:mein|me|main)?|is\s*field\s*(?:mein|me|main)?|ye|yeh|yahan|yaha|yha|ab|please)\s+/i, "")
+          .replace(/\s+(?:ko|ka|ke|ki|mein|me|main|par|pe|pr|in|into|se|ye|yeh|isko|isme)$/i, "")
+          .trim();
+        const candNormTarget = normalizeFillTarget(candidateClean);
+        const looksLikeQuestion =
+          /^(?:what|why|how|where|when|which|who|kya|kyun|kaise|kahan|kidhar|kaun|kaunsa|kab|kitna)\b/i.test(
+            candidateClean,
+          ) || /[?]$/.test(clause.trim());
+        const endsWithLocationCase = /\b(?:ko|ke|mein|me|main|par|pe|pr|in|into|from|se)$/i.test(rawCandidate);
+        const looksLikeFormOrFieldOnly =
+          !fMatch[1] &&
+          (knownFieldExactRe.test(candNormTarget) ||
+            /^(?:(?:the|this|is|my|apna)\s+)?(?:(?:is|this)\s+page\s+ka\s+)?(?:form|all\s+fields|inputs?|fields?|box(?:es)?|details|info|information|data|sab|sab\s*kuch|kuch\s*bhi)$/i.test(
+              candidateClean,
+            ) ||
+            /\b(?:ka|this|the|is)\s+form\b/i.test(candidateClean));
+        if (
+          candidateClean &&
+          !isNonValuePlaceholder(rawCandidate) &&
+          !isNonValuePlaceholder(candidateClean) &&
+          !looksLikeFormOrFieldOnly &&
+          !looksLikeQuestion &&
+          !endsWithLocationCase
+        ) {
+          explicitPairs.push({ target: "__CURRENT__", value: candidateClean, overwrite });
+          continue;
+        }
       }
     }
   }
@@ -2564,13 +2791,69 @@ function parseActionIntent(text) {
   const normStripped = normalizeHinglishCommand(stripped);
   const lower = normStripped.toLowerCase();
 
-  // 0. CONVERSATIONAL CONTEXT FOLLOW-UPS (pending slot, pending confirmation, contextual pronouns)
+  // 0. CONVERSATIONAL CONTEXT FOLLOW-UPS (pending slot, pending confirmation, corrections, contextual pronouns)
   if (ctx) {
     if (
       /^(?:cancel|rehne\s+do|chhodo|mat\s+karo|nahi|no|skip|band\s+karo)[.!?\s]*$/i.test(lower) &&
-      (ctx.pendingSlot || ctx.hasPendingAction || ctx.pendingDisambiguation)
+      (ctx.pendingSlot || ctx.hasPendingAction || ctx.pendingDisambiguation || ctx.activeFormSession?.active)
     ) {
       return { type: "CANCEL_PENDING" };
+    }
+
+    // Correction 1 (Test G): Move previously filled value to a different field ("Nahi, doosre field mein daalna tha")
+    const moveFieldMatch =
+      normStripped.match(
+        /^(?:nahi|no|galat|wrong(?:\s+field)?)[,\s]+(?:isko\s+|use\s+|wo\s+|ye\s+)?(.+?)\s+(?:mein|me|main|par|pe|pr|in|into)\s+(?:daalna|dalna|bharna|likhna|fill\s+karna|daalo|daal\s+do|bharo)\s*(?:tha)?[.!?\s]*$/i,
+      ) ||
+      normStripped.match(
+        /^(?:wrong\s+field[,\s]+)?(?:put|move|fill)\s+(?:it|that)\s+(?:in|into)\s+(?:the\s+)?(.+?)(?:\s+instead)?[.!?\s]*$/i,
+      );
+    if (moveFieldMatch?.[1] && ctx.activeFormSession?.lastFilled?.value) {
+      const destField = normalizeFillTarget(moveFieldMatch[1]);
+      if (destField) {
+        return {
+          type: "MOVE_LAST_FILL",
+          targetField: destField,
+          prevSelector: ctx.activeFormSession.lastFilled.selector,
+          value: ctx.activeFormSession.lastFilled.value,
+        };
+      }
+    }
+
+    // Correction 2 (Test F): Replace previous value ("Nahi, Murshad ki jagah Murshid likho", "instead of X write Y")
+    const replaceValMatch =
+      normStripped.match(
+        /^(?:nahi|no)[,\s]+(?:["']?(.+?)["']?\s+ki\s+jagah|instead\s+of\s+["']?(.+?)["']?(?:\s*,|\s+))\s*["']?(.+?)["']?\s*(?:likh\s*(?:do|de|karo)?|likho|daal\s*(?:do|de|karo)?|daalo|bhar\s*(?:do|de|karo)?|bharo|kar\s+do|karo|write|fill|type)?[.!?\s]*$/i,
+      ) ||
+      normStripped.match(
+        /^(?:["']?(.+?)["']?\s+ki\s+jagah|instead\s+of\s+["']?(.+?)["']?(?:\s*,|\s+))\s*["']?(.+?)["']?\s*(?:likh\s*(?:do|de|karo)?|likho|daal\s*(?:do|de|karo)?|daalo|kar\s+do|karo|write|fill|type)[.!?\s]*$/i,
+      );
+    if (replaceValMatch && (ctx.activeFormSession?.lastFilled || ctx.session?.lastTargetSelector || ctx.session?.lastTargetField)) {
+      const oldVal = (replaceValMatch[1] || replaceValMatch[2] || "").trim();
+      const newVal = (replaceValMatch[3] || "").trim();
+      if (newVal && !isNonValuePlaceholder(newVal)) {
+        return {
+          type: "CORRECT_LAST_FILL",
+          oldValue: oldVal,
+          newValue: newVal,
+        };
+      }
+    }
+
+    // Incomplete Google/web search reply ("Google par search karna hai" -> "HGH injections")
+    if (ctx.pendingSlot?.type === "search_query") {
+      const qClean = trimmed
+        .replace(/^["']|["']$/g, "")
+        .replace(/\s+(?:search\s*(?:karo|kro|(?:kar|kr)\s*do)?|dhoondho|dhundo)[.!?\s]*$/i, "")
+        .trim();
+      if (
+        qClean &&
+        !/^(?:scroll\s+|go\s+back|refresh|reload|close|help|what\s+can\s+you\s+do|explain\s+this\s+page)/i.test(
+          lower,
+        )
+      ) {
+        return { type: "WEB_SEARCH", query: qClean, engine: ctx.pendingSlot.engine || "google" };
+      }
     }
 
     if (
@@ -2592,11 +2875,14 @@ function parseActionIntent(text) {
             },
           ],
           explicitUserProvided: true,
+          fromFormSession: Boolean(ctx.activeFormSession?.active),
           noSubmitPrompt: Boolean(ctx.pendingSlot.noSubmitPrompt),
         };
       }
       const matchedCand = ctx.pendingSlot.candidates.find((c) =>
-        String(c.label || "").toLowerCase().includes(lower.replace(/\s+(?:wala|wali|mein|me|field|box)$/i, "").trim()),
+        String(c.label || "")
+          .toLowerCase()
+          .includes(lower.replace(/\s+(?:wala|wali|mein|me|field|box)$/i, "").trim()),
       );
       if (matchedCand) {
         return {
@@ -2610,6 +2896,7 @@ function parseActionIntent(text) {
             },
           ],
           explicitUserProvided: true,
+          fromFormSession: Boolean(ctx.activeFormSession?.active),
           noSubmitPrompt: Boolean(ctx.pendingSlot.noSubmitPrompt),
         };
       }
@@ -2622,7 +2909,7 @@ function parseActionIntent(text) {
       !quotedReplyMatch &&
       (isLikelyActionCommand(normStripped) ||
         isNonValuePlaceholder(stripped) ||
-        /\b(?:kya\s+(?:kar|kiya|hai|h|likh|fill)|explain|samjhao|batao|bata|check\s+karo|dobara|kholo|kahan|kidhar|where\s+is|abhi\s+submit\s+mat)\b/i.test(
+        /\b(?:kya\s+(?:kar|kiya|hai|h|likh|fill|bharna)|explain|samjhao|batao|bata|check\s+karo|dobara|kholo|kahan|kidhar|where\s+is|abhi\s+submit\s+mat|next\s+field)\b/i.test(
           lower,
         ));
     if (
@@ -2650,8 +2937,31 @@ function parseActionIntent(text) {
         ],
         explicitUserProvided: true,
         fromChatCommand: true,
+        fromFormSession: Boolean(ctx.pendingSlot.fromFormSession || ctx.activeFormSession?.active),
         noSubmitPrompt: Boolean(ctx.pendingSlot.noSubmitPrompt || isBoxSingle),
       };
+    }
+
+    // Ordinal click from recent find/search results ("Ab doosre wale par click karo")
+    if (
+      !ctx.pendingDisambiguation &&
+      Array.isArray(ctx.session?.lastItems) &&
+      ctx.session.lastItems.length > 1 &&
+      /\b(?:click|open|kholo|press|dabao|select)\b/i.test(lower)
+    ) {
+      const ord = resolveOrdinalChoiceIndex(lower);
+      if (ord && ord >= 1 && ord <= ctx.session.lastItems.length) {
+        const chosen = ctx.session.lastItems[ord - 1];
+        if (chosen?.selector) {
+          return {
+            type: "CLICK",
+            target: chosen.textSnippet || chosen.fullText || `item ${ord}`,
+            selector: chosen.selector,
+            candidateIndex: ord,
+            isConsequential: false,
+          };
+        }
+      }
     }
 
     // Short affirmative follow-up ("hnn kr do", "haan kar do", "ok kar do", "yes")
@@ -2670,9 +2980,7 @@ function parseActionIntent(text) {
     }
 
     // Demonstrative selection ("bss ye wala", "ye wala", "yahi wala")
-    if (
-      /^(?:bas\s+)?(?:yahi|ye|yeh)\s*(?:wala|wali|wale)?[.!?\s]*$/i.test(lower)
-    ) {
+    if (/^(?:bas\s+)?(?:yahi|ye|yeh)\s*(?:wala|wali|wale)?[.!?\s]*$/i.test(lower)) {
       if (ctx.pendingDisambiguation?.candidates?.length) {
         return { type: "SELECT_CONTEXT_ITEM", index: 1 };
       }
@@ -2689,6 +2997,7 @@ function parseActionIntent(text) {
             },
           ],
           explicitUserProvided: true,
+          fromFormSession: Boolean(ctx.activeFormSession?.active),
         };
       }
     }
@@ -2765,6 +3074,21 @@ function parseActionIntent(text) {
     return { type: "ACTIVITY_LOG" };
   }
 
+  // 2e-0. EXPLAIN PAGE ERRORS / INVALID FIELDS (Strictly separated from FORM_FILL)
+  if (
+    /(?:analyze|analyse|fix\s*&?\s*explain|explain)\s+.*?\b(?:errors?|alerts?|invalid\s+(?:form\s+)?fields?|issues?)\b/i.test(
+      lower,
+    ) ||
+    /^(?:is\s+page\s+(?:par|pe|pr|mein|me)\s+)?(?:kya\s+)?(?:error|errors|issue|issues|galti|problem)\s+(?:hai|he|aa\s+r(?:aha|ahi)\s+hai|kyun|explain|samjhao|batao)/i.test(
+      lower,
+    ) ||
+    /^(?:error|errors|alert|alerts|validation)\s+(?:explain|samjhao|batao|fix)\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
+    return { type: "EXPLAIN_ERRORS" };
+  }
+
   // 2e. EXPLAIN PAGE (Strictly separated from filling/actions!)
   if (
     /^(?:explain\s+(?:this\s+|the\s+)?page|page\s+(?:explain|samjhao)\s*(?:karo|kar\s+do)?|(?:ye|yeh|is)\s+page\s+(?:ko\s+)?(?:explain\s*(?:karo|kar\s+do)?|samjhao|kya\s+hai)|is\s+page\s+ke\s+baare\s+mein\s+batao|summarize\s+(?:this\s+)?page|what\s+is\s+this\s+page)[.!?\s]*$/i.test(
@@ -2827,7 +3151,18 @@ function parseActionIntent(text) {
     return { type: "SCROLL", direction: dir };
   }
 
-  // 3b. FORM INSPECT ("Yahan kya fill karna hai?", "What information does this form require?")
+  // 3b. NEXT FORM FIELD / FORM INSPECT ("Ab next field mein kya bharna hai?", "Yahan kya fill karna hai?")
+  if (
+    /^(?:ab\s+)?(?:next|agla|agle)\s+(?:field|box|input)\s+(?:mein|me|main)?\s*(?:kya\s+)?(?:bharna|fill\s+karna|daalna|likhna|hai)?\s*(?:hai)?[.!?\s]*$/i.test(
+      lower,
+    ) ||
+    /^(?:ab\s+)?(?:aage|next)\s+kya\s+(?:bharna|fill\s+karna|daalna|likhna)\s*(?:hai)?[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
+    return { type: "NEXT_FORM_FIELD" };
+  }
+
   if (
     /(?:yahan|yaha|yha|is\s+page\s+(?:par|pe|pr)|is\s+form\s+(?:mein|me|main)|form\s+(?:mein|me|main)|here)\s+kya\s+(?:fill|bharna|bhar|daalna|enter|likhna|details|info|information)\s*(?:karna\s+(?:h|hai|he)|h|hai|he|chahiye)?/i.test(
       lower,
@@ -2839,17 +3174,43 @@ function parseActionIntent(text) {
     return { type: "FORM_INSPECT" };
   }
 
-  // 3b-2. WEB SEARCH & OPEN EXTERNAL WEBSITE ("Aadhaar website kholo", "search for Aadhaar website", "Google par Flipkart search karo")
+  // 3b-2. WEB SEARCH & OPEN EXTERNAL WEBSITE ("Google par HGH injections search karo", "Google par search karna hai")
   const hasExplicitInPage = /\b(?:is\s+page\s+(?:par|pe|pr|mein|me|main)|page\s+(?:par|pe|pr|mein|me|main)|on\s+this\s+page|in\s+this\s+page)\b/i.test(
     lower,
   );
   if (!hasExplicitInPage) {
+    // Incomplete external search command missing a query ("Bhai Google par search karna hai" / "Google par search karo")
+    if (
+      /^(?:mujhe\s+)?(?:google|web|internet)\s+(?:par|pe|pr|mein|me|on)\s+(?:kuch\s+|kch\s+|something\s+)?search\s*(?:karna\s+(?:hai|he)|karo|kar\s+do|karein)?[.!?\s]*$/i.test(
+        lower,
+      ) ||
+      /^search\s+(?:on|in)\s+google[.!?\s]*$/i.test(lower)
+    ) {
+      return { type: "SEARCH_NEED_QUERY", engine: "google" };
+    }
+
     const googleWebSearchMatch =
-      normStripped.match(/^(?:google|web|internet)\s+(?:par|pe|pr|mein|me|on)\s+(.+?)\s+(?:search|find|dhoondho|dhundo)\s*(?:karo|kar\s+do)?[.!?\s]*$/i) ||
-      normStripped.match(/^(?:search\s+(?:for|about)\s+)(.+?\b(?:website|site|portal|official\s+page|official\s+site)\b.*?)[.!?\s]*$/i) ||
-      normStripped.match(/^(.+?\b(?:website|site|portal)\b)\s+(?:search\s*(?:karo|kar\s+do)|dhoondho|dhundo)[.!?\s]*$/i);
+      normStripped.match(
+        /^(?:google|web|internet)\s+(?:par|pe|pr|mein|me|on)\s+(.+?)\s+(?:search|find|dhoondho|dhundo)\s*(?:karo|kar\s+do|karna\s+(?:hai|he)|karein)?[.!?\s]*$/i,
+      ) ||
+      normStripped.match(
+        /^(.+?)\s+(?:google|web|internet)\s+(?:par|pe|pr|mein|me|on)\s+(?:search|find|dhoondho|dhundo)\s*(?:karo|kar\s+do|karna\s+(?:hai|he))?[.!?\s]*$/i,
+      ) ||
+      normStripped.match(
+        /^(?:search\s+(?:for|about)\s+)(.+?\b(?:website|site|portal|official\s+page|official\s+site)\b.*?)[.!?\s]*$/i,
+      ) ||
+      normStripped.match(
+        /^(.+?\b(?:website|site|portal)\b)\s+(?:search\s*(?:karo|kar\s+do)|dhoondho|dhundo)[.!?\s]*$/i,
+      );
     if (googleWebSearchMatch?.[1]) {
-      return { type: "WEB_SEARCH", query: googleWebSearchMatch[1].trim() };
+      const cleanedWebQ = googleWebSearchMatch[1]
+        .replace(/^(?:mujhe|for|about|ke\s+baare\s+mein)\s+/i, "")
+        .replace(/\s+(?:ke\s+baare\s+mein|ka|ki|ke|for|about)$/i, "")
+        .trim();
+      if (cleanedWebQ && !/^(?:kuch|something|kya)$/i.test(cleanedWebQ)) {
+        return { type: "WEB_SEARCH", query: cleanedWebQ };
+      }
+      return { type: "SEARCH_NEED_QUERY", engine: "google" };
     }
 
     const openWebsiteMatch =
@@ -3144,9 +3505,9 @@ function parseActionIntent(text) {
     return { type: "CLICK", target: "submit", isConsequential: true };
   }
 
-  // 11. CLICK / PRESS / TAP ACTION (supports "ab click karo", "Login pr click kr do", etc.)
+  // 11. CLICK / PRESS / TAP / FOLLOW-UP OPEN ACTION (supports "ab click karo", "ab kholo", "open it", "Login pr click kr do")
   if (
-    /^(?:(?:ab|now|phir|fir|then|yahan|yaha|yha|here|isko|this|is\s+(?:par|pe|pr)|us\s+(?:par|pe|pr))\s+)?(?:(?:par|pe|pr|ko)\s+)?(?:click\s*(?:karo|kro|(?:kar|kr)\s*do|kijiye|do)?|press\s*(?:karo|kro|(?:kar|kr)\s*do)|tap\s*(?:karo|kro|(?:kar|kr)\s*do)|dabao|daba\s*do)[.!?\s]*$/i.test(
+    /^(?:(?:ab|now|phir|fir|then|yahan|yaha|yha|here|isko|this|it|is\s+(?:par|pe|pr|ko)|us\s+(?:par|pe|pr|ko))\s+)?(?:(?:par|pe|pr|ko)\s+)?(?:click\s*(?:karo|kro|(?:kar|kr)\s*do|kijiye|do)?|press\s*(?:karo|kro|(?:kar|kr)\s*do)|tap\s*(?:karo|kro|(?:kar|kr)\s*do)|dabao|daba\s*do|open\s*(?:karo|kro|(?:kar|kr)\s*do|it)?|kholo|khol\s*do)(?:\s+(?:karo|kro|(?:kar|kr)\s*do))?[.!?\s]*$/i.test(
       lower,
     )
   ) {
@@ -3311,6 +3672,8 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     pendingSlot = null;
     pendingAction = null;
     pendingDisambiguation = null;
+    activeFormSession = null;
+    pendingAutoListenAfterSpeech = false;
     sessionTaskContext.lastActionProposal = null;
     if ($("confirmCard")) $("confirmCard").hidden = true;
     appendHistory("user", trimmed);
@@ -3380,6 +3743,163 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     return true;
   }
 
+  if (intent.type === "SEARCH_NEED_QUERY") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    pendingSlot = {
+      type: "search_query",
+      engine: intent.engine || "google",
+    };
+    const askSearchMsg = isHindi
+      ? "Google par kya search karna hai? Topic ya keyword likhein ya bolein."
+      : "What would you like me to search on Google?";
+    setRigEmotion("curious", "Search Query?");
+    $("statusText").textContent = askSearchMsg;
+    appendHistory("buddy", askSearchMsg);
+    recordConversationTurn(trimmed, askSearchMsg);
+    speakResponse(askSearchMsg, "curious", {
+      autoListenOnFinish: true,
+      autoListenReason: "incomplete_search",
+    });
+    return true;
+  }
+
+  if (intent.type === "CORRECT_LAST_FILL") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    const targetEntry =
+      (intent.oldValue &&
+        activeFormSession?.filledFields?.find((f) =>
+          String(f.value || "").toLowerCase().includes(intent.oldValue.toLowerCase()),
+        )) ||
+      activeFormSession?.lastFilled ||
+      (sessionTaskContext.lastTargetSelector || sessionTaskContext.lastTargetField
+        ? {
+            field: sessionTaskContext.lastTargetField || "__CURRENT__",
+            selector: sessionTaskContext.lastTargetSelector || undefined,
+          }
+        : null);
+
+    if (!targetEntry) {
+      const noPrevMsg = isHindi
+        ? "Abhi pichla filled field mila nahi. Kripya batayein kis field mein nayi value likhni hai."
+        : "I couldn't identify the previous field to update. Please tell me which field should get the new value.";
+      appendHistory("buddy", noPrevMsg);
+      speakResponse(noPrevMsg, "curious");
+      return true;
+    }
+
+    await startSmartFormFill(null, {
+      explicitPairs: [
+        {
+          target: targetEntry.field || "__CURRENT__",
+          selector: targetEntry.selector,
+          value: intent.newValue,
+          overwrite: true,
+        },
+      ],
+      overwrite: true,
+      explicitUserProvided: true,
+      fromChatCommand: true,
+      fromFormSession: Boolean(activeFormSession?.active),
+      isCorrection: true,
+    });
+    return true;
+  }
+
+  if (intent.type === "MOVE_LAST_FILL") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    await startSmartFormFill(null, {
+      explicitPairs: [
+        {
+          target: intent.targetField,
+          value: intent.value,
+          overwrite: true,
+        },
+      ],
+      clearSelector: intent.prevSelector,
+      overwrite: true,
+      explicitUserProvided: true,
+      fromChatCommand: true,
+      fromFormSession: Boolean(activeFormSession?.active),
+      isCorrection: true,
+    });
+    return true;
+  }
+
+  if (intent.type === "NEXT_FORM_FIELD") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    let nextField = activeFormSession?.remainingFields?.[0] || null;
+    if (!nextField) {
+      const snapRes = await sendRuntimeMessage({ type: "GET_PAGE_SNAPSHOT" });
+      const forms = snapRes?.snapshot?.forms || [];
+      const emptyFormFields = forms.filter(
+        (f) => f.visible !== false && !f.disabled && !String(f.value || "").trim(),
+      );
+      if (emptyFormFields.length > 0) {
+        const f = emptyFormFields[0];
+        nextField = {
+          index: 1,
+          label: f.label || f.placeholder || f.name || f.id || "next field",
+          selector: f.selector,
+          name: f.name || f.id || "",
+          type: f.type || f.tag || "text",
+        };
+        activeFormSession = {
+          active: true,
+          filledFields: activeFormSession?.filledFields || [],
+          lastFilled: activeFormSession?.lastFilled || null,
+          remainingFields: emptyFormFields.map((ef, i) => ({
+            index: i + 1,
+            label: ef.label || ef.placeholder || ef.name || ef.id || `field ${i + 1}`,
+            selector: ef.selector,
+            name: ef.name || ef.id || "",
+            type: ef.type || ef.tag || "text",
+          })),
+          awaitingField: nextField,
+        };
+      }
+    }
+    if (!nextField) {
+      const doneMsg = isHindi
+        ? "✅ Is form ke sabhi visible fields pehle se bhare hue lag rahe hain! Agar kuch badalna ho ya submit karna ho to batayein."
+        : "✅ All visible fields in this form appear filled! Let me know if you want to edit anything or submit.";
+      setRigEmotion("happy", "Complete");
+      appendHistory("buddy", doneMsg);
+      speakResponse(doneMsg, "happy");
+      return true;
+    }
+    if (nextField.selector) {
+      lastHighlightSelector = nextField.selector;
+      lastCallout = {
+        title: `Next: ${nextField.label}`,
+        description: "Waiting for your value",
+      };
+      pointArmAtElement().catch(() => {});
+    }
+    pendingSlot = {
+      type: "fill_value",
+      targetField: nextField.label || "__CURRENT__",
+      targetSelector: nextField.selector || undefined,
+      fromFormSession: true,
+    };
+    if (activeFormSession) activeFormSession.awaitingField = nextField;
+    const askNextMsg = isHindi
+      ? `Ab **${nextField.label}** mein kya bharna hai?`
+      : `Next, what value should I enter in **${nextField.label}**?`;
+    setRigEmotion("curious", "Next Field");
+    $("statusText").textContent = askNextMsg;
+    appendHistory("buddy", askNextMsg);
+    recordConversationTurn(trimmed, askNextMsg);
+    speakResponse(askNextMsg, "curious", {
+      autoListenOnFinish: true,
+      autoListenReason: "next_form_field",
+    });
+    return true;
+  }
+
   if (intent.type === "FILL_NEED_VALUE") {
     appendHistory("user", trimmed);
     $("promptInput").value = "";
@@ -3411,7 +3931,10 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     $("statusText").textContent = askText;
     appendHistory("buddy", askText);
     recordConversationTurn(trimmed, askText);
-    speakResponse(askText, "curious");
+    speakResponse(askText, "curious", {
+      autoListenOnFinish: true,
+      autoListenReason: "missing_value",
+    });
     return true;
   }
 
@@ -3613,6 +4136,86 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     const logMsg = `📋 **Session Activity Log (${sessionActionLog.length}):**\n${lines.join("\n")}`;
     $("statusText").textContent = `Showing ${sessionActionLog.length} session actions.`;
     appendHistory("buddy", logMsg);
+    return true;
+  }
+
+  if (intent.type === "EXPLAIN_ERRORS") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    setRigEmotion("thinking", "Checking…");
+    $("statusText").textContent = "Inspecting page alerts and validation errors…";
+
+    const snapRes = await sendRuntimeMessage({ type: "GET_PAGE_SNAPSHOT" });
+    const snap = snapRes?.snapshot;
+    if (!snapRes?.ok || !snap) {
+      setRigEmotion("error", "Unreadable");
+      const failMsg = isHindi
+        ? "Is page ke errors check nahi kiye ja sake — kripya page reload karein ya doosra tab check karein."
+        : "Could not read this page to inspect errors. Try refreshing the tab.";
+      appendHistory("buddy", `⚠️ ${failMsg}`);
+      $("statusText").textContent = failMsg;
+      return true;
+    }
+
+    const realAlerts = (snap.alerts || []).filter(
+      (a) => String(a?.errorMessage || a?.name || "").trim().length > 0,
+    );
+    const invalidForms = (snap.forms || []).filter((f) => f.invalid);
+
+    if (realAlerts.length === 0 && invalidForms.length === 0) {
+      if ($("pageErrorBanner")) $("pageErrorBanner").hidden = true;
+      setRigEmotion("happy", "All Clear");
+      const cleanMsg = isHindi
+        ? `✅ Is page ("${snap.title || "Current Page"}") par abhi koi active website error ya invalid form field nahi mila. (Agar pehle empty alert banner dikh raha tha to maine use clear kar diya hai.)`
+        : `✅ No active website errors or invalid form fields were found on "${snap.title || "Current Page"}". (Cleared any stale alert banner.)`;
+      appendHistory("buddy", cleanMsg);
+      $("statusText").textContent = "No active page errors found.";
+      speakResponse(cleanMsg, "happy");
+      return true;
+    }
+
+    const lines = [];
+    lines.push(
+      isHindi
+        ? `🚨 **Website Errors & Form Validation Issues (${realAlerts.length + invalidForms.length}):**`
+        : `🚨 **Website Errors & Validation Issues Found (${realAlerts.length + invalidForms.length}):**`,
+    );
+
+    if (realAlerts.length > 0) {
+      lines.push(isHindi ? "\n• **Website Alerts / Banners:**" : "\n• **Website Alerts / Banners:**");
+      for (const a of realAlerts.slice(0, 5)) {
+        const msg = String(a.errorMessage || a.name).trim();
+        lines.push(`  - "${msg}"`);
+      }
+    }
+
+    if (invalidForms.length > 0) {
+      lines.push(isHindi ? "\n• **Invalid Form Fields:**" : "\n• **Invalid Form Fields:**");
+      for (const f of invalidForms.slice(0, 8)) {
+        const label = f.name || f.placeholder || f.role || "field";
+        const reason = f.errorMessage || (isHindi ? "Required ya invalid format" : "Required or failed validation");
+        lines.push(`  - **${label}**: ${reason}`);
+      }
+      const firstInvalid = invalidForms[0];
+      if (firstInvalid?.selector) {
+        lastHighlightSelector = firstInvalid.selector;
+        if ($("highlightBtn")) $("highlightBtn").hidden = false;
+        pointArmAtElement();
+      }
+    }
+
+    lines.push(
+      isHindi
+        ? "\n💡 **Kaise Fix Karein:** Upar bataye gaye field(s) mein sahi details daalein (ya mujhe bolein jaise: `\"email mein name@example.com fill kar do\"`) aur alert message check karke dobara submit karein."
+        : "\n💡 **How to Fix:** Update the highlighted/listed field(s) with valid input (or tell me e.g. `fill name@example.com in email`), then review before submitting.",
+    );
+
+    const reportMsg = lines.join("\n");
+    setRigEmotion("concerned", "Explained");
+    $("statusText").textContent = `Found ${realAlerts.length} alert(s) and ${invalidForms.length} invalid field(s).`;
+    recordSessionAction(`Explained ${realAlerts.length} page alert(s) and ${invalidForms.length} invalid field(s)`, "confirmed");
+    appendHistory("buddy", reportMsg);
+    speakResponse(reportMsg, "concerned");
     return true;
   }
 
@@ -4093,21 +4696,65 @@ async function executeNaturalBrowserAction(intent, trimmed) {
           explicitPairs: profilePairs,
           overwrite: Boolean(intent.overwrite),
           explicitUserProvided: true,
+          fromFormSession: true,
         });
         return true;
       }
 
-      // Inspect form first & ask cleanly without inventing missing personal info!
+      // Inspect form first & start an interactive step-by-step form session without inventing fake details!
       setRigEmotion("curious", "Need Details");
       const snapRes = await sendRuntimeMessage({ type: "GET_PAGE_SNAPSHOT" });
-      const fieldNames = (snapRes?.snapshot?.forms || [])
-        .map((f) => f.name || f.placeholder || f.role)
-        .filter(Boolean)
-        .slice(0, 8);
+      const emptyFields = (snapRes?.snapshot?.forms || [])
+        .filter((f) => f.visible !== false && !f.disabled && !String(f.value || "").trim())
+        .map((f, idx) => ({
+          index: idx + 1,
+          label: f.label || f.placeholder || f.name || f.id || `Field ${idx + 1}`,
+          selector: f.selector,
+          name: f.name || f.id || "",
+          type: f.type || f.tag || "text",
+        }));
+      const fieldNames = emptyFields.map((f) => f.label).filter(Boolean).slice(0, 8);
+
+      if (emptyFields.length > 0) {
+        const firstField = emptyFields[0];
+        activeFormSession = {
+          active: true,
+          filledFields: [],
+          lastFilled: null,
+          remainingFields: emptyFields,
+          awaitingField: firstField,
+        };
+        pendingSlot = {
+          type: "fill_value",
+          targetField: firstField.label || "__CURRENT__",
+          targetSelector: firstField.selector || undefined,
+          fromFormSession: true,
+        };
+        if (firstField.selector) {
+          lastHighlightSelector = firstField.selector;
+          lastCallout = {
+            title: `Fill: ${firstField.label}`,
+            description: "Waiting for your value",
+          };
+          pointArmAtElement().catch(() => {});
+        }
+        const askDetailsMsg = isHindi
+          ? `📋 Main is form ko fill karne ke liye ready hoon (${emptyFields.length} fields: ${fieldNames.join(", ")}). Main bina aapki jankari ke fake details nahi bharunga.\nSabse pehle **${firstField.label}** mein kya bharna hai?`
+          : `📋 I'm ready to fill this form (${emptyFields.length} fields: ${fieldNames.join(", ")}). I never invent personal details.\nFirst, what should I enter in **${firstField.label}**?`;
+        $("statusText").textContent = `Waiting for ${firstField.label}…`;
+        appendHistory("buddy", askDetailsMsg);
+        recordConversationTurn(trimmed, askDetailsMsg);
+        speakResponse(askDetailsMsg, "curious", {
+          autoListenOnFinish: true,
+          autoListenReason: "incomplete_form_fill",
+        });
+        return true;
+      }
+
       const askDetailsMsg = isHindi
-        ? `📋 Is page par yeh fields hain${fieldNames.length ? ` (${fieldNames.join(", ")})` : ""}. Main bina aapki jankari ke fake details nahi bharunga! Kripya 📎 Attach se apna Aadhaar/PAN/document upload karein ya chat mein details likhein (jaise: "naam ..., phone ..., city ...").`
-        : `📋 Detected form fields${fieldNames.length ? ` (${fieldNames.join(", ")})` : ""}. I never invent personal details—please attach an ID/document with 📎 Attach or type the values you want filled.`;
-      $("statusText").textContent = "Awaiting document or field details.";
+        ? `📋 Is page par koi khali form field nahi mila. Agar kisi specific box mein kuch likhna ho to batayein.`
+        : `📋 I didn't find any empty form fields on this page. Tell me which field and value you'd like me to enter.`;
+      $("statusText").textContent = "No empty form fields detected.";
       appendHistory("buddy", askDetailsMsg);
       speakResponse(askDetailsMsg, "curious");
       return true;
@@ -4118,6 +4765,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       overwrite: Boolean(intent.overwrite),
       explicitUserProvided: Boolean(intent.explicitUserProvided),
       fromChatCommand: Boolean(intent.fromChatCommand ?? true),
+      fromFormSession: Boolean(intent.fromFormSession),
       noSubmitPrompt: Boolean(intent.noSubmitPrompt),
     });
     return true;
@@ -4791,6 +5439,7 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
     fields: dataToFill,
     options: {
       overwrite: Boolean(extraOpts?.overwrite),
+      clearSelector: extraOpts?.clearSelector || undefined,
       explicitPairs: extraOpts?.explicitPairs || undefined,
       explicitUserProvided: Boolean(extraOpts?.explicitUserProvided),
       fromUploadedDocument: Boolean(extraOpts?.fromUploadedDocument),
@@ -4823,12 +5472,41 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
   }
 
   if (res?.ok && res.results) {
-    const { filled, preserved, skipped, errors } = res.results;
+    const { filled, preserved, skipped, errors, remainingFields = [] } = res.results;
     if (filled.length > 0) {
+      const lastFilledItem = filled[filled.length - 1];
       recordTaskContext({
         actionType: "fill",
-        targetField: filled[filled.length - 1].field,
+        targetField: lastFilledItem.field,
+        targetSelector: lastFilledItem.selector || undefined,
       });
+      if (!activeFormSession) {
+        activeFormSession = {
+          active: Boolean(extraOpts?.fromFormSession || remainingFields.length > 0),
+          filledFields: [],
+          lastFilled: null,
+          remainingFields: [],
+          awaitingField: null,
+        };
+      }
+      activeFormSession.filledFields = [
+        ...(activeFormSession.filledFields || []).filter((f) => f.selector !== lastFilledItem.selector),
+        ...filled.map((f) => ({
+          key: f.key,
+          field: f.field,
+          selector: f.selector,
+          value: f.value,
+        })),
+      ];
+      activeFormSession.lastFilled = {
+        key: lastFilledItem.key,
+        field: lastFilledItem.field,
+        selector: lastFilledItem.selector,
+        value: lastFilledItem.value,
+      };
+      activeFormSession.remainingFields = remainingFields;
+      activeFormSession.awaitingField = null;
+
       if (extraOpts?.explicitUserProvided) {
         try {
           const { userProfile = {} } = await chrome.storage.local.get("userProfile");
@@ -4837,6 +5515,7 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
             const rawKey = String(f.key && f.key !== "__CURRENT__" ? f.key : f.field || "").trim().toLowerCase();
             if (
               rawKey &&
+              !/^__INDEX_/.test(rawKey) &&
               rawKey.length <= 40 &&
               !SENSITIVE_FIELD_RE.test(rawKey) &&
               !EPHEMERAL_PROFILE_TARGET_RE.test(rawKey) &&
@@ -4887,14 +5566,14 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
       setRigEmotion(targetEmotion, targetEmotion === "privacy" ? "Privacy" : "Filled");
       $("statusText").textContent =
         `Filled ${filled.length} field${filled.length > 1 ? "s" : ""} & verified.`;
-      const summaryMsg = isHindi
-        ? `📝 Maine ${filled
+      let summaryMsg = isHindi
+        ? `📝 Ho gaya! Maine ${filled
             .map((f) =>
               SENSITIVE_FIELD_RE.test(String(f.field || ""))
                 ? `"${f.field}" mein safe value`
                 : `"${f.field}" mein "${f.value}"`,
             )
-            .join(", ")} fill aur verify kar diya hai!${
+            .join(", ")} fill aur verify kar diya hai.${
             preserved.length > 0
               ? ` (${preserved.length} pehle se bhare fields ko safe rakha gaya hai)`
               : ""
@@ -4902,12 +5581,51 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
         : `📝 Filled & verified ${filled.length} field(s): ${filled.map(formatFieldDisplay).join(", ")}.${
             preserved.length > 0 ? ` Preserved ${preserved.length} existing field(s).` : ""
           }${skipped.length > 0 ? `\n🛡️ Skipped: ${skipped.map((s) => `${s.key} (${s.reason})`).join(", ")}` : ""}${errors.length > 0 ? `\n⚠️ Failed: ${errors.map((e) => `${e.key} (${e.error})`).join(", ")}` : ""}`;
+
+      let shouldPromptNext = false;
+      if (extraOpts?.fromFormSession && remainingFields.length > 0 && errors.length === 0) {
+        const nextField = remainingFields[0];
+        activeFormSession.active = true;
+        activeFormSession.awaitingField = nextField;
+        pendingSlot = {
+          type: "fill_value",
+          targetField: nextField.label || "__CURRENT__",
+          targetSelector: nextField.selector || undefined,
+          fromFormSession: true,
+          noSubmitPrompt: Boolean(extraOpts?.noSubmitPrompt),
+        };
+        if (nextField.selector) {
+          lastHighlightSelector = nextField.selector;
+          lastCallout = {
+            title: `Next: ${nextField.label}`,
+            description: "Waiting for value",
+          };
+          pointArmAtElement().catch(() => {});
+        }
+        summaryMsg += isHindi
+          ? `\nAb **${nextField.label}** mein kya daalna hai?`
+          : `\nNext, what should I enter in **${nextField.label}**?`;
+        shouldPromptNext = true;
+      } else if (extraOpts?.fromFormSession && remainingFields.length === 0) {
+        if (activeFormSession) activeFormSession.active = false;
+        pendingSlot = null;
+        summaryMsg += isHindi
+          ? `\n✅ Sabhi required fields complete ho gaye! Jab aap bolein tab hi submit karunga.`
+          : `\n✅ All form fields are now complete! Let me know when you'd like to submit.`;
+      }
+
       recordSessionAction(
         `Filled & verified ${filled.length} field(s): ${filled.map(formatFieldDisplay).join(", ")}`,
         errors.length > 0 ? "unconfirmed" : "confirmed",
       );
       appendHistory("buddy", summaryMsg);
-      speakResponse(summaryMsg, targetEmotion);
+      speakResponse(
+        summaryMsg,
+        targetEmotion,
+        shouldPromptNext
+          ? { autoListenOnFinish: true, autoListenReason: "incomplete_form_fill" }
+          : {},
+      );
     } else if (errors.length > 0) {
       setRigEmotion("error", "Rejected");
       const errDetail = errors.map((e) => `${e.key}: ${e.error}`).join("; ");
@@ -6049,7 +6767,7 @@ if ($("liveVoiceBtn")) {
 if ($("fixErrorsBtn")) {
   $("fixErrorsBtn").onclick = () => {
     sendQuery(
-      "Analyze the errors, alerts, and invalid form fields on this page. Explain why they occurred and give me step-by-step instructions to fix them.",
+      "Analyze and explain all page errors, alerts, and invalid form fields on this page.",
       "classify",
     );
   };

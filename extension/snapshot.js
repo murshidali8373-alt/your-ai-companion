@@ -245,7 +245,15 @@
         el.getAttribute("aria-invalid") === "true" ||
         el.classList.contains("is-invalid") ||
         el.classList.contains("error") ||
-        Boolean(el.closest(".error, .has-error"));
+        Boolean(el.closest(".error, .has-error")) ||
+        (typeof el.matches === "function" &&
+          (() => {
+            try {
+              return el.matches(":user-invalid");
+            } catch {
+              return false;
+            }
+          })());
 
       const errId = el.getAttribute("aria-errormessage");
       const elRoot = el.getRootNode?.() || document;
@@ -254,7 +262,13 @@
         : el.parentElement?.querySelector(
             ".invalid-feedback, .error, .text-danger, .error-message, .field-error",
           );
-      const errMsg = nearbyErrEl?.innerText?.trim()?.slice(0, 200) || undefined;
+      const errMsg =
+        (
+          nearbyErrEl?.innerText?.trim() ||
+          nearbyErrEl?.textContent?.trim() ||
+          (isInvalid ? el.validationMessage?.trim() : "") ||
+          ""
+        ).slice(0, 200) || undefined;
 
       return item(el, role, {
         inputType: type || el.getAttribute("role") || undefined,
@@ -299,17 +313,42 @@
   ].join(",");
 
   const alertElements = queryAll(alertSelectors).filter(visible).slice(0, 40);
+  const seenAlertKeys = new Set();
+  const alerts = [];
 
-  const alerts = alertElements.map((el) => {
+  for (const el of alertElements) {
     const isField = el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT";
-    const textMsg =
-      (isField
-        ? el.getAttribute("aria-errormessage") || el.title || el.placeholder || ""
-        : el.innerText) || "";
-    return item(el, "alert", {
-      errorMessage: textMsg.trim().replace(/\s+/g, " ").slice(0, 200) || undefined,
-    });
-  });
+    let textMsg = "";
+    if (isField) {
+      const errId = el.getAttribute("aria-errormessage");
+      const elRoot = el.getRootNode?.() || document;
+      const errRef = errId ? elRoot.getElementById?.(errId) || document.getElementById(errId) : null;
+      const nearby = el.parentElement?.querySelector?.(
+        ".invalid-feedback, .error, .text-danger, .error-message, .field-error",
+      );
+      textMsg =
+        errRef?.innerText ||
+        errRef?.textContent ||
+        nearby?.innerText ||
+        el.validationMessage ||
+        el.title ||
+        labelOf(el) ||
+        "";
+    } else {
+      textMsg = el.innerText || el.textContent || el.getAttribute("aria-label") || "";
+    }
+    const cleanMsg = String(textMsg || "").trim().replace(/\s+/g, " ").slice(0, 200);
+    // Ignore empty live-region/alert placeholders (common in React/ChatGPT/SPAs)
+    if (!cleanMsg) continue;
+    const dedupKey = `${isField ? cssPath(el) : ""}|${cleanMsg.toLowerCase()}`;
+    if (seenAlertKeys.has(dedupKey)) continue;
+    seenAlertKeys.add(dedupKey);
+    alerts.push(
+      item(el, "alert", {
+        errorMessage: cleanMsg,
+      }),
+    );
+  }
 
   // --- PAGE COMPLETENESS & VIEWPORT METRICS ---
   const docEl = document.documentElement || {};

@@ -470,8 +470,9 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     return true;
   }
   if (msg.type === "HIGHLIGHT") {
-    highlightElement(msg.selector, msg.title, msg.description, msg.buddyVisual).then(safeReply, (e) =>
-      safeReply({ ok: false, error: String(e?.message || e) }),
+    highlightElement(msg.selector, msg.title, msg.description, msg.buddyVisual, msg.frameId).then(
+      safeReply,
+      (e) => safeReply({ ok: false, error: String(e?.message || e) }),
     );
     return true;
   }
@@ -2322,7 +2323,7 @@ async function ask(
  * Uses a lightweight pointer beacon at the side-panel edge with an extending pointer beam,
  * target pulse outline ring, and callout card — NEVER spawning a duplicate Buddy mascot on the page.
  */
-function highlight(selector, title, description, options = {}) {
+async function highlight(selector, title, description, options = {}) {
   const queryDeepSelector = (sel, root = document) => {
     if (!sel) return null;
     try {
@@ -2347,8 +2348,13 @@ function highlight(selector, title, description, options = {}) {
   const ID = "ai-buddy-arm-overlay";
   document.getElementById(ID)?.remove();
 
-  // Scroll element into view smoothly if not already fully visible (NEVER clicks or modifies element)
-  el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+  const initialRect = el.getBoundingClientRect();
+  const initialVh = window.visualViewport?.height || window.innerHeight || 720;
+  const needsScroll = initialRect.top < 24 || initialRect.bottom > initialVh - 24;
+  // Scroll element into view smoothly only if outside comfortable viewport bounds (NEVER clicks or modifies element)
+  if (needsScroll) {
+    el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+  }
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   const accentColor =
@@ -2377,7 +2383,7 @@ function highlight(selector, title, description, options = {}) {
       svg.canvas { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
       .pointer-beam-glow { fill: none; stroke: ${accentColor}; stroke-width: 8; stroke-linecap: round; opacity: 0.28; }
       .pointer-beam { fill: none; stroke: #2dd4bf; stroke-width: 3; stroke-linecap: round; stroke-dasharray: 6 6; }
-      .ring { position: absolute; border: 3px solid #14b8a6; border-radius: 10px; box-shadow: 0 0 0 4px rgba(20,184,166,0.25), 0 0 28px rgba(20,184,166,0.6); pointer-events: none; }
+      .ring { position: absolute; border: 3px solid #14b8a6; border-radius: 10px; box-shadow: 0 0 0 4px rgba(20,184,166,0.25), 0 0 28px rgba(20,184,166,0.6); pointer-events: none; box-sizing: border-box; }
       .ring.pulse { animation: pulseAnim 1.4s ease-out infinite; }
       @keyframes pulseAnim { 0% { box-shadow: 0 0 0 0 rgba(20,184,166,0.65); } 100% { box-shadow: 0 0 0 18px rgba(20,184,166,0); } }
       .card { position: absolute; max-width: 290px; padding: 10px 14px; border-radius: 12px; background: #0f172a; color: #f8fafc; font: 500 12px/1.4 system-ui, -apple-system, sans-serif; box-shadow: 0 10px 30px rgba(0,0,0,0.45); border: 1px solid rgba(20,184,166,0.6); opacity: 0; transform: translateY(6px); transition: opacity .3s ease, transform .3s ease; pointer-events: auto; }
@@ -2434,37 +2440,64 @@ function highlight(selector, title, description, options = {}) {
   let retractStartTime = 0;
   let frame = 0;
 
+  const getViewportMetrics = () => {
+    const vv = window.visualViewport;
+    return {
+      vw: Math.max(120, vv?.width || window.innerWidth || 1280),
+      vh: Math.max(120, vv?.height || window.innerHeight || 720),
+      offsetLeft: vv?.offsetLeft || 0,
+      offsetTop: vv?.offsetTop || 0,
+    };
+  };
+
+  const computeTargetCoords = () => {
+    const r = el.getBoundingClientRect();
+    const { vw, vh } = getViewportMetrics();
+    const cx = Math.max(0, Math.min(vw, r.left + r.width / 2));
+    const cy = Math.max(0, Math.min(vh, r.top + r.height / 2));
+    return {
+      rect: r,
+      vw,
+      vh,
+      targetXRatio: Number((cx / vw).toFixed(3)),
+      targetYRatio: Number((cy / vh).toFixed(3)),
+    };
+  };
+
   const updatePositions = () => {
     if (!host.isConnected || !el.isConnected) {
       cleanupOverlay();
       return;
     }
-    const r = el.getBoundingClientRect();
+    const { rect: r, vw, vh } = computeTargetCoords();
     if (r.width === 0 && r.height === 0 && el.getClientRects().length === 0) {
       ring.style.display = "none";
       return;
     }
     ring.style.display = "block";
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
 
-    // Position outline ring around target
-    ring.style.left = `${Math.max(0, r.left - 6)}px`;
-    ring.style.top = `${Math.max(0, r.top - 6)}px`;
-    ring.style.width = `${r.width + 12}px`;
-    ring.style.height = `${r.height + 12}px`;
+    // Clamp outline ring cleanly within viewport even under zoom or near edges
+    const ringLeft = Math.max(2, Math.min(vw - 24, r.left - 6));
+    const ringTop = Math.max(2, Math.min(vh - 24, r.top - 6));
+    const ringRight = Math.min(vw - 2, r.right + 6);
+    const ringBottom = Math.min(vh - 2, r.bottom + 6);
+    ring.style.left = `${ringLeft}px`;
+    ring.style.top = `${ringTop}px`;
+    ring.style.width = `${Math.max(16, ringRight - ringLeft)}px`;
+    ring.style.height = `${Math.max(16, ringBottom - ringTop)}px`;
 
     // Coordinated origin right at the side-panel edge aligned near the target vertical band
     const originX = vw - 10;
-    const originY = Math.max(40, Math.min(vh - 40, r.top + r.height / 2));
+    const clampedTargetY = Math.max(24, Math.min(vh - 24, r.top + r.height / 2));
+    const originY = Math.max(40, Math.min(vh - 40, clampedTargetY));
     pointerOrigin.setAttribute("transform", `translate(${originX}, ${originY.toFixed(1)})`);
 
     const edgeX = r.right > vw - 40 ? r.left + r.width / 2 : r.right + 10;
-    const targetX = Math.min(vw - 24, edgeX);
-    const targetY = r.top + r.height / 2;
+    const targetX = Math.max(16, Math.min(vw - 24, edgeX));
+    const targetY = clampedTargetY;
 
     const midX = originX - (originX - targetX) * 0.5;
-    const midY = Math.min(originY, targetY) - 28;
+    const midY = Math.max(16, Math.min(originY, targetY) - 28);
 
     const t = isRetracting ? Math.max(0, 1 - progress) : progress;
     const ease = 1 - Math.pow(1 - t, 3);
@@ -2515,11 +2548,15 @@ function highlight(selector, title, description, options = {}) {
     cancelAnimationFrame(frame);
     window.removeEventListener("scroll", onViewportChange, true);
     window.removeEventListener("resize", onViewportChange);
+    window.visualViewport?.removeEventListener?.("resize", onViewportChange);
+    window.visualViewport?.removeEventListener?.("scroll", onViewportChange);
     host.remove();
   };
 
   window.addEventListener("scroll", onViewportChange, { passive: true, capture: true });
   window.addEventListener("resize", onViewportChange, { passive: true });
+  window.visualViewport?.addEventListener?.("resize", onViewportChange);
+  window.visualViewport?.addEventListener?.("scroll", onViewportChange);
 
   const tick = (now) => {
     if (cleanedUp) return;
@@ -2534,6 +2571,7 @@ function highlight(selector, title, description, options = {}) {
     frame = requestAnimationFrame(tick);
   };
 
+  updatePositions();
   frame = requestAnimationFrame(tick);
 
   // Smooth retraction after 10 seconds (long enough to identify)
@@ -2545,16 +2583,57 @@ function highlight(selector, title, description, options = {}) {
     setTimeout(cleanupOverlay, 550);
   }, 10000);
 
-  return true;
+  // Wait for smooth scroll to settle so returned viewport coordinates reflect the final visible position
+  if (needsScroll && !reduce) {
+    await new Promise((resolve) => {
+      let lastTop = el.getBoundingClientRect().top;
+      let stableFrames = 0;
+      const deadline = performance.now() + 650;
+      const checkScroll = () => {
+        const curTop = el.getBoundingClientRect().top;
+        if (Math.abs(curTop - lastTop) < 1.5) {
+          stableFrames += 1;
+        } else {
+          stableFrames = 0;
+        }
+        lastTop = curTop;
+        if (stableFrames >= 3 || performance.now() >= deadline) {
+          resolve();
+        } else {
+          setTimeout(checkScroll, 50);
+        }
+      };
+      setTimeout(checkScroll, 80);
+    });
+  } else {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  updatePositions();
+  const settled = computeTargetCoords();
+  return {
+    ok: true,
+    targetXRatio: settled.targetXRatio,
+    targetYRatio: settled.targetYRatio,
+    rect: {
+      left: Math.round(settled.rect.left),
+      top: Math.round(settled.rect.top),
+      width: Math.round(settled.rect.width),
+      height: Math.round(settled.rect.height),
+    },
+  };
 }
 
-async function highlightElement(selector, title, description, buddyVisual) {
+async function highlightElement(selector, title, description, buddyVisual, frameId) {
   const tab = await activeTab();
   if (!tab?.id || !tab.url || RESTRICTED.test(tab.url)) {
     return { ok: false, message: "Cannot access this browser tab." };
   }
+  const target =
+    typeof frameId === "number" && frameId > 0
+      ? { tabId: tab.id, frameIds: [frameId] }
+      : { tabId: tab.id };
   const run = await runTabScript({
-    target: { tabId: tab.id },
+    target,
     func: highlight,
     args: [selector, title || null, description || null, buddyVisual || {}],
     label: "highlight",
@@ -2562,7 +2641,11 @@ async function highlightElement(selector, title, description, buddyVisual) {
   if (!run.ok) {
     return { ok: false, message: run.error || "Could not highlight element." };
   }
-  return { ok: Boolean(run.results?.[0]?.result) };
+  const resVal = run.results?.[0]?.result;
+  if (resVal && typeof resVal === "object") {
+    return { ok: Boolean(resVal.ok), ...resVal };
+  }
+  return { ok: Boolean(resVal) };
 }
 
 async function clearHighlightOverlay() {
@@ -2670,7 +2753,7 @@ async function smartFillForm(fields, options = {}) {
       };
 
       const resolveEditableTarget = (el) => {
-        if (!el) return null;
+        if (!el || el === document.body || el === document.documentElement) return null;
         if (isEditableEl(el)) return el;
         // Resolve <label for="..."> directly instead of guessing other inputs in the form
         if (el.tagName === "LABEL") {
@@ -2907,6 +2990,9 @@ async function smartFillForm(fields, options = {}) {
           "sellername",
           "personname",
         ],
+        firstname: ["first", "givenname", "fname", "name", "naam"],
+        lastname: ["last", "surname", "familyname", "lname", "secondname"],
+        surname: ["lastname", "last", "familyname", "lname"],
         naam: ["name", "fullname", "yourname", "firstname", "username", "customername"],
         fullname: ["name", "naam", "legalname", "username", "firstname"],
         legalname: ["company", "businessname", "firmname", "organization", "companyname", "name", "registeredname"],
@@ -3015,16 +3101,39 @@ async function smartFillForm(fields, options = {}) {
             const hlEl = resolveEditableTarget(queryDeepSelector(opts.fallbackSelector));
             if (hlEl && validateInteractability(hlEl).ok) return { el: hlEl };
           }
-          const active = resolveEditableTarget(document.activeElement);
+          const rawActive = document.activeElement;
+          const active =
+            rawActive &&
+            rawActive !== document.body &&
+            rawActive !== document.documentElement
+              ? resolveEditableTarget(rawActive)
+              : null;
           if (active && active !== document.body && validateInteractability(active).ok) return { el: active };
-          const visibleInputs = elements.filter(
+          const rawVisible = elements.filter(
             (el) => validateInteractability(el).ok && !claimedElements.has(el),
           );
-          if (visibleInputs.length === 1) return { el: visibleInputs[0] };
+          // Deduplicate nested editable wrappers (e.g., [role="textbox"] wrapping [contenteditable="true"])
+          const visibleInputs = rawVisible.filter(
+            (el) => !rawVisible.some((other) => other !== el && el.contains?.(other)),
+          );
+          const isTextInputEl = (el) =>
+            el.tagName === "TEXTAREA" ||
+            isContentEditableEl(el) ||
+            ["textbox", "searchbox"].includes(el.getAttribute?.("role")) ||
+            (el.tagName === "INPUT" &&
+              !["checkbox", "radio", "button", "submit", "reset", "file", "range", "color", "image", "hidden"].includes(
+                (el.type || "text").toLowerCase(),
+              ));
+          const textInputs =
+            typeof entryVal === "boolean"
+              ? visibleInputs
+              : visibleInputs.filter(isTextInputEl);
+          const candidatePool = textInputs.length > 0 ? textInputs : visibleInputs;
+          if (candidatePool.length === 1) return { el: candidatePool[0] };
 
           // Try semantic inference from value format (mobile number, email, URL)
           const rawValStr = String(entryVal || "").trim();
-          if (visibleInputs.length > 1 && rawValStr) {
+          if (candidatePool.length > 1 && rawValStr) {
             let inferredKey = null;
             if (/^(\+?\d{1,3}[\s-]?)?[6-9]\d{9}$/.test(rawValStr.replace(/\s+/g, ""))) {
               inferredKey = "phone";
@@ -3038,13 +3147,28 @@ async function smartFillForm(fields, options = {}) {
             }
           }
 
-          if (visibleInputs.length > 1 && opts?.fromChatCommand) {
-            const emptyInputs = visibleInputs.filter((el) => {
+          if (candidatePool.length > 1 && opts?.fromChatCommand) {
+            const emptyInputs = candidatePool.filter((el) => {
               const cur = isContentEditableEl(el) ? el.innerText : el.value;
-              return !String(cur || "").trim();
+              return !String(cur || "").replace(/[\u200B\s]/g, "");
             });
-            const pool = emptyInputs.length > 0 ? emptyInputs : visibleInputs;
+            const pool = emptyInputs.length > 0 ? emptyInputs : candidatePool;
             if (pool.length === 1) return { el: pool[0] };
+
+            // On chat/search SPA pages (ChatGPT, Google AI Mode), a single primary composer box is unambiguous
+            const isComposerBox = (el) => {
+              const hint = `${el.id || ""} ${el.className || ""} ${el.placeholder || ""} ${el.getAttribute?.("aria-label") || ""} ${el.getAttribute?.("data-placeholder") || ""}`.toLowerCase();
+              return (
+                el.id === "prompt-textarea" ||
+                /\bprosemirror\b/.test(hint) ||
+                /\b(?:ask anything|ask chatgpt|message chatgpt|type a message|type your prompt|ask a follow-up|follow-up)\b/.test(
+                  hint,
+                )
+              );
+            };
+            const composerMatches = pool.filter(isComposerBox);
+            if (composerMatches.length === 1) return { el: composerMatches[0] };
+
             return {
               ambiguous: true,
               key,
@@ -3056,8 +3180,30 @@ async function smartFillForm(fields, options = {}) {
             };
           }
 
-          if (visibleInputs.length > 0) return { el: visibleInputs[0] };
+          if (candidatePool.length > 0) return { el: candidatePool[0] };
           return { el: null };
+        }
+
+        const rawKeyTrim = String(key || "").trim();
+        if (/^__INDEX_(\d+|LAST)__$/.test(rawKeyTrim)) {
+          const idxRaw = rawKeyTrim.match(/^__INDEX_(\d+|LAST)__$/)?.[1];
+          const rawOrdered = elements.filter((el) => validateInteractability(el).ok);
+          const dedupOrdered = rawOrdered.filter(
+            (el) => !rawOrdered.some((other) => other !== el && el.contains?.(other)),
+          );
+          const formOrdered = dedupOrdered.filter(
+            (el) =>
+              el.tagName !== "BUTTON" &&
+              el.type !== "submit" &&
+              el.type !== "button" &&
+              el.type !== "reset",
+          );
+          const pool = formOrdered.length > 0 ? formOrdered : dedupOrdered;
+          if (idxRaw === "LAST") {
+            return { el: pool[pool.length - 1] || null };
+          }
+          const numIdx = Number(idxRaw);
+          return { el: pool[numIdx] || null };
         }
 
         const normKey = normalize(key);
@@ -3134,6 +3280,31 @@ async function smartFillForm(fields, options = {}) {
 
         return { el: null };
       };
+
+      if (opts?.clearSelector) {
+        try {
+          const prevEl = resolveEditableTarget(queryDeepSelector(opts.clearSelector));
+          if (prevEl && validateInteractability(prevEl).ok) {
+            if (isContentEditableEl(prevEl)) {
+              prevEl.textContent = "";
+            } else if (prevEl.tagName === "INPUT" || prevEl.tagName === "TEXTAREA") {
+              const proto =
+                prevEl.tagName === "TEXTAREA"
+                  ? window.HTMLTextAreaElement.prototype
+                  : window.HTMLInputElement.prototype;
+              const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+              if (nativeSetter) nativeSetter.call(prevEl, "");
+              else prevEl.value = "";
+            } else if (prevEl.tagName === "SELECT") {
+              prevEl.value = "";
+            }
+            if (prevEl._valueTracker) prevEl._valueTracker.setValue("");
+            prevEl.dispatchEvent(new Event("input", { bubbles: true }));
+            prevEl.dispatchEvent(new Event("change", { bubbles: true }));
+            claimedElements.add(prevEl);
+          }
+        } catch {}
+      }
 
       // Build ordered fill entries from either array (explicitPairs) or object (fieldsToFill)
       const entries = Array.isArray(opts?.explicitPairs)
@@ -3341,39 +3512,57 @@ async function smartFillForm(fields, options = {}) {
               candidate.dispatchEvent(new Event("change", { bubbles: true }));
             }
           } else if (isCe) {
-            // Contenteditable editors (React, Lexical, ProseMirror, Angular, Google AI Studio)
+            // Contenteditable editors (React, Lexical, ProseMirror/ChatGPT, Angular, Google AI Studio)
+            let inserted = false;
             try {
-              const selObj = window.getSelection();
-              const range = document.createRange();
-              range.selectNodeContents(candidate);
-              selObj?.removeAllRanges();
-              selObj?.addRange(range);
-              document.execCommand("selectAll", false, null);
-              const inserted = document.execCommand("insertText", false, strVal);
-              if (!inserted || !(candidate.innerText || candidate.textContent || "").includes(strVal)) {
-                candidate.innerText = strVal;
+              candidate.focus?.();
+              const selObj = window.getSelection?.();
+              if (selObj && document.createRange) {
+                const range = document.createRange();
+                range.selectNodeContents(candidate);
+                selObj.removeAllRanges();
+                selObj.addRange(range);
+              }
+              if (typeof document.execCommand === "function") {
+                document.execCommand("selectAll", false, null);
+                inserted = Boolean(document.execCommand("insertText", false, strVal));
               }
             } catch {
-              candidate.innerText = strVal;
+              inserted = false;
+            }
+            const curAfterExec = String(candidate.innerText || candidate.textContent || "")
+              .replace(/\u200B/g, "")
+              .trim();
+            if (!inserted || !curAfterExec.includes(strVal.trim())) {
+              try {
+                candidate.dispatchEvent(
+                  new InputEvent("beforeinput", {
+                    bubbles: true,
+                    cancelable: true,
+                    inputType: "insertText",
+                    data: strVal,
+                  }),
+                );
+              } catch {}
+              const firstP = candidate.querySelector?.("p");
+              if (firstP && candidate.children?.length === 1) {
+                firstP.textContent = strVal;
+              } else {
+                candidate.textContent = strVal;
+              }
             }
             try {
               candidate.dispatchEvent(
-                new InputEvent("beforeinput", {
+                new InputEvent("input", {
                   bubbles: true,
                   cancelable: true,
                   inputType: "insertText",
                   data: strVal,
                 }),
               );
-            } catch {}
-            candidate.dispatchEvent(
-              new InputEvent("input", {
-                bubbles: true,
-                cancelable: true,
-                inputType: "insertText",
-                data: strVal,
-              }),
-            );
+            } catch {
+              candidate.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+            }
             candidate.dispatchEvent(new Event("change", { bubbles: true }));
           } else {
             const proto =
@@ -3453,13 +3642,14 @@ async function smartFillForm(fields, options = {}) {
               comboVal.includes(strVal) ||
               normalize(comboVal).includes(normalize(strVal));
           } else {
-            const verifiedValue = isCe
+            const rawVerified = isCe
               ? candidate.innerText || candidate.textContent || ""
               : candidate.value || "";
+            const verifiedValue = String(rawVerified).replace(/\u200B/g, "").trim();
             actualReadback = verifiedValue;
             verified =
-              verifiedValue === strVal ||
-              verifiedValue.includes(strVal) ||
+              verifiedValue === strVal.trim() ||
+              verifiedValue.includes(strVal.trim()) ||
               (normalize(strVal).length > 0 && normalize(verifiedValue).includes(normalize(strVal)));
           }
 
@@ -3480,6 +3670,7 @@ async function smartFillForm(fields, options = {}) {
             results.filled.push({
               key,
               field: fieldLabel,
+              selector: getUniqueSelector(candidate),
               value: maskedVal,
               verified: true,
             });
@@ -3488,6 +3679,7 @@ async function smartFillForm(fields, options = {}) {
             results.errors.push({
               key,
               field: fieldLabel,
+              selector: getUniqueSelector(candidate),
               error: actualReadback
                 ? `Field rejected or altered value (got "${check.isSensitive ? "••••••" : String(actualReadback).slice(0, 60)}")`
                 : `Field "${fieldLabel}" rejected or cleared the value`,
@@ -3496,6 +3688,43 @@ async function smartFillForm(fields, options = {}) {
         } catch (err) {
           results.errors.push({ key, error: String(err?.message || err) });
         }
+      }
+
+      // Compute remaining unfilled interactable form fields in DOM order so step-by-step chat fill can continue naturally
+      try {
+        const visibleInteractables = elements.filter((el) => validateInteractability(el).ok);
+        const dedupedInteractables = visibleInteractables.filter(
+          (el) => !visibleInteractables.some((other) => other !== el && el.contains?.(other)),
+        );
+        const targetFormScope = successfullyFilled[0]?.closest?.("form") || null;
+        const remaining = [];
+        for (const el of dedupedInteractables) {
+          if (targetFormScope && !targetFormScope.contains(el)) continue;
+          if (el.type === "submit" || el.type === "button" || el.type === "reset") continue;
+          const isCb =
+            el.type === "checkbox" ||
+            el.type === "radio" ||
+            el.getAttribute?.("role") === "checkbox" ||
+            el.getAttribute?.("role") === "radio";
+          const curEmpty = isCb
+            ? !(el.checked || el.getAttribute?.("aria-checked") === "true")
+            : isContentEditableEl(el)
+              ? !String(el.innerText || el.textContent || "").replace(/[\u200B\s]/g, "")
+              : !String(el.value || "").trim();
+          if (curEmpty && !successfullyFilled.includes(el)) {
+            remaining.push({
+              index: remaining.length + 1,
+              label: getFieldDisplayLabel(el),
+              selector: getUniqueSelector(el),
+              name: el.name || el.id || "",
+              type: el.type || el.tagName.toLowerCase(),
+              required: Boolean(el.required || el.getAttribute?.("aria-required") === "true"),
+            });
+          }
+        }
+        results.remainingFields = remaining.slice(0, 20);
+      } catch {
+        results.remainingFields = [];
       }
 
       // 4. Detect Submit Trigger for explicit confirmation gate
@@ -3861,6 +4090,27 @@ async function findContentOnPage(query, options = {}) {
         return sc >= topCandidateScore - 2 && !finalPool[0].contains(el) && !el.contains(finalPool[0]);
       });
 
+      const getContextLabel = (el) => {
+        const container = el.closest?.(
+          '[role="dialog"], section, article, aside, nav, header, footer, main, form, fieldset, tr, [role="row"], .card, [class*="card"], [class*="modal"]',
+        );
+        if (container) {
+          const aria = container.getAttribute?.("aria-label");
+          if (aria) return normalize(aria).slice(0, 45);
+          const heading = container.querySelector?.("h1, h2, h3, h4, legend, caption, [role='heading']");
+          if (heading?.innerText) return normalize(heading.innerText).slice(0, 45);
+          if (container.tagName === "NAV" || container.tagName === "HEADER") return "Top navigation";
+          if (container.tagName === "FOOTER") return "Footer section";
+          if (container.tagName === "ASIDE") return "Sidebar";
+          if (container.tagName === "TR" || container.getAttribute?.("role") === "row") {
+            const rowTxt = normalize(container.innerText || "").slice(0, 40);
+            if (rowTxt) return `Row: ${rowTxt}`;
+          }
+          if (container.id) return container.id.replace(/[-_]+/g, " ").slice(0, 35);
+        }
+        return "";
+      };
+
       const matches = finalPool.slice(0, 30).map((el, idx) => {
         const fullText = normalize(
           el.innerText ||
@@ -3887,6 +4137,7 @@ async function findContentOnPage(query, options = {}) {
           index: idx + 1,
           tag: el.tagName.toLowerCase(),
           selector: getSelector(el),
+          context: getContextLabel(el),
           textSnippet: snippet,
           fullText: fullText.slice(0, 200),
           isClickable:
@@ -3999,15 +4250,17 @@ async function findContentOnPage(query, options = {}) {
 
   if (result.ok && !result.ambiguous && result.firstSelector && options?.highlight !== false) {
     await clearHighlightOverlay();
+    let hlRes = null;
     if (targetFrameId === 0) {
-      await highlightElement(
+      hlRes = await highlightElement(
         result.firstSelector,
         options?.title || `Pointing: ${query}`,
         result.matches?.[0]?.textSnippet || `Found ${result.totalMatches} match(es) for "${query}".`,
         options?.buddyVisual,
+        0,
       );
     } else {
-      await runTabScript({
+      const subHl = await runTabScript({
         target: { tabId: tab.id, frameIds: [targetFrameId] },
         func: highlight,
         args: [
@@ -4018,9 +4271,15 @@ async function findContentOnPage(query, options = {}) {
         ],
         label: "findContent:subframeHighlight",
       });
+      hlRes = subHl.results?.[0]?.result || null;
+    }
+    if (hlRes && typeof hlRes === "object") {
+      if (typeof hlRes.targetXRatio === "number") result.targetXRatio = hlRes.targetXRatio;
+      if (typeof hlRes.targetYRatio === "number") result.targetYRatio = hlRes.targetYRatio;
     }
   }
 
+  result.frameId = targetFrameId;
   return result;
 }
 
