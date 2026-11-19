@@ -1107,6 +1107,18 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       aiError,
     });
 
+    const effectiveProviderWarning = routingDecision.providerWarning ?? {
+      requestedProvider: "gemini",
+      requestedProviderName: "Google Gemini",
+      status: aiError.kind === "auth" ? "missing_api" : "not_connected",
+      missingKey: "GEMINI_API_KEY",
+      fallbackUsed: "Local Grounded Companion",
+      message:
+        persona.language === "english"
+          ? `Gemini AI unavailable (${aiError.kind === "auth" ? "GEMINI_API_KEY missing or invalid" : aiError.userMessage}). Using limited local page helper.`
+          : `Gemini AI available nahi hai (${aiError.kind === "auth" ? "GEMINI_API_KEY missing ya invalid hai" : aiError.userMessage}). Abhi limited local page helper chal raha hai.`,
+    };
+
     return {
       taskId,
       reply: fallback.reply,
@@ -1123,7 +1135,7 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       fellBack: true,
       aiFallbackUsed: true,
       blocked: aiError.kind === "credits" || aiError.kind === "blocked",
-      providerWarning: routingDecision.providerWarning,
+      providerWarning: effectiveProviderWarning,
       recommendedMode,
     };
   }
@@ -1377,6 +1389,18 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
       aiError,
     });
 
+    const effectiveProviderWarning = routingDecision.providerWarning ?? {
+      requestedProvider: "gemini",
+      requestedProviderName: "Google Gemini",
+      status: aiError.kind === "auth" ? "missing_api" : "not_connected",
+      missingKey: "GEMINI_API_KEY",
+      fallbackUsed: "Local Grounded Companion",
+      message:
+        persona.default_language === "english"
+          ? `Gemini AI unavailable (${aiError.kind === "auth" ? "GEMINI_API_KEY missing or invalid" : aiError.userMessage}). Using limited local page helper.`
+          : `Gemini AI available nahi hai (${aiError.kind === "auth" ? "GEMINI_API_KEY missing ya invalid hai" : aiError.userMessage}). Abhi limited local page helper chal raha hai.`,
+    };
+
     return {
       taskId: null,
       reply: fallback.reply,
@@ -1393,7 +1417,7 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
       fellBack: true,
       aiFallbackUsed: true,
       blocked: aiError.kind === "credits" || aiError.kind === "blocked",
-      providerWarning: routingDecision.providerWarning,
+      providerWarning: effectiveProviderWarning,
       recommendedMode,
     };
   }

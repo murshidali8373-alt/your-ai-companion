@@ -875,7 +875,7 @@ async function generateAutonomousCompanionReply({
   const activeBuddy = getBuddyPresetInternal(buddySlug);
   const isHindiLang = activeBuddy.defaultLanguage !== "english";
   const qLower = question.toLowerCase().trim();
-  const providerWarning = buildMissingProviderWarning(
+  const baseProviderWarning = buildMissingProviderWarning(
     preferredProvider,
     isHindiLang,
     userApiKey ? "Google Gemini" : "Local Grounded Companion",
@@ -1091,6 +1091,26 @@ Return strictly valid JSON with keys:
     }
   }
 
+  const effectiveLocalWarning =
+    baseProviderWarning ||
+    ({
+      requestedProvider: "gemini",
+      requestedProviderName: "Google Gemini",
+      status: directAuthError ? "auth_error" : "missing_api",
+      missingKey: "GEMINI_API_KEY",
+      fallbackUsed: "Local Grounded Companion",
+      message:
+        directAuthError ||
+        (isHindiLang
+          ? "Gemini AI unavailable hai (GEMINI_API_KEY server ya Settings mein set nahi hai). Abhi limited local DOM helper chal raha hai — smart AI reasoning off hai."
+          : "Gemini AI is unavailable (GEMINI_API_KEY is not configured on the server or in Settings). Running limited local DOM helper."),
+    });
+  const localMeta = {
+    activeProvider: "local_grounded",
+    aiFallbackUsed: true,
+    providerWarning: effectiveLocalWarning,
+  };
+
   // 2. Local Grounded Companion Engine (Always active, zero external network required)
   // Greetings
   if (
@@ -1115,6 +1135,7 @@ Return strictly valid JSON with keys:
       buddyName: activeBuddy.name,
       permission: "explain",
       guest: true,
+      ...localMeta,
     };
   }
 
@@ -1162,6 +1183,7 @@ Return strictly valid JSON with keys:
       buddyName: activeBuddy.name,
       permission: "interact",
       guest: true,
+      ...localMeta,
     };
   }
 
@@ -1196,6 +1218,7 @@ Return strictly valid JSON with keys:
       buddyName: activeBuddy.name,
       permission: "explain",
       guest: true,
+      ...localMeta,
     };
   }
 
@@ -1230,6 +1253,7 @@ Return strictly valid JSON with keys:
         buddyName: activeBuddy.name,
         permission: "explain",
         guest: true,
+        ...localMeta,
       };
     }
 
@@ -1264,6 +1288,7 @@ Return strictly valid JSON with keys:
       buddyName: activeBuddy.name,
       permission: "interact",
       guest: true,
+      ...localMeta,
     };
   }
 
@@ -1301,7 +1326,7 @@ Return strictly valid JSON with keys:
       buddyName: activeBuddy.name,
       permission: "explain",
       guest: true,
-      providerWarning,
+      ...localMeta,
     };
   }
 
@@ -1343,6 +1368,7 @@ Return strictly valid JSON with keys:
       buddyName: activeBuddy.name,
       permission: "interact",
       guest: true,
+      ...localMeta,
     };
   }
 
@@ -1388,6 +1414,7 @@ Return strictly valid JSON with keys:
         buddyName: activeBuddy.name,
         permission: "explain",
         guest: true,
+        ...localMeta,
       };
     }
   }
@@ -1422,6 +1449,41 @@ Return strictly valid JSON with keys:
         buddyName: activeBuddy.name,
         permission: "explain",
         guest: true,
+        ...localMeta,
+      };
+    }
+  }
+
+  // Alert / Error isolation BEFORE raw snapshot.text snippet dump
+  const isErrorExplainQuery =
+    /\b(?:error|alert|warning|issue|invalid|failed|fail|problem|galat|dikkat)\b/i.test(qLower);
+  if (snapshot && isErrorExplainQuery) {
+    const alertList = Array.isArray(snapshot.alerts) ? snapshot.alerts : [];
+    const alertTexts = alertList
+      .map((a) => String(a?.errorMessage || a?.name || "").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    if (alertTexts.length > 0) {
+      const isHindi = activeBuddy.defaultLanguage !== "english";
+      const firstAlert = alertList[0] || null;
+      const answer = isHindi
+        ? `⚠️ Is webpage par yeh error/alert dikh raha hai:\n• ${alertTexts.slice(0, 3).join("\n• ")}`
+        : `⚠️ This webpage is showing the following error/alert:\n• ${alertTexts.slice(0, 3).join("\n• ")}`;
+      return {
+        taskId: null,
+        reply: {
+          answer,
+          highlight: firstAlert?.ref || null,
+          confidence: "high",
+          needs: null,
+          emotion: "concerned",
+        },
+        highlightSelector: firstAlert?.selector || null,
+        calloutTitle: "Page Error / Alert",
+        calloutDescription: alertTexts[0].slice(0, 120),
+        buddyName: activeBuddy.name,
+        permission: "explain",
+        guest: true,
+        ...localMeta,
       };
     }
   }
@@ -1434,8 +1496,8 @@ Return strictly valid JSON with keys:
   if (snapshot && !isSummaryQuery) {
     const STOPWORDS = new Set([
       "what", "is", "are", "the", "of", "in", "on", "for", "to", "a", "an", "and", "or",
-      "this", "that", "page", "tell", "me", "about", "check", "show", "give", "find",
-      "kya", "hai", "ka", "ki", "ke", "mein", "me", "par", "batao", "bata", "kitna", "kitni",
+      "this", "that", "page", "webpage", "tell", "me", "about", "check", "show", "give", "find",
+      "explain", "why", "showing", "kya", "hai", "ka", "ki", "ke", "mein", "me", "par", "batao", "bata", "kitna", "kitni",
     ]);
     const rawTokens = qLower
       .replace(/[^\w\s-]/g, " ")
@@ -1480,7 +1542,7 @@ Return strictly valid JSON with keys:
           buddyName: activeBuddy.name,
           permission: "explain",
           guest: true,
-          providerWarning,
+          ...localMeta,
         };
       }
     }
@@ -1498,7 +1560,7 @@ Return strictly valid JSON with keys:
         }
       }
       if (bestIdx >= 0) {
-        const start = Math.max(0, bestIdx - 80);
+        const start = Math.max(0, bestIdx - 20);
         const end = Math.min(snapshot.text.length, bestIdx + 180);
         const excerpt = snapshot.text.slice(start, end).trim();
         const isHindi = activeBuddy.defaultLanguage !== "english";
@@ -1518,10 +1580,37 @@ Return strictly valid JSON with keys:
           buddyName: activeBuddy.name,
           permission: "explain",
           guest: true,
-          providerWarning,
+          ...localMeta,
         };
       }
     }
+  }
+
+  // Never dump generic webpage overview when user gave an unmatched short/conversational command in interpret_command mode!
+  if (intent === "interpret_command" && !isSummaryQuery) {
+    const isHindi = activeBuddy.defaultLanguage !== "english";
+    const clarifyAnswer = isHindi
+      ? "Mujhe poora clear nahi hua ki aap kis action ya element ki baat kar rahe hain. Kripya thoda saaf batayein (jaise button ka naam ya kaunsa field fill karna hai)."
+      : "I wasn't sure which specific element or action you meant. Could you name the button, link, or field you want me to act on?";
+    return {
+      taskId: null,
+      reply: {
+        answer: clarifyAnswer,
+        highlight: null,
+        confidence: "low",
+        needs: "clarification",
+        emotion: "curious",
+        actionType: "ask_clarification",
+      },
+      actionType: "ask_clarification",
+      needsClarification: true,
+      clarificationQuestion: clarifyAnswer,
+      highlightSelector: null,
+      buddyName: activeBuddy.name,
+      permission: "explain",
+      guest: true,
+      ...localMeta,
+    };
   }
 
   // Page Explanation / Summary / General Page Analysis
@@ -1561,17 +1650,6 @@ Return strictly valid JSON with keys:
       answer += `Let me know what you would like to do on this page—I can highlight elements, auto-fill forms, or answer specific questions!`;
     }
 
-    const effectiveWarning = directAuthError
-      ? {
-          requestedProvider: "gemini",
-          requestedProviderName: "Google Gemini",
-          status: "auth_error",
-          missingKey: "GEMINI_API_KEY",
-          fallbackUsed: "Local Grounded Companion",
-          message: directAuthError,
-        }
-      : providerWarning;
-
     return {
       taskId: null,
       reply: {
@@ -1585,7 +1663,7 @@ Return strictly valid JSON with keys:
       buddyName: activeBuddy.name,
       permission: "explain",
       guest: true,
-      providerWarning: effectiveWarning,
+      ...localMeta,
     };
   }
 
@@ -1594,17 +1672,6 @@ Return strictly valid JSON with keys:
   const fallbackAnswer = isHindi
     ? `Main aapka ${activeBuddy.name} hoon. Main is browser window mein active hoon! Aap kisi bhi webpage par jakar mujhse page explain karne, buttons dhundhne, ya form bharne ko keh sakte hain.`
     : `I am ${activeBuddy.name}, your browser companion! I am active and ready. Open any website and ask me to explain the page, find buttons, or automate actions.`;
-
-  const effectiveWarning = directAuthError
-    ? {
-        requestedProvider: "gemini",
-        requestedProviderName: "Google Gemini",
-        status: "auth_error",
-        missingKey: "GEMINI_API_KEY",
-        fallbackUsed: "Local Grounded Companion",
-        message: directAuthError,
-      }
-    : providerWarning;
 
   return {
     taskId: null,
@@ -1619,7 +1686,7 @@ Return strictly valid JSON with keys:
     buddyName: activeBuddy.name,
     permission: "explain",
     guest: true,
-    providerWarning: effectiveWarning,
+    ...localMeta,
   };
 }
 
@@ -2023,42 +2090,52 @@ async function ask(
   });
 
   try {
-    let res;
-    const candidateHosts = [apiBase, DEFAULT_HOST, FALLBACK_PRE_HOST].filter(
+    let res = null;
+    let body = null;
+    let isHtmlAuthRedirect = false;
+    const candidateHosts = [
+      apiBase,
+      DEFAULT_HOST,
+      FALLBACK_PRE_HOST,
+      "http://127.0.0.1:3000",
+      "http://localhost:3000",
+    ].filter(
       (h, idx, arr) => h && !h.includes(LEGACY_BROKEN_HOST) && arr.indexOf(h) === idx,
     );
     let lastNetErr = null;
     for (const host of candidateHosts) {
       try {
-        res = await fetch(`${host}/api/public/extension/ask`, {
+        const tryRes = await fetch(`${host}/api/public/extension/ask`, {
           method: "POST",
           headers,
           body: payload,
           credentials: "omit",
         });
-        apiBase = host;
-        lastNetErr = null;
-        break;
+        const contentType = tryRes.headers.get("content-type") || "";
+        if (contentType.includes("text/html")) {
+          const htmlText = await tryRes.text().catch(() => "");
+          if (htmlText.includes("302 Found") || htmlText.includes("__cookie_check") || tryRes.redirected) {
+            res = tryRes;
+            isHtmlAuthRedirect = true;
+            continue;
+          }
+        }
+        const parsedJson = await tryRes.json().catch(() => null);
+        if (parsedJson) {
+          res = tryRes;
+          body = parsedJson;
+          isHtmlAuthRedirect = false;
+          apiBase = host;
+          lastNetErr = null;
+          break;
+        }
+        res = tryRes;
       } catch (err) {
         lastNetErr = err;
       }
     }
     if (!res && lastNetErr) {
       throw lastNetErr;
-    }
-
-    let body = null;
-    let isHtmlAuthRedirect = false;
-    const contentType = res ? (res.headers.get("content-type") || "") : "";
-    if (contentType.includes("text/html")) {
-      const htmlText = await res.text().catch(() => "");
-      if (htmlText.includes("302 Found") || htmlText.includes("__cookie_check") || res.redirected) {
-        isHtmlAuthRedirect = true;
-      }
-    }
-
-    if (!isHtmlAuthRedirect && res) {
-      body = await res.json().catch(() => null);
     }
 
     // If direct fetch hit Cloud Run auth bridge or failed, attempt transparent proxy via open web tab
@@ -3660,7 +3737,9 @@ async function findContentOnPage(query, options = {}) {
 
       const STOPWORDS = [
         "tab", "button", "link", "section", "menu", "option", "icon", "bar", "field", "box", "input",
-        "the", "a", "an", "this", "that", "par", "pe", "mein", "me", "ko", "ka", "ki", "ke",
+        "the", "a", "an", "this", "that", "it", "and", "or", "to", "at", "on", "in", "of", "for",
+        "is", "was", "find", "locate", "show", "where", "please", "pls",
+        "par", "pe", "mein", "me", "ko", "ka", "ki", "ke",
         "khaa", "kha", "hai", "hain", "kahan", "kidhar", "kaha", "buddy", "point", "highlight", "karo",
       ];
       const rawTokens = q
@@ -3672,8 +3751,12 @@ async function findContentOnPage(query, options = {}) {
       const effectiveQuery = rawTokens.length > 0 ? rawTokens.join(" ") : q;
 
       const tokenMatchesText = (text, tok) => {
+        if (tok.length <= 2) {
+          const esc = tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          return new RegExp(`(?:^|\\b|\\s)${esc}(?:\\b|\\s|$)`, "i").test(text);
+        }
         if (text.includes(tok)) return true;
-        if (tok.endsWith("s") && text.includes(tok.slice(0, -1))) return true;
+        if (tok.endsWith("s") && tok.length > 3 && text.includes(tok.slice(0, -1))) return true;
         if (!tok.endsWith("s") && text.includes(`${tok}s`)) return true;
         return false;
       };
@@ -4471,12 +4554,16 @@ async function executeAction(action, selector, value, options = {}) {
             cancel: ["cancel", "dismiss", "close", "back"],
           };
 
+          const escapeSymRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const hasWholeTerm = (haystack, needle) =>
+            new RegExp(`(?:^|\\b|\\s)${escapeSymRe(needle)}(?:\\b|\\s|$)`, "i").test(haystack);
+
           const targetTerms = [cleanTarget, rawTarget].filter((t) => t && t.length > 0);
           for (const [key, syns] of Object.entries(CLICK_SYNONYMS)) {
             if (
               cleanTarget === key ||
-              cleanTarget.includes(key) ||
-              syns.some((s) => cleanTarget.includes(s))
+              hasWholeTerm(cleanTarget, key) ||
+              syns.some((s) => hasWholeTerm(cleanTarget, s))
             ) {
               targetTerms.push(...syns);
             }
@@ -4629,9 +4716,11 @@ async function executeAction(action, selector, value, options = {}) {
         }
 
         if (!el) {
+          const rawLabel = sel || val || opts?.text || "target";
+          const displayLabel = rawLabel === "__CURRENT__" ? "highlighted/current element" : rawLabel;
           return {
             ok: false,
-            message: `Could not find button or interactive element matching "${sel || val || opts?.text || "target"}".`,
+            message: `Could not find button or interactive element matching "${displayLabel}".`,
           };
         }
 

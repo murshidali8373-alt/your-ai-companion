@@ -36,11 +36,12 @@ async function getResolvedBackendBase() {
     base = DEFAULT_BASE;
     chrome.storage.local.set({ lastBase: DEFAULT_BASE }).catch(() => {});
   }
-  if (!base) {
+  const tryCandidates = async () => {
     if (verifiedBackendBaseCache) return verifiedBackendBaseCache;
+    const candidateOrigins = [];
+    if (base) candidateOrigins.push(base);
     try {
       const allTabs = await chrome.tabs.query({});
-      const candidateOrigins = [];
       let sawLocalDevTab = false;
       for (const t of allTabs) {
         if (t?.url && !RESTRICTED.test(t.url)) {
@@ -70,20 +71,26 @@ async function getResolvedBackendBase() {
         }
       }
       if (sawLocalDevTab) {
-        candidateOrigins.push("http://localhost:3000");
-      }
-      for (const origin of [...new Set(candidateOrigins)]) {
-        if (await probeBuddyHealthOrigin(origin)) {
-          base = origin;
-          verifiedBackendBaseCache = origin;
-          chrome.storage.local.set({ lastBase: origin }).catch(() => {});
-          break;
-        }
+        candidateOrigins.push("http://127.0.0.1:3000", "http://localhost:3000");
       }
     } catch {}
-    if (!base) base = DEFAULT_BASE;
+    candidateOrigins.push(DEFAULT_BASE, FALLBACK_PRE_BASE, "http://127.0.0.1:3000", "http://localhost:3000");
+    for (const origin of [...new Set(candidateOrigins)]) {
+      if (await probeBuddyHealthOrigin(origin)) {
+        verifiedBackendBaseCache = origin;
+        chrome.storage.local.set({ lastBase: origin }).catch(() => {});
+        return origin;
+      }
+    }
+    return base || DEFAULT_BASE;
+  };
+
+  if (base && !base.includes("127.0.0.1") && !base.includes("localhost")) {
+    const ok = await probeBuddyHealthOrigin(base, 1200);
+    if (ok) return base;
+    return tryCandidates();
   }
-  return base;
+  return base || tryCandidates();
 }
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
@@ -429,7 +436,7 @@ const warnedMissingProviders = new Set();
 const recommendedModesShown = new Set();
 
 const DEFAULT_PROVIDER_META = {
-  gemini: { id: "gemini", name: "Google Gemini", status: "connected", statusLabel: "Connected", missingKeyName: "GEMINI_API_KEY", supportsLocal: false },
+  gemini: { id: "gemini", name: "Google Gemini", status: "missing_api", statusLabel: "Unverified", missingKeyName: "GEMINI_API_KEY", supportsLocal: false },
   groq: { id: "groq", name: "GroqCloud", status: "missing_api", statusLabel: "Missing API", missingKeyName: "GROQ_API_KEY", supportsLocal: false },
   openrouter: { id: "openrouter", name: "OpenRouter", status: "missing_api", statusLabel: "Missing API", missingKeyName: "OPENROUTER_API_KEY", supportsLocal: false },
   openai: { id: "openai", name: "OpenAI", status: "missing_api", statusLabel: "Missing API", missingKeyName: "OPENAI_API_KEY", supportsLocal: false },
@@ -2205,7 +2212,8 @@ function extractRequestedDocFieldKeys(text) {
 function stripBuddyPrefix(text) {
   return String(text || "")
     .trim()
-    .replace(/^(?:(?:hey|hi|hello|ok|okay|dear|please|kripya|bhai|yaar)\s+)?(?:ai\s+)?buddy\b[,:\s-]*/i, "")
+    .replace(/^(?:(?:hey|hi|hello|ok|okay|dear|please|kripya|bhai|yaar|dost|sun|suno)\s+)?(?:ai\s+)?buddy\b[,:\s-]*/i, "")
+    .replace(/^(?:bhai|yaar|dost|sun|suno|please|kripya|plz|pls)\b[,\s:-]+(?=\S)/i, "")
     .replace(/^(?:please|kripya|plz|pls)\s+/i, "")
     .replace(/\s+(?:please|kripya|plz|pls)[.!?\s]*$/i, "")
     .trim();
@@ -2297,12 +2305,28 @@ function isNonValuePlaceholder(rawVal) {
 }
 
 function extractFillDetails(text) {
-  const cleaned = stripBuddyPrefix(text)
+  const rawCleaned = stripBuddyPrefix(text)
     .replace(
       /^(?:is\s+form\s+(?:mein|me|main)|form\s+(?:mein|me|main)|is\s+page\s+(?:mein|me|main|par|pe|pr))\s+/i,
       "",
     )
     .trim();
+  const cleanedNoSubmit = rawCleaned
+    .replace(
+      /(?:,\s*|\s+)(?:but\s+)?(?:don'?t|do\s+not)\s+(?:search|submit|send|press\s+enter)(?:\s+yet)?[.!?\s]*$/i,
+      "",
+    )
+    .replace(
+      /(?:,\s*|\s+)(?:without\s+(?:searching|submitting|sending)|bina\s+(?:search|submit)\s+(?:kiye|kare)|abhi\s+(?:search|submit)\s+mat\s+(?:karna|karo))[.!?\s]*$/i,
+      "",
+    )
+    .trim();
+  const hasExplicitNoSubmit =
+    cleanedNoSubmit.length < rawCleaned.length ||
+    /\b(?:don'?t\s+(?:search|submit)|do\s+not\s+(?:search|submit)|mat\s+(?:search|submit)|without\s+(?:searching|submitting)|bina\s+(?:search|submit))\b/i.test(
+      rawCleaned,
+    );
+  const cleaned = cleanedNoSubmit || rawCleaned;
   const overwrite = /\b(?:change|update|replace|overwrite|badal|badlo|modify)\b/i.test(cleaned);
   const fields = {};
   const explicitPairs = [];
@@ -2313,12 +2337,18 @@ function extractFillDetails(text) {
     );
   if (
     !hasFillVerbOrAssign &&
-    (/\b(?:point|highlight|click|press|tap|dabao|scroll|find|locate|dhoondho|dhundo|kaha|kahan|kidhar|where)\b/i.test(
+    (/\b(?:select|choose|chuno|point|highlight|click|press|tap|dabao|scroll|find|locate|dhoondho|dhundo|kaha|kahan|kidhar|where)\b/i.test(
       cleaned,
     ) ||
       /\bsearch\s*(?:karo|kro|(?:kar|kr)\s*do|krdo|karein|for)\b/i.test(cleaned))
   ) {
-    return { fields: null, explicitPairs: null, overwrite, explicitUserProvided: false };
+    return {
+      fields: null,
+      explicitPairs: null,
+      overwrite,
+      explicitUserProvided: false,
+      hasExplicitNoSubmit,
+    };
   }
 
   const trailingVerbSuffix =
@@ -2511,6 +2541,7 @@ function extractFillDetails(text) {
     explicitPairs: explicitPairs.length > 0 ? explicitPairs : null,
     overwrite,
     explicitUserProvided: explicitPairs.length > 0,
+    hasExplicitNoSubmit,
   };
 }
 
@@ -2585,10 +2616,20 @@ function parseActionIntent(text) {
     }
 
     // Bare value response to "Kya likhna hai? / Kya fill karna hai?"
+    const quotedReplyMatch = trimmed.match(/^["'](.+)["']$/);
+    const fillValueCandidate = quotedReplyMatch ? quotedReplyMatch[1].trim() : trimmed;
+    const isCommandNotLiteralValue =
+      !quotedReplyMatch &&
+      (isLikelyActionCommand(normStripped) ||
+        isNonValuePlaceholder(stripped) ||
+        /\b(?:kya\s+(?:kar|kiya|hai|h|likh|fill)|explain|samjhao|batao|bata|check\s+karo|dobara|kholo|kahan|kidhar|where\s+is|abhi\s+submit\s+mat)\b/i.test(
+          lower,
+        ));
     if (
       ctx.pendingSlot?.type === "fill_value" &&
-      trimmed.length > 0 &&
-      trimmed.length <= 240 &&
+      fillValueCandidate.length > 0 &&
+      fillValueCandidate.length <= 240 &&
+      !isCommandNotLiteralValue &&
       !/^(?:scroll\s+|click\s+|point\s+|go\s+back|refresh|reload|help|what\s+can\s+you\s+do|explain\s+this\s+page|ye\s+page\s+samjhao|yahan\s+kya)/i.test(
         lower,
       ) &&
@@ -2603,7 +2644,7 @@ function parseActionIntent(text) {
           {
             target,
             selector: ctx.pendingSlot.targetSelector || undefined,
-            value: trimmed,
+            value: fillValueCandidate,
             overwrite: true,
           },
         ],
@@ -2703,9 +2744,21 @@ function parseActionIntent(text) {
     return { type: "PAGE_INVENTORY" };
   }
 
-  // 2d. SESSION ACTIVITY LOG ("ab tak kya kiya")
+  // 1b. BARE AFFIRMATIVE WITHOUT PENDING PROPOSAL ("hnn kr do" when nothing is pending)
+  if (
+    /^(?:(?:haan|yes|ok|okay|theek\s+hai|thik\s+hai|sahi\s+hai)\s+(?:kar\s+do|karo|do\s+it|proceed|confirm)|kar\s+do|karo)[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
+    return { type: "CLARIFY_AFFIRMATIVE" };
+  }
+
+  // 2d. SESSION ACTIVITY LOG / VERIFICATION CHECK ("ab tak kya kiya", "Maine jo bola tha wo kiya kya?")
   if (
     /^(?:ab\s+(?:tak|tk)\s+kya\s+(?:kiya|kya|kra|kara)(?:\s+hai)?|aapne\s+kya\s+kiya|what\s+(?:did\s+you\s+do|have\s+you\s+done)|action\s+log|activity\s+log)[.!?\s]*$/i.test(
+      lower,
+    ) ||
+    /(?:maine\s+(?:jo|jaisa)\s+(?:bola|kaha)\s+(?:tha\s+)?(?:wo|woh)\s+(?:kiya|hua|ho\s+gaya)|jo\s+(?:bola|kaha)\s+(?:tha\s+)?(?:kiya|hua)|wo\s+(?:kiya|kar\s+diya)\s+kya|kaam\s+(?:kiya|hua|ho\s+gaya)\s+kya|did\s+you\s+(?:do|complete)\s+(?:what\s+i\s+(?:asked|said)|that)|have\s+you\s+done\s+(?:that|it))\s*(?:kya)?[.!?\s]*$/i.test(
       lower,
     )
   ) {
@@ -2888,8 +2941,9 @@ function parseActionIntent(text) {
   if (fillDetails.explicitPairs && hasSingleFillVerb) {
     const targets = fillDetails.explicitPairs.map((p) => String(p.target || "").toLowerCase());
     const noSubmitPrompt =
-      fillDetails.explicitPairs.length === 1 &&
-      targets.every((t) => t === "__current__" || /\b(?:search|chat|msg|message|comment|prompt|query)\b/.test(t));
+      Boolean(fillDetails.hasExplicitNoSubmit) ||
+      (fillDetails.explicitPairs.length === 1 &&
+        targets.every((t) => t === "__current__" || /\b(?:search|chat|msg|message|comment|prompt|query)\b/.test(t)));
     return {
       type: "FORM_FILL",
       fields: fillDetails.fields,
@@ -2976,6 +3030,14 @@ function parseActionIntent(text) {
   }
 
   // 7. FORM FILL (explicit key-value or general form fill trigger)
+  if (
+    isWholeFormTrigger &&
+    !fillDetails.explicitPairs &&
+    !/\b(?:saved|profile|document|doc|aadhaar|aadhar|pan)\b/i.test(lower) &&
+    /\busing\s+(?:the\s+)?(?:info|information|details|data)\s+i\s+(?:provide|give|share|send)\b/i.test(lower)
+  ) {
+    return { type: "FORM_INSPECT" };
+  }
   if (isWholeFormTrigger || fillDetails.explicitPairs) {
     return {
       type: "FORM_FILL",
@@ -2984,6 +3046,7 @@ function parseActionIntent(text) {
       overwrite: fillDetails.overwrite,
       explicitUserProvided: fillDetails.explicitUserProvided,
       fromChatCommand: true,
+      noSubmitPrompt: Boolean(fillDetails.hasExplicitNoSubmit),
       useUploadedDocument: Boolean(activeUploadedDocument && !fillDetails.explicitPairs),
     };
   }
@@ -3048,19 +3111,29 @@ function parseActionIntent(text) {
   }
 
   // 10. POINT / HIGHLIGHT ACTION (STRICT: NEVER CLICKS)
+  const findAndPointMatch = lower.match(
+    /^(?:find|locate|search(?:\s+for)?|dhoondho|dhundo|show\s+me)\s+(?:the\s+)?(.+?)(?:\s+and|\s+aur|,)?\s+(?:point\s*(?:to\s+it|at\s+it|on\s+it|karo|kro|(?:kar|kr)\s*do)?|highlight\s*(?:it|karo|kro|(?:kar|kr)\s*do)?)[.!?\s]*$/i,
+  );
   const pointTrailingMatch = lower.match(
     /(.+?)\s+(?:(?:par|pe|pr|ko)\s+)?(?:point\s*(?:karo|kro|(?:kar|kr)\s*do|kijiye)?|highlight\s*(?:karo|kro|(?:kar|kr)\s*do|kijiye)?)[.!?\s]*$/i,
   );
   const pointLeadingMatch = lower.match(
     /^(?:point\s+(?:to|at|on)|highlight)\s+(?:the\s+)?(.+?)[.!?\s]*$/i,
   );
-  if (pointTrailingMatch || pointLeadingMatch) {
-    const raw = pointTrailingMatch ? pointTrailingMatch[1] : pointLeadingMatch[1];
-    const clean = raw
+  if (findAndPointMatch || pointTrailingMatch || pointLeadingMatch) {
+    const raw = findAndPointMatch
+      ? findAndPointMatch[1]
+      : pointTrailingMatch
+        ? pointTrailingMatch[1]
+        : pointLeadingMatch[1];
+    const cleanNoPunct = raw.replace(/[.!?\s]+$/, "").trim();
+    const withoutPrefix = cleanNoPunct
       .replace(/^(?:(?:ab|now|phir|fir|then|yha|yaha|yahan)\s+)?(?:is\s+page\s+(?:par|pe|pr|se)|page\s+(?:par|pe|pr|se)|ye|yeh|wo|woh|is|this|the|a|an|kripya|please)\s+/i, "")
       .replace(/^(?:ab|now|phir|fir)\s+/i, "")
-      .replace(/\s+(?:button|tab|link|icon|menu|bar|option|field|input|box)$/i, "")
       .trim();
+    const clean = /^search\s+(?:box|field|input)$/i.test(withoutPrefix)
+      ? withoutPrefix
+      : withoutPrefix.replace(/\s+(?:button|tab|link|icon|menu|bar|option|field|input|box)$/i, "").trim();
     if (clean.length > 0) {
       return { type: "POINT", target: clean };
     }
@@ -3077,6 +3150,9 @@ function parseActionIntent(text) {
       lower,
     )
   ) {
+    if (ctx?.pendingDisambiguation?.candidates?.length > 0) {
+      return { type: "DISAMBIGUATION_CLARIFY" };
+    }
     return { type: "CLICK", target: "__CURRENT__", isConsequential: false };
   }
 
@@ -3140,7 +3216,7 @@ function parseActionIntent(text) {
     /(.+?)\s+(?:find\s*(?:karo|kro|(?:kar|kr)\s*do)|locate\s*(?:karo|kro|(?:kar|kr)\s*do)|search\s*(?:karo|kro|(?:kar|kr)\s*do)|dhoondho|dhundo|dhoondh\s+ke\s+dikhao|kaha(?:n)?\s+(?:hai|h|he)|kidhar\s+(?:hai|h|he)|kdr\s+(?:hai|h|he)|khaa\s+(?:hai|h|he)|kha\s+(?:hai|h|he|karna\s+h)|dikhao|batao)[.!?\s]*$/i,
   );
   const findLeadingMatch = lower.match(
-    /^(?:find|locate|search(?:\s+for)?|where\s+is|where's|wheres|where\s+are|show\s+me|dhoondho|dhundo)\s+(?:the\s+)?(.+)[.!?\s]*$/i,
+    /^(?:find|locate|search(?:\s+for)?|where\s+is|where's|wheres|where\s+are|show\s+me|dhoondho|dhundo)\s+(?:the\s+)?(.+?)[.!?\s]*$/i,
   );
 
   if (
@@ -3149,12 +3225,14 @@ function parseActionIntent(text) {
     !lower.includes("explain") &&
     !lower.includes("how to")
   ) {
-    let raw = findTrailingMatch ? findTrailingMatch[1] : findLeadingMatch[1];
-    let clean = raw
+    let raw = (findTrailingMatch ? findTrailingMatch[1] : findLeadingMatch[1]).replace(/[.!?\s]+$/, "").trim();
+    let withoutPrefix = raw
       .replace(/^(?:(?:ab|now|phir|fir|yha|yaha|yahan)\s+)?(?:is\s+page\s+(?:par|pe|pr|se)|page\s+(?:par|pe|pr|se)|ye|yeh|wo|woh|the|a|an|kripya|please)\s+/i, "")
       .replace(/^(?:ab|now|phir|fir)\s+/i, "")
-      .replace(/\s+(?:button|tab|link|icon|menu|bar|option|field|box)$/i, "")
       .trim();
+    let clean = /^search\s+(?:box|field|input)$/i.test(withoutPrefix)
+      ? withoutPrefix
+      : withoutPrefix.replace(/\s+(?:button|tab|link|icon|menu|bar|option|field|box)$/i, "").trim();
 
     if (clean.length > 0) {
       return { type: "FIND", target: clean };
@@ -3272,6 +3350,34 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       },
       trimmed,
     );
+  }
+
+  if (intent.type === "DISAMBIGUATION_CLARIFY" && pendingDisambiguation?.candidates?.length) {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    const cands = pendingDisambiguation.candidates;
+    const listText = cands.map((c) => `${c.index}. "${c.text}" (${c.tag})`).join("\n");
+    const clarMsg = isHindi
+      ? `🤔 Abhi ${cands.length} matching options hain — pehle option number (1-${cands.length}) batayein:\n${listText}`
+      : `🤔 There are still ${cands.length} matching options — please choose 1-${cands.length} first:\n${listText}`;
+    setRigEmotion("confused", "Choose Option");
+    $("statusText").textContent = clarMsg;
+    appendHistory("buddy", clarMsg);
+    speakResponse(clarMsg, "confused");
+    return true;
+  }
+
+  if (intent.type === "CLARIFY_AFFIRMATIVE") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    const clarMsg = isHindi
+      ? "Kya karna hai? Abhi koi pending action confirm karne ke liye nahi hai — kripya batayein kaunsa button click karna hai ya kya fill karna hai."
+      : "There is no pending action to confirm right now. Please tell me which button to click or what you want to fill.";
+    setRigEmotion("curious", "Clarify");
+    $("statusText").textContent = clarMsg;
+    appendHistory("buddy", clarMsg);
+    speakResponse(clarMsg, "curious");
+    return true;
   }
 
   if (intent.type === "FILL_NEED_VALUE") {
@@ -3699,6 +3805,17 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     appendHistory("user", trimmed);
     $("promptInput").value = "";
 
+    if (intent.target === "__CURRENT__" && !intent.selector && !lastHighlightSelector) {
+      setRigEmotion("confused", "Which one?");
+      const needTargetMsg = isHindi
+        ? "⚠️ Abhi koi element highlighted ya selected nahi hai. Kripya pehle element ka naam batayein (jaise 'Login button click karo') ya 'point karo' bolein."
+        : "⚠️ No element is currently highlighted. Please name the button/link to click or ask me to point to it first.";
+      $("statusText").textContent = needTargetMsg;
+      appendHistory("buddy", needTargetMsg);
+      speakResponse(needTargetMsg, "confused");
+      return true;
+    }
+
     // Consequential actions approval gate & permission ladder check
     const { permissionLevel, requireConsent } = await getPermissionSettings();
     let needsConfirm =
@@ -4121,8 +4238,13 @@ async function sendQuery(question, intent, options = {}) {
         return;
       }
     }
-    // Keep disambiguation only if user said "bss ye wala", otherwise clear
-    if (!/^(?:bas\s+)?(?:yahi|ye|yeh)\s*(?:wala|wali|wale)?[.!?\s]*$/i.test(trimmed)) {
+    // Keep disambiguation when user says "bss ye wala" OR asks underspecified "ab click karo" without picking an index
+    const normForDisCheck = normalizeHinglishCommand(stripBuddyPrefix(trimmed)).toLowerCase();
+    const isUnderspecifiedClick =
+      /^(?:(?:ab|now|phir|fir|then|yahan|yaha|yha|here|isko|this|is\s+(?:par|pe|pr)|us\s+(?:par|pe|pr))\s+)?(?:(?:par|pe|pr|ko)\s+)?(?:click\s*(?:karo|kro|(?:kar|kr)\s*do|kijiye|do)?|press\s*(?:karo|kro|(?:kar|kr)\s*do)|tap\s*(?:karo|kro|(?:kar|kr)\s*do)|dabao|daba\s*do)[.!?\s]*$/i.test(
+        normForDisCheck,
+      );
+    if (!/^(?:bas\s+)?(?:yahi|ye|yeh)\s*(?:wala|wali|wale)?[.!?\s]*$/i.test(trimmed) && !isUnderspecifiedClick) {
       pendingDisambiguation = null;
     }
   }
@@ -4235,6 +4357,11 @@ async function sendQuery(question, intent, options = {}) {
     if (res.providerWarning) {
       appendProviderWarningNotice(res.providerWarning);
     }
+    if (res.aiFallbackUsed || res.activeProvider === "local_grounded") {
+      $("statusText").textContent = isHindi
+        ? "Local Helper Mode (Gemini AI key missing/unavailable)"
+        : "Local Helper Mode (Gemini AI unavailable)";
+    }
 
     const modeRec =
       res.recommendedMode || getLocalModeRecommendation(trimmed, active.slug, active.defaultLanguage);
@@ -4242,28 +4369,33 @@ async function sendQuery(question, intent, options = {}) {
       appendModeRecommendationNotice(modeRec);
     }
 
-    // If AI returned a clarifying question ("Kya likhna hai? Text bata do."), store pendingSlot instead of acting or summarizing!
+    // If AI returned a clarifying question ("Kya likhna hai? Text bata do."), store pendingSlot only when asking for a field value
     if (res.actionType === "ask_clarification" || res.needsClarification || res.reply?.needsClarification) {
-      pendingSlot = {
-        type: "fill_value",
-        targetField: res.targetField || res.targetText || sessionTaskContext.lastTargetField || "__CURRENT__",
-        targetSelector: res.targetSelector || res.highlightSelector || undefined,
-        noSubmitPrompt: Boolean(
-          res.targetField && /\b(?:search|chat|msg|message|comment|prompt|query)\b/i.test(String(res.targetField)),
-        ),
-      };
-      recordTaskContext({
-        actionType: "ask_clarification",
-        targetField: pendingSlot.targetField,
-        targetSelector: pendingSlot.targetSelector || null,
-      });
+      const wantsFillValue = res.reply?.needs === "value_to_fill" || Boolean(res.targetField);
+      if (wantsFillValue) {
+        pendingSlot = {
+          type: "fill_value",
+          targetField: res.targetField || res.targetText || sessionTaskContext.lastTargetField || "__CURRENT__",
+          targetSelector: res.targetSelector || res.highlightSelector || undefined,
+          noSubmitPrompt: Boolean(
+            res.targetField && /\b(?:search|chat|msg|message|comment|prompt|query)\b/i.test(String(res.targetField)),
+          ),
+        };
+        recordTaskContext({
+          actionType: "ask_clarification",
+          targetField: pendingSlot.targetField,
+          targetSelector: pendingSlot.targetSelector || null,
+        });
+      }
       lastHighlightSelector = res.highlightSelector || res.targetSelector || null;
       if (lastHighlightSelector) {
         $("highlightBtn").hidden = false;
         pointArmAtElement();
       }
       setRigEmotion("curious", "Clarify");
-      $("statusText").textContent = "Awaiting clarification…";
+      if (!(res.aiFallbackUsed || res.activeProvider === "local_grounded")) {
+        $("statusText").textContent = "Awaiting clarification…";
+      }
       speakResponse(currentAnswer, "curious");
       return;
     }
@@ -4502,9 +4634,15 @@ async function sendQuery(question, intent, options = {}) {
     if (!actionExecutedAlreadySpoke) {
       setRigEmotion(emotion, emotion.toUpperCase());
       speakResponse(currentAnswer, emotion);
-      $("statusText").textContent = res.pageReadable
-        ? `Grounded on active page (${active.name}).`
-        : "Answered using specialist knowledge.";
+      if (res.aiFallbackUsed || res.activeProvider === "local_grounded") {
+        $("statusText").textContent = isHindi
+          ? "Local Helper Mode (Gemini AI key missing/unavailable)"
+          : "Local Helper Mode (Gemini AI unavailable)";
+      } else {
+        $("statusText").textContent = res.pageReadable
+          ? `Grounded on active page (${active.name}).`
+          : "Answered using specialist knowledge.";
+      }
     }
   } catch (err) {
     hideChatLoadingSpinner();
@@ -4574,6 +4712,8 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
     setRigEmotion("thinking", "Filling…");
   }
 
+  const EPHEMERAL_PROFILE_TARGET_RE =
+    /^(?:__current__|search|query|q|chat|msg|message|comment|comments|prompt|note|notes|subject|title)$/i;
   let savedProfileData = null;
   if (!sampleData && !extraOpts?.explicitPairs) {
     if (activeUploadedDocument?.fields && Object.keys(activeUploadedDocument.fields).length > 0) {
@@ -4585,14 +4725,35 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
           "localMemories",
         ]);
         if (userProfile && Object.keys(userProfile).length > 0) {
-          savedProfileData = userProfile;
-        } else if (Array.isArray(localMemories) && localMemories.length > 0) {
+          const cleanProfile = {};
+          for (const [pk, pv] of Object.entries(userProfile)) {
+            const kTrim = String(pk || "").trim();
+            if (
+              kTrim &&
+              kTrim.length <= 40 &&
+              !SENSITIVE_FIELD_RE.test(kTrim) &&
+              !EPHEMERAL_PROFILE_TARGET_RE.test(kTrim) &&
+              pv
+            ) {
+              cleanProfile[kTrim] = pv;
+            }
+          }
+          if (Object.keys(cleanProfile).length > 0) savedProfileData = cleanProfile;
+        }
+        if (!savedProfileData && Array.isArray(localMemories) && localMemories.length > 0) {
           const MEM_META_KEYS = new Set(["preferred_language", "ecommerce_platform"]);
           const memFields = {};
           for (const item of localMemories) {
             const k = String(item?.key || "").trim();
             const v = String(item?.value || "").trim();
-            if (k && v && !MEM_META_KEYS.has(k.toLowerCase()) && !SENSITIVE_FIELD_RE.test(k)) {
+            if (
+              k &&
+              v &&
+              k.length <= 40 &&
+              !MEM_META_KEYS.has(k.toLowerCase()) &&
+              !SENSITIVE_FIELD_RE.test(k) &&
+              !EPHEMERAL_PROFILE_TARGET_RE.test(k)
+            ) {
               memFields[k] = v;
             }
           }
@@ -4623,20 +4784,7 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
     return;
   }
 
-  // Save explicitly provided non-sensitive user preferences to local userProfile for future sequential convenience
-  if (extraOpts?.explicitUserProvided && extraOpts?.explicitPairs) {
-    try {
-      const { userProfile = {} } = await chrome.storage.local.get("userProfile");
-      let changed = false;
-      for (const p of extraOpts.explicitPairs) {
-        if (p.target && p.target !== "__CURRENT__" && !SENSITIVE_FIELD_RE.test(p.target) && p.value) {
-          userProfile[p.target] = p.value;
-          changed = true;
-        }
-      }
-      if (changed) await chrome.storage.local.set({ userProfile });
-    } catch {}
-  }
+  // Note: NEVER persist to userProfile before SMART_FILL_FORM verifies field filling succeeded.
 
   const res = await sendRuntimeMessage({
     type: "SMART_FILL_FORM",
@@ -4681,6 +4829,27 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
         actionType: "fill",
         targetField: filled[filled.length - 1].field,
       });
+      if (extraOpts?.explicitUserProvided) {
+        try {
+          const { userProfile = {} } = await chrome.storage.local.get("userProfile");
+          let changed = false;
+          for (const f of filled) {
+            const rawKey = String(f.key && f.key !== "__CURRENT__" ? f.key : f.field || "").trim().toLowerCase();
+            if (
+              rawKey &&
+              rawKey.length <= 40 &&
+              !SENSITIVE_FIELD_RE.test(rawKey) &&
+              !EPHEMERAL_PROFILE_TARGET_RE.test(rawKey) &&
+              f.value &&
+              !/^•+$/.test(String(f.value))
+            ) {
+              userProfile[rawKey] = f.value;
+              changed = true;
+            }
+          }
+          if (changed) await chrome.storage.local.set({ userProfile });
+        } catch {}
+      }
     }
     const lines = [];
     const formatFieldDisplay = (f) =>
@@ -6582,9 +6751,16 @@ function updateProviderNoticeUI(providerId) {
           : `${info.name} is connected and selected as your active provider.`;
     } else {
       const missingKey = info.missingKeyName || `${pid.toUpperCase()}_API_KEY`;
+      const geminiConfigured = Boolean(cachedProviderStatuses.gemini?.configured);
       notice.style.borderColor = "rgba(245, 158, 11, 0.35)";
       notice.style.color = "#fde68a";
-      notice.textContent = `${info.name}: ${statusLabel} (${missingKey}). Your selection is saved — Google Gemini stays active as fallback until ${missingKey} is configured.`;
+      if (pid === "gemini") {
+        notice.textContent = `Google Gemini: ${statusLabel} (${missingKey}). Add GEMINI_API_KEY on server or Settings to enable full AI intelligence; limited local helper is active.`;
+      } else {
+        notice.textContent = geminiConfigured
+          ? `${info.name}: ${statusLabel} (${missingKey}). Your selection is saved — Google Gemini stays active as fallback until ${missingKey} is configured.`
+          : `${info.name}: ${statusLabel} (${missingKey}). Google Gemini is also unconfigured — local helper mode stays active until an API key is added.`;
+      }
     }
   }
 }
@@ -6731,7 +6907,7 @@ async function loadModelHubStatus() {
         const isSel = info.id === selectedProvider;
         const detailNote = info.configured
           ? "Direct API key saved"
-          : `Missing ${info.missingKeyName} · Falls back to Gemini`;
+          : `Backend unreachable & missing ${info.missingKeyName}`;
         return `
       <div class="item-row provider-row-item" data-provider="${escapeHtml(info.id)}" style="cursor: pointer; ${isSel ? "border-color: var(--accent-cyan); background: rgba(6, 182, 212, 0.08);" : ""}">
         <div>
