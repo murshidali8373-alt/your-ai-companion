@@ -106,7 +106,7 @@ export const FIELD_SYNONYMS: Record<string, string[]> = {
 };
 
 const SENSITIVE_PATTERN =
-  /pass(?:word)?|pin|otp|cvv|cvc|secret|token|ssn|aadhaar|card(?:_?number)?|credit|debit/i;
+  /pass(?:word|wd)?|otp|(?<!postal[\s_-])(?<![a-z0-9])pin(?![a-z0-9]|[\s_-]*code\b)|cvv|cvc|secret|token|ssn|aadhaar|card(?:_?number)?|credit|debit/i;
 
 const SUBMIT_BUTTON_PATTERN =
   /submit|sign\s*in|log\s*in|proceed|confirm|continue|checkout|purchase|pay|place\s*order|delete|send/i;
@@ -385,7 +385,12 @@ async function applyValueWithTimedEvents(
     (el as HTMLInputElement).checked = Boolean(val);
   } else if ((el as HTMLInputElement).type === "radio") {
     (el as HTMLInputElement).checked = true;
-  } else if (el.getAttribute("contenteditable") === "true") {
+  } else if (
+    el.isContentEditable ||
+    el.getAttribute("contenteditable") === "true" ||
+    el.getAttribute("contenteditable") === "" ||
+    el.getAttribute("contenteditable") === "plaintext-only"
+  ) {
     el.innerText = strVal;
   } else {
     // Native prototype descriptor setter ensures React / Vue / Angular register the value change
@@ -523,7 +528,7 @@ export async function executeFormFill(
   // Query interactable inputs in container
   const allFormElements = [
     ...root.querySelectorAll(
-      'input, textarea, select, [contenteditable="true"], [role="combobox"]',
+      'input, textarea, select, [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], [role="combobox"]',
     ),
   ] as HTMLElement[];
 

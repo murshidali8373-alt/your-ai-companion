@@ -123,9 +123,7 @@ describe("AI Buddy — Comprehensive 12-Category (48-Scenario) Intelligence, Hin
       const { parseActionIntent } = loadSidepanelParser();
 
       // 3.1 "Mobile number wale box mein 9560798373 daal do"
-      expect(
-        parseActionIntent("Mobile number wale box mein 9560798373 daal do"),
-      ).toMatchObject({
+      expect(parseActionIntent("Mobile number wale box mein 9560798373 daal do")).toMatchObject({
         type: "FORM_FILL",
         explicitPairs: [{ target: "mobile number", value: "9560798373" }],
       });
@@ -397,7 +395,14 @@ describe("AI Buddy — Comprehensive 12-Category (48-Scenario) Intelligence, Hin
           title: "Signup",
           forms: [
             { ref: "f1", name: "Full Name", selector: "#fullname", inputType: "text", value: "" },
-            { ref: "f2", name: "Password", selector: "#pw", inputType: "password", sensitive: true, value: "secret999" },
+            {
+              ref: "f2",
+              name: "Password",
+              selector: "#pw",
+              inputType: "password",
+              sensitive: true,
+              value: "secret999",
+            },
           ],
           controls: [],
           headings: [],
@@ -522,7 +527,9 @@ describe("AI Buddy — Comprehensive 12-Category (48-Scenario) Intelligence, Hin
         }),
       ).toMatchObject({
         type: "FORM_FILL",
-        explicitPairs: [{ target: "Billing Phone", selector: "#billing_phone", value: "9560798373" }],
+        explicitPairs: [
+          { target: "Billing Phone", selector: "#billing_phone", value: "9560798373" },
+        ],
       });
       expect(
         parseActionIntent("rehne do", {
@@ -548,7 +555,9 @@ describe("AI Buddy — Comprehensive 12-Category (48-Scenario) Intelligence, Hin
 
       // 12.2 Continuous turn-taking with echo guard after speech ends
       expect(spCode).toContain("function toggleLiveVoice(");
-      expect(spCode).toContain("if (isLiveVoiceMode && !busy && !isBuddySpeaking && !isRecognizing)");
+      expect(spCode).toContain(
+        "if (isLiveVoiceMode && !busy && !isBuddySpeaking && !isRecognizing)",
+      );
       expect(spCode).toContain("window.__buddyVoiceController");
 
       // 12.3 Barge-in speech interruption while speaking

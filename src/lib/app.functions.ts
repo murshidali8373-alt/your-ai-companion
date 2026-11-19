@@ -424,26 +424,31 @@ export const askBuddy = createServerFn({ method: "POST" })
       highlightSelector: result.highlightSelector,
       buddyName: result.buddyName,
       model: result.model ?? null,
+      activeProvider: result.activeProvider ?? null,
       blocked: result.blocked ?? false,
       fellBack: result.fellBack ?? false,
+      aiFallbackUsed: result.aiFallbackUsed ?? false,
+      providerWarning: result.providerWarning ?? null,
+      providerFailure: result.providerFailure ?? null,
     };
   });
 
 export const diagnose = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
+    const { ensureServerEnvLoaded, getProviderKey } = await import("./ai/provider-keys.server");
+    ensureServerEnvLoaded();
     const checks: Array<{ name: string; ok: boolean; detail: string }> = [];
-    const isReal = (k?: string) => Boolean(k && !k.startsWith("MY_") && !k.includes("your-key"));
     const configured: string[] = [];
-    if (isReal(process.env["GEMINI_API_KEY"]) || isReal(process.env["GOOGLE_API_KEY"]))
-      configured.push("Gemini");
-    if (isReal(process.env["GROQ_API_KEY"])) configured.push("Groq");
-    if (isReal(process.env["OPENROUTER_API_KEY"])) configured.push("OpenRouter");
-    if (isReal(process.env["OPENAI_API_KEY"])) configured.push("OpenAI");
-    if (isReal(process.env["LOVABLE_API_KEY"])) configured.push("Lovable Gateway");
+    if (getProviderKey("gemini")) configured.push("Gemini");
+    if (getProviderKey("groq")) configured.push("Groq");
+    if (getProviderKey("openrouter")) configured.push("OpenRouter");
+    if (getProviderKey("openai")) configured.push("OpenAI");
+    if (getProviderKey("lovable-gateway")) configured.push("Lovable Gateway");
 
     const hasPlaceholder =
       process.env["GEMINI_API_KEY"]?.startsWith("MY_") ||
+      process.env["GOOGLE_API_KEY"]?.startsWith("MY_") ||
       process.env["LOVABLE_API_KEY"]?.startsWith("MY_");
 
     checks.push({

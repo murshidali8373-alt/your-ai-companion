@@ -49,21 +49,26 @@
     return true;
   };
 
-  const cssPath = (el) => {
-    const root = el.getRootNode?.() || document;
-    const queryRoot = typeof root.querySelectorAll === "function" ? root : document;
-    if (el.id && queryRoot.querySelectorAll(`#${CSS.escape(el.id)}`).length === 1) {
-      return `#${CSS.escape(el.id)}`;
+  const localCssPath = (el, root) => {
+    const queryRoot = root && typeof root.querySelectorAll === "function" ? root : document;
+    if (el.id) {
+      try {
+        if (queryRoot.querySelectorAll(`#${CSS.escape(el.id)}`).length === 1) {
+          return `#${CSS.escape(el.id)}`;
+        }
+      } catch {}
     }
     const parts = [];
     let cur = el;
-    while (cur && cur.nodeType === 1 && parts.length < 6) {
+    while (cur && cur.nodeType === 1 && cur !== root && parts.length < 6) {
       let p = cur.tagName.toLowerCase();
-      const curRoot = cur.getRootNode?.() || document;
-      const curQueryRoot = typeof curRoot.querySelectorAll === "function" ? curRoot : document;
-      if (cur.id && curQueryRoot.querySelectorAll(`#${CSS.escape(cur.id)}`).length === 1) {
-        parts.unshift(`#${CSS.escape(cur.id)}`);
-        break;
+      if (cur.id) {
+        try {
+          if (queryRoot.querySelectorAll(`#${CSS.escape(cur.id)}`).length === 1) {
+            parts.unshift(`#${CSS.escape(cur.id)}`);
+            break;
+          }
+        } catch {}
       }
       const parent = cur.parentElement;
       if (parent) {
@@ -75,7 +80,22 @@
       parts.unshift(p);
       cur = parent;
     }
-    return parts.join(" > ").slice(0, 400);
+    return parts.join(" > ");
+  };
+
+  const cssPath = (el) => {
+    const chain = [];
+    let curEl = el;
+    while (curEl && curEl.nodeType === 1) {
+      const root = curEl.getRootNode?.() || document;
+      chain.unshift(localCssPath(curEl, root));
+      if (root && root !== document && root.host) {
+        curEl = root.host;
+      } else {
+        break;
+      }
+    }
+    return chain.join(" >>> ").slice(0, 500);
   };
 
   const labelOf = (el) => {
@@ -178,7 +198,7 @@
       ref: `e${++n}`,
       role,
       name: String(labelOf(el)).trim().replace(/\s+/g, " ").slice(0, 300),
-      tag: el.tagName.toLowerCase(),
+      tag: el.tagName.toLowerCase().slice(0, 80),
       selector: cssPath(el),
       rect: {
         x: Math.round(r.x),

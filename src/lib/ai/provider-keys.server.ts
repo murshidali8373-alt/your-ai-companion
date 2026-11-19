@@ -14,14 +14,30 @@ const ENV_KEYS: Record<string, string[]> = {
   "lovable-gateway": ["LOVABLE_API_KEY"],
 };
 
+let envLoaded = false;
+
+export function ensureServerEnvLoaded(): void {
+  if (envLoaded) return;
+  envLoaded = true;
+  if (typeof process.loadEnvFile === "function") {
+    try {
+      process.loadEnvFile(".env");
+    } catch {
+      // .env is optional in container/cloud runtimes
+    }
+  }
+}
+
 export function isRealKey(key?: string | null): key is string {
-  return Boolean(key && !key.startsWith("MY_") && !key.includes("your-key"));
+  const trimmed = key?.trim();
+  return Boolean(trimmed && !trimmed.startsWith("MY_") && !trimmed.includes("your-key"));
 }
 
 export function getProviderKey(provider: string): string | undefined {
+  ensureServerEnvLoaded();
   for (const name of ENV_KEYS[provider] ?? []) {
     const v = process.env[name];
-    if (isRealKey(v)) return v;
+    if (isRealKey(v)) return v.trim();
   }
   return undefined;
 }
@@ -32,6 +48,7 @@ export function getGeminiKey(): string | undefined {
 
 /** Providers with env mappings must have valid keys; ollama requires explicit host env. */
 export function isProviderConfigured(provider: string, userKeyProvider?: string): boolean {
+  ensureServerEnvLoaded();
   if (userKeyProvider && userKeyProvider === provider) return true;
   if (provider === "ollama") {
     return Boolean(process.env["OLLAMA_BASE_URL"] || process.env["OLLAMA_ENABLED"] === "true");

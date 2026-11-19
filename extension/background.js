@@ -2,9 +2,8 @@
 const RESTRICTED =
   /^(chrome|edge|about|chrome-extension|devtools|view-source):|chromewebstore\.google\.com|chrome\.google\.com\/webstore/;
 
-const DEFAULT_HOST = "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
-const FALLBACK_PRE_HOST = "https://ais-pre-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
-const LEGACY_BROKEN_HOST = "5t53lwemhepi2nbkqb2reo";
+const DEFAULT_HOST = "https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app";
+const FALLBACK_PRE_HOST = "https://ais-pre-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app";
 const MAX_CONVERSATION_TURNS = 3;
 let conversationBuffer = [];
 
@@ -872,6 +871,8 @@ async function generateAutonomousCompanionReply({
   preferredProvider,
   history = [],
   actionContext = null,
+  serverProviderWarning = null,
+  serverProviderFailure = null,
 }) {
   const activeBuddy = getBuddyPresetInternal(buddySlug);
   const isHindiLang = activeBuddy.defaultLanguage !== "english";
@@ -892,7 +893,7 @@ async function generateAutonomousCompanionReply({
       );
 
   // 1. Direct Google Gemini API call if user provided API key
-  let directAuthError = null;
+  let directProviderError = null;
   if (userApiKey) {
     try {
       const geminiModels = ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
@@ -985,6 +986,7 @@ Return strictly valid JSON with keys:
       const contents = [...historyContents, { role: "user", parts }];
 
       let geminiRes = null;
+      let usedGeminiModel = null;
       for (const modelName of geminiModels) {
         geminiRes = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(userApiKey)}`,
@@ -1002,11 +1004,37 @@ Return strictly valid JSON with keys:
             }),
           },
         );
-        if (geminiRes.ok) break;
-        if (geminiRes.status === 401 || geminiRes.status === 403) {
-          directAuthError = `Google Gemini API rejected your key (${geminiRes.status}). Check your key in Settings.`;
+        if (geminiRes.ok) {
+          usedGeminiModel = modelName;
           break;
         }
+        const errPayload = await geminiRes.json().catch(() => null);
+        const rawErrMsg =
+          errPayload?.error?.message || `Google Gemini HTTP ${geminiRes.status}`;
+        if (geminiRes.status === 401 || geminiRes.status === 403) {
+          directProviderError = {
+            kind: "auth",
+            status: "auth_error",
+            provider: "gemini_direct",
+            message: `Google Gemini API rejected your key (${geminiRes.status}): ${rawErrMsg}`,
+          };
+          break;
+        }
+        if (geminiRes.status === 429) {
+          directProviderError = {
+            kind: "rate_limit",
+            status: "rate_limit",
+            provider: "gemini_direct",
+            message: `Google Gemini rate limit reached (429): ${rawErrMsg}`,
+          };
+          continue;
+        }
+        directProviderError = {
+          kind: geminiRes.status >= 500 ? "outage" : "server_error",
+          status: geminiRes.status >= 500 ? "outage" : "server_error",
+          provider: "gemini_direct",
+          message: `Google Gemini direct call failed (${geminiRes.status}): ${rawErrMsg}`,
+        };
         if (geminiRes.status !== 404 && geminiRes.status !== 400 && geminiRes.status !== 503) {
           break;
         }
@@ -1083,25 +1111,50 @@ Return strictly valid JSON with keys:
             permission: "explain",
             guest: true,
             provider: "gemini_direct",
-            providerWarning,
+            activeProvider: "gemini_direct",
+            aiFallbackUsed: false,
+            model: usedGeminiModel,
+            providerWarning: baseProviderWarning || null,
+          };
+        } else if (!directProviderError) {
+          directProviderError = {
+            kind: "invalid_response",
+            status: "server_error",
+            provider: "gemini_direct",
+            message: "Google Gemini direct API returned an empty response.",
           };
         }
       }
-    } catch {
-      // Fallback to grounded companion below
+    } catch (directErr) {
+      if (!directProviderError) {
+        directProviderError = {
+          kind: "network",
+          status: "network_error",
+          provider: "gemini_direct",
+          message: `Google Gemini direct call failed: ${directErr instanceof Error ? directErr.message : String(directErr)}`,
+        };
+      }
     }
   }
 
+  const effectiveFailure = directProviderError || serverProviderFailure || null;
   const effectiveLocalWarning =
+    serverProviderWarning ||
     baseProviderWarning ||
     ({
-      requestedProvider: "gemini",
-      requestedProviderName: "Google Gemini",
-      status: directAuthError ? "auth_error" : "missing_api",
-      missingKey: "GEMINI_API_KEY",
+      requestedProvider:
+        effectiveFailure?.provider ||
+        (preferredProvider && preferredProvider !== "auto" ? preferredProvider : "gemini"),
+      requestedProviderName:
+        effectiveFailure?.provider === "gemini_direct"
+          ? "Google Gemini (Direct Key)"
+          : PROVIDER_KEY_META[effectiveFailure?.provider || preferredProvider || "gemini"]?.name ||
+            "Google Gemini",
+      status: effectiveFailure?.status || effectiveFailure?.kind || "missing_api",
+      missingKey: effectiveFailure ? undefined : "GEMINI_API_KEY",
       fallbackUsed: "Local Grounded Companion",
       message:
-        directAuthError ||
+        effectiveFailure?.message ||
         (isHindiLang
           ? "Gemini AI unavailable hai (GEMINI_API_KEY server ya Settings mein set nahi hai). Abhi limited local DOM helper chal raha hai — smart AI reasoning off hai."
           : "Gemini AI is unavailable (GEMINI_API_KEY is not configured on the server or in Settings). Running limited local DOM helper."),
@@ -1110,6 +1163,7 @@ Return strictly valid JSON with keys:
     activeProvider: "local_grounded",
     aiFallbackUsed: true,
     providerWarning: effectiveLocalWarning,
+    ...(effectiveFailure ? { providerFailure: effectiveFailure } : {}),
   };
 
   // 2. Local Grounded Companion Engine (Always active, zero external network required)
@@ -1718,63 +1772,181 @@ async function resolveExtensionApiBase(session, lastBase) {
       if (stored?.buddyApiBaseUrl) apiBase = stored.buddyApiBaseUrl;
     } catch {}
   }
-  if (apiBase && apiBase.includes(LEGACY_BROKEN_HOST)) {
-    apiBase = DEFAULT_HOST;
-    chrome.storage.local.set({ lastBase: DEFAULT_HOST }).catch(() => {});
+
+  if (apiBase) {
+    try {
+      const parsed = new URL(apiBase);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        apiBase = parsed.origin;
+        if (await isHealthyBuddyOrigin(apiBase, 1500)) {
+          verifiedExtensionOriginCache = apiBase;
+          return apiBase;
+        }
+      } else {
+        apiBase = null;
+      }
+    } catch {
+      apiBase = null;
+    }
   }
 
-  if (!apiBase) {
-    if (verifiedExtensionOriginCache) return verifiedExtensionOriginCache;
-    try {
-      const allTabs = await chrome.tabs.query({});
-      const candidateOrigins = [];
-      let sawLocalDevTab = false;
-      for (const t of allTabs) {
-        if (t?.url && !RESTRICTED.test(t.url)) {
-          try {
-            const u = new URL(t.url);
-            if (u.hostname === "localhost" || u.hostname === "127.0.0.1") {
-              sawLocalDevTab = true;
+  if (verifiedExtensionOriginCache) return verifiedExtensionOriginCache;
+
+  const candidateOrigins = [];
+  if (apiBase) candidateOrigins.push(apiBase);
+  try {
+    const allTabs = await chrome.tabs.query({});
+    let sawLocalDevTab = false;
+    for (const t of allTabs) {
+      if (t?.url && !RESTRICTED.test(t.url)) {
+        try {
+          const u = new URL(t.url);
+          if (u.hostname === "localhost" || u.hostname === "127.0.0.1") {
+            sawLocalDevTab = true;
+          }
+          const isBuddyTab =
+            t.title?.includes("AI Buddy") ||
+            t.title?.includes("your-ai-companion") ||
+            u.port === "3000" ||
+            u.hostname.includes("run.app");
+          if (
+            u.protocol.startsWith("http") &&
+            !u.hostname.includes("aistudio.google.com") &&
+            isBuddyTab
+          ) {
+            if (t.title?.includes("AI Buddy") || t.title?.includes("your-ai-companion")) {
+              candidateOrigins.unshift(u.origin);
+            } else {
+              candidateOrigins.push(u.origin);
             }
-            const isBuddyTab =
-              t.title?.includes("AI Buddy") ||
-              t.title?.includes("your-ai-companion") ||
-              u.port === "3000" ||
-              u.hostname.includes("run.app");
-            if (
-              u.protocol.startsWith("http") &&
-              !u.hostname.includes("aistudio.google.com") &&
-              !u.hostname.includes(LEGACY_BROKEN_HOST) &&
-              isBuddyTab
-            ) {
-              if (t.title?.includes("AI Buddy") || t.title?.includes("your-ai-companion")) {
-                candidateOrigins.unshift(u.origin);
-              } else {
-                candidateOrigins.push(u.origin);
-              }
-            }
-          } catch {}
-        }
+          }
+        } catch {}
       }
-      if (sawLocalDevTab) {
-        candidateOrigins.push("http://localhost:3000");
-      }
-      for (const origin of [...new Set(candidateOrigins)]) {
-        if (await isHealthyBuddyOrigin(origin)) {
-          apiBase = origin;
-          verifiedExtensionOriginCache = origin;
-          chrome.storage.local.set({ lastBase: origin }).catch(() => {});
-          break;
-        }
-      }
-    } catch {}
-    if (!apiBase) apiBase = DEFAULT_HOST;
+    }
+    if (sawLocalDevTab) {
+      candidateOrigins.push("http://localhost:3000", "http://127.0.0.1:3000");
+    }
+  } catch {}
+  candidateOrigins.push(DEFAULT_HOST, FALLBACK_PRE_HOST, "http://127.0.0.1:3000", "http://localhost:3000");
+
+  for (const origin of [...new Set(candidateOrigins)]) {
+    if (await isHealthyBuddyOrigin(origin)) {
+      verifiedExtensionOriginCache = origin;
+      chrome.storage.local.set({ lastBase: origin }).catch(() => {});
+      return origin;
+    }
   }
-  return apiBase;
+
+  return apiBase || DEFAULT_HOST;
+}
+
+function parseDelimitedTextExt(rawText, forcedDelimiter) {
+  const cleaned = String(rawText || "").replace(/^\uFEFF/, "");
+  if (!cleaned.trim()) return null;
+
+  const detectDelimiter = () => {
+    if (forcedDelimiter) return forcedDelimiter;
+    let inQuotes = false;
+    let firstLine = "";
+    for (let i = 0; i < cleaned.length; i++) {
+      const ch = cleaned[i];
+      if (ch === '"') {
+        if (inQuotes && cleaned[i + 1] === '"') {
+          i++;
+          continue;
+        }
+        inQuotes = !inQuotes;
+      } else if (!inQuotes && (ch === "\n" || ch === "\r")) {
+        break;
+      }
+      firstLine += ch;
+    }
+    const countUnquoted = (delim) => {
+      let c = 0;
+      let q = false;
+      for (let i = 0; i < firstLine.length; i++) {
+        const ch = firstLine[i];
+        if (ch === '"') q = !q;
+        else if (!q && ch === delim) c++;
+      }
+      return c;
+    };
+    const tabs = countUnquoted("\t");
+    const commas = countUnquoted(",");
+    const semis = countUnquoted(";");
+    if (tabs >= commas && tabs >= semis && tabs > 0) return "\t";
+    if (semis > commas && semis > 0) return ";";
+    return ",";
+  };
+
+  const delimiter = detectDelimiter();
+  const matrix = [];
+  let row = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+    const next = cleaned[i + 1];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (next === '"') {
+          cell += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cell += ch;
+      }
+      continue;
+    }
+    if (ch === '"' && cell.length === 0) {
+      inQuotes = true;
+    } else if (ch === delimiter) {
+      row.push(cell.trim());
+      cell = "";
+    } else if (ch === "\r" || ch === "\n") {
+      if (ch === "\r" && next === "\n") i++;
+      row.push(cell.trim());
+      if (row.some((v) => v.length > 0)) matrix.push(row);
+      row = [];
+      cell = "";
+    } else {
+      cell += ch;
+    }
+  }
+  row.push(cell.trim());
+  if (row.some((v) => v.length > 0)) matrix.push(row);
+  if (matrix.length < 2) return null;
+
+  const headers = matrix[0].map((h, idx) => h.trim() || `Column ${idx + 1}`);
+  if (headers.length < 2) return null;
+
+  const rows = [];
+  for (let r = 1; r < matrix.length; r++) {
+    const cells = matrix[r];
+    if (!cells.some((c) => c.length > 0)) continue;
+    const obj = {};
+    headers.forEach((h, idx) => {
+      obj[h] = (cells[idx] ?? "").trim();
+    });
+    rows.push(obj);
+  }
+  if (rows.length === 0) return null;
+  return { delimiter, headers, rows, rowCount: rows.length };
 }
 
 function parseDocumentTextLocallyExt(rawText, fileName = "document") {
-  const text = String(rawText || "").replace(/\r/g, "\n");
+  const text = String(rawText || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const isTsvFile = /\.tsv$/i.test(fileName);
+  const isCsvFile = /\.csv$/i.test(fileName);
+  const forcedDelim = isTsvFile ? "\t" : isCsvFile ? "," : undefined;
+  const parsedTable =
+    isTsvFile || isCsvFile || /[\t,]/.test(text.split("\n")[0] || "")
+      ? parseDelimitedTextExt(rawText, forcedDelim)
+      : null;
+
   const compact = text.replace(/[ \t]+/g, " ");
   const lower = `${fileName} ${compact}`.toLowerCase();
   const fields = {};
@@ -1785,6 +1957,43 @@ function parseDocumentTextLocallyExt(rawText, fileName = "document") {
   else if (/\bpan\b|permanent\s+account\s+number|income\s+tax\s+department/i.test(lower)) documentType = "pan";
   else if (/shipping\s+label|awb|tracking\s*(?:id|no|number)|ship\s+to|courier/i.test(lower)) documentType = "shipping_label";
   else if (/invoice|tax\s+invoice|gstin|bill\s+no|total\s+amount/i.test(lower)) documentType = "invoice";
+
+  if (parsedTable && parsedTable.rowCount > 0) {
+    if (parsedTable.rowCount === 1) {
+      const single = parsedTable.rows[0];
+      const colMap = [
+        [/^(?:full\s*)?name$/i, "name"],
+        [/^(?:email|mail)$/i, "email"],
+        [/^(?:phone|mobile(?:\s*no|\s*number)?)$/i, "phone"],
+        [/^address$/i, "address"],
+        [/^city$/i, "city"],
+        [/^state$/i, "state"],
+        [/^(?:pin\s*code|pincode|zip)$/i, "pincode"],
+        [/^order[\s_-]*id$/i, "orderId"],
+        [/^(?:invoice[\s_-]*no|invoice[\s_-]*number)$/i, "invoiceNumber"],
+        [/^(?:amount|total|price)$/i, "amount"],
+        [/^gstin$/i, "gstin"],
+        [/^(?:company|seller|vendor)$/i, "company"],
+      ];
+      for (const [col, val] of Object.entries(single)) {
+        if (!val) continue;
+        const mCol = colMap.find(([re]) => re.test(col.trim()));
+        if (mCol && !fields[mCol[1]]) fields[mCol[1]] = val;
+      }
+    }
+    const count = Object.keys(fields).length;
+    return {
+      ok: true,
+      documentType,
+      fileName,
+      confidence: "high",
+      fields,
+      ambiguousFields,
+      table: parsedTable,
+      notes: `Parsed ${parsedTable.rowCount} delimited row(s) (${parsedTable.headers.join(", ")})${count > 0 ? ` and ${count} direct field(s)` : ""}.`,
+      provider: "local_csv_tsv_parser",
+    };
+  }
 
   const aadhaarMatches = [...compact.matchAll(/\b([2-9]\d{3}[\s-]?\d{4}[\s-]?\d{4})\b/g)].map((m) =>
     m[1].replace(/[\s-]+/g, " ").trim(),
@@ -1894,8 +2103,7 @@ async function extractUploadedDocument(doc) {
         (t) =>
           t.url &&
           !t.url.includes("aistudio.google.com") &&
-          !t.url.includes(LEGACY_BROKEN_HOST) &&
-          (t.url.includes("run.app") || t.url.includes("localhost")),
+          (t.url.includes("run.app") || t.url.includes("localhost") || t.url.includes("127.0.0.1")),
       );
       if (buddyTab?.id && buddyTab.url) {
         const origin = new URL(buddyTab.url).origin;
@@ -2100,9 +2308,7 @@ async function ask(
       FALLBACK_PRE_HOST,
       "http://127.0.0.1:3000",
       "http://localhost:3000",
-    ].filter(
-      (h, idx, arr) => h && !h.includes(LEGACY_BROKEN_HOST) && arr.indexOf(h) === idx,
-    );
+    ].filter((h, idx, arr) => Boolean(h) && arr.indexOf(h) === idx);
     let lastNetErr = null;
     for (const host of candidateHosts) {
       try {
@@ -2147,7 +2353,7 @@ async function ask(
           if (!t.url) return false;
           try {
             const u = new URL(t.url);
-            if (u.hostname.includes("aistudio.google.com") || u.hostname.includes(LEGACY_BROKEN_HOST)) {
+            if (u.hostname.includes("aistudio.google.com")) {
               return false;
             }
             return (
@@ -2198,6 +2404,23 @@ async function ask(
       body?.error === "auth";
 
     if (isHtmlAuthRedirect || hasServerAiError) {
+      const serverFailureDetail =
+        body?.providerFailure ||
+        (res && !res.ok
+          ? {
+              kind: body?.error || "server_error",
+              status: "server_error",
+              provider: "backend",
+              message: body?.message || `Backend HTTP ${res.status}`,
+            }
+          : isHtmlAuthRedirect
+            ? {
+                kind: "network",
+                status: "network_error",
+                provider: "backend",
+                message: "Backend host returned auth/HTML redirect instead of API JSON.",
+              }
+            : null);
       const autonomousResult = await generateAutonomousCompanionReply({
         question,
         intent,
@@ -2209,6 +2432,8 @@ async function ask(
         preferredProvider: effectivePreferredProvider,
         history: formattedHistory,
         actionContext: effectiveActionContext,
+        serverProviderWarning: body?.providerWarning || null,
+        serverProviderFailure: serverFailureDetail,
       });
       if (autonomousResult) {
         body = autonomousResult;
@@ -2246,6 +2471,13 @@ async function ask(
         preferredProvider: effectivePreferredProvider,
         history: formattedHistory,
         actionContext: effectiveActionContext,
+        serverProviderWarning: body?.providerWarning || null,
+        serverProviderFailure: body?.providerFailure || {
+          kind: body?.error || "server_error",
+          status: "server_error",
+          provider: "backend",
+          message: body?.message || body?.error || `Server returned error (${res.status}).`,
+        },
       });
       if (autonomousResult) {
         body = autonomousResult;
@@ -2262,8 +2494,9 @@ async function ask(
       recordTurn(question, body.reply.answer);
     }
 
+    let highlightCoords = null;
     if (body.highlightSelector && tab?.id && snapshot) {
-      runTabScript({
+      const hlRun = await runTabScript({
         target: { tabId: tab.id },
         func: highlight,
         args: [
@@ -2273,11 +2506,16 @@ async function ask(
           { outfit: body.reply?.outfit || "teal", buddyName: body.buddyName || "Buddy" },
         ],
         label: "ask:highlight",
-      }).catch(() => undefined);
+      }).catch(() => null);
+      const hlRes = hlRun?.results?.[0]?.result;
+      if (hlRes && typeof hlRes === "object") {
+        highlightCoords = hlRes;
+      }
     }
-    return { ...body, pageReadable: Boolean(snapshot), snapshot };
+    return { ...body, pageReadable: Boolean(snapshot), snapshot, highlightCoords };
   } catch (err) {
     try {
+      const networkErrMsg = err instanceof Error ? err.message : String(err || "Network error");
       const autonomousResult = await generateAutonomousCompanionReply({
         question,
         intent,
@@ -2289,13 +2527,20 @@ async function ask(
         preferredProvider: effectivePreferredProvider,
         history: formattedHistory,
         actionContext: effectiveActionContext,
+        serverProviderFailure: {
+          kind: "network",
+          status: "network_error",
+          provider: "backend",
+          message: `Backend unreachable at ${apiBase}: ${networkErrMsg}`,
+        },
       });
       if (autonomousResult) {
         if (autonomousResult.reply?.answer) {
           recordTurn(question, autonomousResult.reply.answer);
         }
+        let highlightCoords = null;
         if (autonomousResult.highlightSelector && tab?.id && snapshot) {
-          runTabScript({
+          const hlRun = await runTabScript({
             target: { tabId: tab.id },
             func: highlight,
             args: [
@@ -2305,9 +2550,13 @@ async function ask(
               { outfit: "teal", buddyName: autonomousResult.buddyName || "Buddy" },
             ],
             label: "ask:fallbackHighlight",
-          }).catch(() => undefined);
+          }).catch(() => null);
+          const hlRes = hlRun?.results?.[0]?.result;
+          if (hlRes && typeof hlRes === "object") {
+            highlightCoords = hlRes;
+          }
         }
-        return { ...autonomousResult, pageReadable: Boolean(snapshot), snapshot };
+        return { ...autonomousResult, pageReadable: Boolean(snapshot), snapshot, highlightCoords };
       }
     } catch {}
 
@@ -2326,6 +2575,23 @@ async function ask(
 async function highlight(selector, title, description, options = {}) {
   const queryDeepSelector = (sel, root = document) => {
     if (!sel) return null;
+    if (sel.includes(" >>> ") && root === document) {
+      const parts = sel.split(" >>> ").map((s) => s.trim()).filter(Boolean);
+      let curRoot = document;
+      for (let i = 0; i < parts.length; i++) {
+        let hit = null;
+        try {
+          hit = curRoot.querySelector(parts[i]);
+        } catch {
+          return null;
+        }
+        if (!hit) return null;
+        if (i === parts.length - 1) return hit;
+        if (!hit.shadowRoot) return null;
+        curRoot = hit.shadowRoot;
+      }
+      return null;
+    }
     try {
       const direct = root.querySelector(sel);
       if (direct) return direct;
@@ -2712,6 +2978,23 @@ async function smartFillForm(fields, options = {}) {
 
       const queryDeepSelector = (sel, root = document) => {
         if (!sel) return null;
+        if (sel.includes(" >>> ") && root === document) {
+          const parts = sel.split(" >>> ").map((s) => s.trim()).filter(Boolean);
+          let curRoot = document;
+          for (let i = 0; i < parts.length; i++) {
+            let hit = null;
+            try {
+              hit = curRoot.querySelector(parts[i]);
+            } catch {
+              return null;
+            }
+            if (!hit) return null;
+            if (i === parts.length - 1) return hit;
+            if (!hit.shadowRoot) return null;
+            curRoot = hit.shadowRoot;
+          }
+          return null;
+        }
         try {
           const direct = root.querySelector(sel);
           if (direct) return direct;
@@ -2897,9 +3180,7 @@ async function smartFillForm(fields, options = {}) {
         );
       };
 
-      const getUniqueSelector = (node) => {
-        if (!node) return undefined;
-        const nodeRoot = node.getRootNode?.() || document;
+      const buildLocalSelector = (node, nodeRoot) => {
         const safeCount = (s) => {
           try {
             return (nodeRoot.querySelectorAll ? nodeRoot.querySelectorAll(s) : document.querySelectorAll(s)).length;
@@ -2930,6 +3211,22 @@ async function smartFillForm(fields, options = {}) {
           cur = parent;
         }
         return parts.join(" > ");
+      };
+
+      const getUniqueSelector = (node) => {
+        if (!node) return undefined;
+        const chain = [];
+        let curNode = node;
+        while (curNode && curNode.nodeType === 1) {
+          const nodeRoot = curNode.getRootNode?.() || document;
+          chain.unshift(buildLocalSelector(curNode, nodeRoot));
+          if (nodeRoot && nodeRoot !== document && nodeRoot.host) {
+            curNode = nodeRoot.host;
+          } else {
+            break;
+          }
+        }
+        return chain.join(" >>> ");
       };
 
       const validateInteractability = (el) => {
@@ -3887,7 +4184,6 @@ async function findContentOnPage(query, options = {}) {
       };
 
       const getSelector = (el) => {
-        const elRoot = el.getRootNode?.() || document;
         const safeQsaCount = (root, s) => {
           try {
             return (root.querySelectorAll ? root.querySelectorAll(s) : document.querySelectorAll(s)).length;
@@ -3895,28 +4191,42 @@ async function findContentOnPage(query, options = {}) {
             return 0;
           }
         };
-        if (el.id && safeQsaCount(elRoot, `#${CSS.escape(el.id)}`) === 1) {
-          return `#${CSS.escape(el.id)}`;
-        }
-        const parts = [];
-        let cur = el;
-        while (cur && cur.nodeType === 1 && cur !== elRoot && parts.length < 5) {
-          let p = cur.tagName.toLowerCase();
-          if (cur.id && safeQsaCount(elRoot, `#${CSS.escape(cur.id)}`) === 1) {
-            parts.unshift(`#${CSS.escape(cur.id)}`);
+        const buildLocalSel = (target, elRoot) => {
+          if (target.id && safeQsaCount(elRoot, `#${CSS.escape(target.id)}`) === 1) {
+            return `#${CSS.escape(target.id)}`;
+          }
+          const parts = [];
+          let cur = target;
+          while (cur && cur.nodeType === 1 && cur !== elRoot && parts.length < 5) {
+            let p = cur.tagName.toLowerCase();
+            if (cur.id && safeQsaCount(elRoot, `#${CSS.escape(cur.id)}`) === 1) {
+              parts.unshift(`#${CSS.escape(cur.id)}`);
+              break;
+            }
+            const parent = cur.parentElement;
+            if (parent) {
+              const same = [...parent.children].filter((c) => c.tagName === cur.tagName);
+              if (same.length > 1) {
+                p += `:nth-of-type(${same.indexOf(cur) + 1})`;
+              }
+            }
+            parts.unshift(p);
+            cur = parent;
+          }
+          return parts.join(" > ");
+        };
+        const chain = [];
+        let curNode = el;
+        while (curNode && curNode.nodeType === 1) {
+          const elRoot = curNode.getRootNode?.() || document;
+          chain.unshift(buildLocalSel(curNode, elRoot));
+          if (elRoot && elRoot !== document && elRoot.host) {
+            curNode = elRoot.host;
+          } else {
             break;
           }
-          const parent = cur.parentElement;
-          if (parent) {
-            const same = [...parent.children].filter((c) => c.tagName === cur.tagName);
-            if (same.length > 1) {
-              p += `:nth-of-type(${same.indexOf(cur) + 1})`;
-            }
-          }
-          parts.unshift(p);
-          cur = parent;
         }
-        return parts.join(" > ");
+        return chain.join(" >>> ");
       };
 
       const isVisible = (el) => {
@@ -4297,13 +4607,26 @@ async function executeAction(action, selector, value, options = {}) {
       const SENSITIVE =
         /pass(?:word|wd)?|otp|(?<!postal[\s_-])(?<![a-z0-9])pin(?![a-z0-9]|[\s_-]*code\b)|cvv|cvc|secret|token|ssn|aadhaar|credit.?card|debit.?card|card.?number/i;
 
+      const cleanCssPartList = (selectorStr) =>
+        String(selectorStr || "")
+          .split(",")
+          .map((p) => p.trim())
+          .filter((p) => p && !/:has-text\(|:contains\(/i.test(p));
+
       const queryAllDeep = (selectorStr, root = document) => {
-        const out = [...root.querySelectorAll(selectorStr)];
+        const cleanSel = cleanCssPartList(selectorStr).join(", ");
+        if (!cleanSel) return [];
+        let out = [];
+        try {
+          out = [...root.querySelectorAll(cleanSel)];
+        } catch {
+          return [];
+        }
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
         let node;
         while ((node = walker.nextNode())) {
           if (node.shadowRoot) {
-            out.push(...queryAllDeep(selectorStr, node.shadowRoot));
+            out.push(...queryAllDeep(cleanSel, node.shadowRoot));
           }
         }
         return out;
@@ -4311,8 +4634,29 @@ async function executeAction(action, selector, value, options = {}) {
 
       const queryDeepSelector = (selectorStr, root = document) => {
         if (!selectorStr || selectorStr === "window" || selectorStr === "document") return null;
+        if (selectorStr.includes(" >>> ") && root === document) {
+          const parts = selectorStr.split(" >>> ").map((s) => s.trim()).filter(Boolean);
+          let curRoot = document;
+          for (let i = 0; i < parts.length; i++) {
+            const safePart = cleanCssPartList(parts[i]).join(", ");
+            if (!safePart) return null;
+            let hit = null;
+            try {
+              hit = curRoot.querySelector(safePart);
+            } catch {
+              return null;
+            }
+            if (!hit) return null;
+            if (i === parts.length - 1) return hit;
+            if (!hit.shadowRoot) return null;
+            curRoot = hit.shadowRoot;
+          }
+          return null;
+        }
+        const cleanSel = cleanCssPartList(selectorStr).join(", ");
+        if (!cleanSel) return null;
         try {
-          const direct = root.querySelector(selectorStr);
+          const direct = root.querySelector(cleanSel);
           if (direct) return direct;
         } catch {
           return null;
@@ -4321,7 +4665,7 @@ async function executeAction(action, selector, value, options = {}) {
         let node;
         while ((node = walker.nextNode())) {
           if (node.shadowRoot) {
-            const found = queryDeepSelector(selectorStr, node.shadowRoot);
+            const found = queryDeepSelector(cleanSel, node.shadowRoot);
             if (found) return found;
           }
         }
@@ -4701,9 +5045,7 @@ async function executeAction(action, selector, value, options = {}) {
       }
 
       // Helper: build stable CSS selector & nearby section context label
-      const getUniqueSelector = (node) => {
-        if (!node) return undefined;
-        const nodeRoot = node.getRootNode?.() || document;
+      const buildLocalUniqueSelector = (node, nodeRoot) => {
         const safeCount = (s) => {
           try {
             return (nodeRoot.querySelectorAll ? nodeRoot.querySelectorAll(s) : document.querySelectorAll(s)).length;
@@ -4731,6 +5073,22 @@ async function executeAction(action, selector, value, options = {}) {
           cur = parent;
         }
         return parts.join(" > ");
+      };
+
+      const getUniqueSelector = (node) => {
+        if (!node) return undefined;
+        const chain = [];
+        let curNode = node;
+        while (curNode && curNode.nodeType === 1) {
+          const nodeRoot = curNode.getRootNode?.() || document;
+          chain.unshift(buildLocalUniqueSelector(curNode, nodeRoot));
+          if (nodeRoot && nodeRoot !== document && nodeRoot.host) {
+            curNode = nodeRoot.host;
+          } else {
+            break;
+          }
+        }
+        return chain.join(" >>> ");
       };
 
       const getContextLabel = (node) => {
@@ -4773,7 +5131,7 @@ async function executeAction(action, selector, value, options = {}) {
 
         if (!el && sel && sel !== "__CURRENT__") {
           el = queryDeepSelector(sel);
-          if (!el && !val && !opts?.text) {
+          if (!el && !val && !opts?.text && !(Array.isArray(opts?.alternateTargets) && opts.alternateTargets.length > 0)) {
             return {
               ok: false,
               stale: true,
@@ -4792,8 +5150,10 @@ async function executeAction(action, selector, value, options = {}) {
           }
         }
 
-        if (!el && (val || opts?.text || sel) && val !== "__CURRENT__") {
-          const rawTarget = String(val || opts?.text || sel).trim().toLowerCase();
+        if (!el && (val || opts?.text || sel || (Array.isArray(opts?.alternateTargets) && opts.alternateTargets.length > 0)) && val !== "__CURRENT__") {
+          const rawTarget = String(val || opts?.text || (Array.isArray(opts?.alternateTargets) ? opts.alternateTargets[0] : "") || sel)
+            .trim()
+            .toLowerCase();
           const cleanTarget = rawTarget
             .replace(/^(?:the|a|an|ye|yeh|wo|woh|is|this|us|par)\s+/i, "")
             .replace(/\s+(?:button|btn|tab|link|icon|menu|bar|option|checkbox|radio|switch)$/i, "")
@@ -4807,6 +5167,8 @@ async function executeAction(action, selector, value, options = {}) {
             submit: ["submit", "save", "send", "continue", "proceed", "confirm", "done", "apply", "request"],
             cart: ["cart", "bag", "basket", "checkout", "shopping cart"],
             orders: ["orders", "my orders", "order history", "pending orders", "order"],
+            today: ["today", "today's orders", "created today", "order date"],
+            pending: ["pending", "pending orders", "ready to ship", "unshipped", "new orders"],
             search: ["search", "find", "go", "query"],
             next: ["next", "continue", "forward", "proceed"],
             close: ["close", "dismiss", "cancel", "exit"],
@@ -4817,7 +5179,10 @@ async function executeAction(action, selector, value, options = {}) {
           const hasWholeTerm = (haystack, needle) =>
             new RegExp(`(?:^|\\b|\\s)${escapeSymRe(needle)}(?:\\b|\\s|$)`, "i").test(haystack);
 
-          const targetTerms = [cleanTarget, rawTarget].filter((t) => t && t.length > 0);
+          const extraAlts = Array.isArray(opts?.alternateTargets)
+            ? opts.alternateTargets.map((t) => String(t || "").trim().toLowerCase()).filter(Boolean)
+            : [];
+          const targetTerms = [...new Set([cleanTarget, rawTarget, ...extraAlts].filter((t) => t && t.length > 0))];
           for (const [key, syns] of Object.entries(CLICK_SYNONYMS)) {
             if (
               cleanTarget === key ||
@@ -5731,49 +6096,58 @@ async function extractPageData(selector, extractType = "order_id", query, option
       };
       const extracted = [];
 
-      // 1. Extract Order IDs pattern
+      // 1. Extract Order IDs pattern (supports standard + Meesho sub-order IDs like 123456789_1)
       if (type === "order_id" || type === "orders") {
-        const orderIdPattern = /(?:order[_\-\s]*id[:\s]*|oid[:\s\-]*|#\s*)([a-zA-Z0-9_\-]{4,24})/i;
+        const orderIdPattern =
+          /(?:sub[-_\s]*order[-_\s]*id|order[-_\s]*id|oid|#)\s*[:#-]?\s*([a-zA-Z0-9_-]{4,28})/i;
+        const meeshoSubOrderPattern = /\b(\d{6,16}(?:_\d+)?)\b/;
         const rows = queryAllDeep(
-          sel || 'table tbody tr, [data-testid*="order"], div.order-card',
+          sel ||
+            'table tbody tr, [data-testid*="order" i], [data-row-key], div.order-card, [class*="order-card" i], [class*="orderRow" i]',
         );
 
+        const seenOrderIds = new Set();
         if (rows.length > 0) {
           rows.forEach((row, i) => {
             const rowText = normalize(row.innerText || row.textContent);
+            if (!rowText) return;
             const match = rowText.match(orderIdPattern);
-            const cells = [...row.querySelectorAll("td, th, span")].map((c) =>
-              normalize(c.innerText),
-            );
+            const cells = [...row.querySelectorAll("td, th, span, p, strong, div")]
+              .map((c) => normalize(c.innerText))
+              .filter(Boolean);
             const idCandidate =
-              cells.find((c) => /^[A-Z0-9_\-]{6,20}$/i.test(c) && /\d/.test(c)) ||
-              (match ? match[1] : null);
+              cells.find((c) => /^\d{6,16}(?:_\d+)?$/.test(c)) ||
+              cells.find((c) => /^[A-Z]{2,6}[-_]?[A-Z0-9_-]{3,20}$/i.test(c) && /\d/.test(c)) ||
+              (match ? match[1] : null) ||
+              (rowText.match(meeshoSubOrderPattern)?.[1] || null);
 
-            if (idCandidate) {
+            if (idCandidate && !seenOrderIds.has(idCandidate)) {
+              seenOrderIds.add(idCandidate);
+              const status = /pending|ready\s*to\s*ship|unshipped|processing|on\s*hold/i.test(rowText)
+                ? "pending"
+                : /shipped|delivered|dispatched|cancelled|returned/i.test(rowText)
+                  ? "completed"
+                  : "unknown";
               extracted.push({
                 orderId: idCandidate,
                 rowNumber: i + 1,
-                status: /pending|processing/i.test(rowText)
-                  ? "pending"
-                  : /shipped|delivered/i.test(rowText)
-                    ? "completed"
-                    : "unknown",
-                details: rowText.slice(0, 120),
+                status,
+                details: rowText.slice(0, 140),
               });
             }
           });
         }
 
-        // If no structured rows found, search the whole page text for order IDs
+        // If no structured rows found, search visible page text for order / sub-order IDs
         if (extracted.length === 0) {
-          const orderIdGlobal = /(?:order[_\-\s]*id[:\s]*|oid[:\s\-]*|#\s*)([a-zA-Z0-9_\-]{4,24})/gi;
+          const orderIdGlobal =
+            /(?:sub[-_\s]*order[-_\s]*id|order[-_\s]*id|oid|#)\s*[:#-]?\s*([a-zA-Z0-9_-]{4,28})/gi;
           const pageText = document.body?.innerText || "";
           let m;
-          const seen = new Set();
-          while ((m = orderIdGlobal.exec(pageText)) !== null && extracted.length < 30) {
+          while ((m = orderIdGlobal.exec(pageText)) !== null && extracted.length < 40) {
             const id = m[1];
-            if (id && /\d/.test(id) && !seen.has(id)) {
-              seen.add(id);
+            if (id && /\d/.test(id) && !seenOrderIds.has(id)) {
+              seenOrderIds.add(id);
               extracted.push({
                 orderId: id,
                 status: "unknown",
@@ -5783,7 +6157,12 @@ async function extractPageData(selector, extractType = "order_id", query, option
           }
         }
 
-        if (extracted.length === 0) {
+        // When pending orders were explicitly requested, prefer rows with pending status if any exist
+        const wantPending = String(opts?.statusFilter || q || "").toLowerCase().includes("pending");
+        const pendingOnly = wantPending ? extracted.filter((item) => item.status === "pending") : [];
+        const finalList = pendingOnly.length > 0 ? pendingOnly : extracted;
+
+        if (finalList.length === 0) {
           return {
             ok: false,
             count: 0,
@@ -5795,10 +6174,10 @@ async function extractPageData(selector, extractType = "order_id", query, option
 
         return {
           ok: true,
-          count: extracted.length,
+          count: finalList.length,
           type: "order_id",
-          extracted,
-          summary: `Extracted ${extracted.length} order IDs from page.`,
+          extracted: finalList,
+          summary: `Extracted ${finalList.length} ${pendingOnly.length > 0 ? "pending " : ""}order IDs from page.`,
         };
       }
 
@@ -6112,7 +6491,7 @@ async function waitForCondition(selector, text, timeoutMs = 4000) {
         }
         await new Promise((r) => setTimeout(r, 200));
       }
-      return { ok: true, found: false, timeout: true };
+      return { ok: false, found: false, timeout: true, message: "Wait condition timed out." };
     },
     args: [selector, text, timeoutMs],
     label: "waitForCondition",
@@ -6120,6 +6499,7 @@ async function waitForCondition(selector, text, timeoutMs = 4000) {
 
   return waitRun.results?.[0]?.result || {
     ok: false,
+    found: false,
     message: waitRun.error || "Wait condition timed out.",
   };
 }
@@ -6147,12 +6527,19 @@ async function executePlanStepInTab(step, options = {}) {
   // 1. Navigation
   if (step.action === "navigate") {
     const navUrl = step.value || step.tabUrl;
+    if (step.skipIfUrlPattern) {
+      const cur = await activeTab().catch(() => null);
+      if (cur?.url && new RegExp(step.skipIfUrlPattern, "i").test(cur.url)) {
+        return { ok: true, verified: true, result: `Already on target page (${cur.url}).` };
+      }
+    }
     if (navUrl && !RESTRICTED.test(navUrl)) {
       const res = await navigateTab(navUrl);
       return {
         ok: res.ok,
         verified: res.ok,
-        result: `Navigated to ${res.url || navUrl}`,
+        result: res.ok ? `Navigated to ${res.url || navUrl}` : undefined,
+        error: res.ok ? undefined : res.message || `Failed to navigate to ${navUrl}`,
       };
     }
     return { ok: true, verified: true, result: "Current page is ready." };
@@ -6230,7 +6617,13 @@ async function executePlanStepInTab(step, options = {}) {
   // 5. Wait for condition
   if (step.action === "wait_for") {
     const res = await waitForCondition(step.selector, step.textTarget, 3000);
-    return { ok: res.ok, verified: res.ok, result: "Condition verified." };
+    const matched = Boolean(res.ok && res.found !== false);
+    return {
+      ok: matched,
+      verified: matched,
+      result: matched ? "Condition verified." : undefined,
+      error: matched ? undefined : res.message || "Wait condition timed out.",
+    };
   }
 
   // 5b. Fill from uploaded document (Aadhaar / PAN / invoice / ID)
@@ -6342,9 +6735,18 @@ async function executePlanStepInTab(step, options = {}) {
     };
   }
 
-  // 6. Click, Select, Scroll, Check
-  const actRes = await executeAction(step.action, step.selector, step.value, {
+  // 6. Click, Select, Scroll, Check (pass alternateTargets for resilient locator fallback)
+  const sanitizedSelector = step.selector
+    ? String(step.selector)
+        .split(",")
+        .map((p) => p.trim())
+        .filter((p) => p && !/:has-text\(|:contains\(/i.test(p))
+        .join(", ") || undefined
+    : undefined;
+
+  const actRes = await executeAction(step.action, sanitizedSelector, step.value, {
     text: step.textTarget,
+    alternateTargets: Array.isArray(step.alternateTargets) ? step.alternateTargets : undefined,
     ...options,
   });
 

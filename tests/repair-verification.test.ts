@@ -16,7 +16,7 @@ describe("AI Buddy System Repair Verification", () => {
     expect(connectTsx).toContain("Signed-in user");
   });
 
-  it("uses live asfavkynho Cloud Run host and blocks stale 5t53lwemhepi host in extension", () => {
+  it("uses active 5t53lwemhepi Cloud Run host without self-blocking in extension and download route", () => {
     const files = [
       path.join(root, "extension/background.js"),
       path.join(root, "extension/sidepanel.js"),
@@ -25,11 +25,17 @@ describe("AI Buddy System Repair Verification", () => {
     for (const f of files) {
       const src = fs.readFileSync(f, "utf-8");
       expect(src).toMatch(
-        /DEFAULT_(?:HOST|BASE)\s*=\s*"https:\/\/ais-dev-asfavkynho62d5znlmqa5n-711254288483\.asia-southeast1\.run\.app"/,
+        /DEFAULT_(?:HOST|BASE)\s*=\s*"https:\/\/ais-dev-5t53lwemhepi2nbkqb2reo-152127168827\.asia-east1\.run\.app"/,
       );
-      expect(src).toMatch(/LEGACY_BROKEN_HOST\s*=\s*"5t53lwemhepi2nbkqb2reo"/);
+      expect(src).not.toContain("LEGACY_BROKEN_HOST");
+      expect(src).not.toContain("asfavkynho62d5znlmqa5n");
       expect(src).toContain("aistudio.google.com");
     }
+    const downloadTsx = fs.readFileSync(path.join(root, "src/routes/download.tsx"), "utf-8");
+    expect(downloadTsx).toContain(
+      "https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app",
+    );
+    expect(downloadTsx).not.toContain("asfavkynho62d5znlmqa5n");
   });
 
   it("eliminates fabricated order IDs and invented user defaults", () => {

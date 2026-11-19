@@ -475,10 +475,11 @@ export function WebpageInspector({
         "understanding",
         `Parsed ${currentSnapshot.headings.length} headings, ${currentSnapshot.forms.length} inputs, ${currentSnapshot.controls.length} buttons.`,
       );
+      const firstNeed = Array.isArray(res.needs) ? res.needs[0] : res.needs;
       const planned = advanceTaskStage(
         understoodPlan,
         "planning",
-        `Identified next step: ${res.needs?.[0] || "Select options and verify"}`,
+        `Identified next step: ${firstNeed || "Select options and verify"}`,
       );
       setPlan(planned);
       toast.success("Webpage analyzed by AI Buddy.");

@@ -68,7 +68,10 @@ export interface MultiActionStep {
   dynamicTargetQuery?: string;
   resolvedSelector?: string;
   textTarget?: string;
+  alternateTargets?: string[];
   value?: string;
+  skipIfUrlPattern?: string;
+  statusFilter?: string;
   status: "pending" | "running" | "completed" | "failed" | "skipped" | "awaiting_approval";
   isConsequential?: boolean;
   requiresApproval?: boolean;
@@ -212,6 +215,13 @@ export function resolveLiveStepTarget(
     ...(snapshot.alerts || []),
   ];
 
+  const cleanSelector = (sel?: string): string =>
+    String(sel || "")
+      .split(",")
+      .map((p) => p.trim())
+      .filter((p) => p && !/:has-text\(|:contains\(/i.test(p))
+      .join(", ");
+
   // 1. Check if the existing direct selector exists in the fresh snapshot
   if (step.selector && step.selector !== "body") {
     const directMatch = allElements.find((el) => el.selector === step.selector);
@@ -223,14 +233,42 @@ export function resolveLiveStepTarget(
         confidence: 0.95,
       };
     }
+    const sanitized = cleanSelector(step.selector);
+    if (sanitized && sanitized !== step.selector) {
+      const sanitizedMatch = allElements.find((el) => el.selector === sanitized);
+      if (sanitizedMatch) {
+        return {
+          selector: sanitizedMatch.selector,
+          matched: true,
+          strategy: "direct",
+          confidence: 0.9,
+        };
+      }
+    }
   }
 
-  // 2. Query matching: use dynamicTargetQuery, textTarget, title, or value
-  const query = (step.dynamicTargetQuery || step.textTarget || step.title || step.value || "")
-    .toLowerCase()
-    .trim();
+  // 2. Query matching: use dynamicTargetQuery, textTarget, alternateTargets, title, or value
+  const rawQueries = [
+    step.dynamicTargetQuery,
+    step.textTarget,
+    ...(Array.isArray(step.alternateTargets) ? step.alternateTargets : []),
+    step.title,
+    step.value,
+  ]
+    .filter((q): q is string => typeof q === "string" && q.trim().length > 0)
+    .map((q) =>
+      q
+        .toLowerCase()
+        .trim()
+        .replace(/^(click|open|press|select|go to|navigate to|fill|type|search|find|copy)\s+/i, "")
+        .replace(/\s+(button|link|tab|input|field|box)$/i, "")
+        .trim(),
+    )
+    .filter(Boolean);
 
-  if (!query) {
+  const uniqueQueries = [...new Set(rawQueries)];
+
+  if (uniqueQueries.length === 0) {
     return {
       selector: step.selector || "body",
       matched: false,
@@ -239,39 +277,37 @@ export function resolveLiveStepTarget(
     };
   }
 
-  // Clean prompt noise words from query
-  const cleanQuery = query
-    .replace(/^(click|open|press|select|go to|fill|type|search|find|copy)\s+/i, "")
-    .replace(/\s+(button|link|tab|input|field|box)$/i, "")
-    .trim();
-
-  // 3. Exact accessible name or label match
-  const exactNameMatch = allElements.find(
-    (el) => el.name && el.name.toLowerCase().trim() === cleanQuery,
-  );
-  if (exactNameMatch) {
-    return {
-      selector: exactNameMatch.selector,
-      matched: true,
-      strategy: "semantic",
-      confidence: 0.9,
-    };
+  // 3. Exact accessible name or label match (iterates primary query then alternateTargets)
+  for (const cleanQuery of uniqueQueries) {
+    const exactNameMatch = allElements.find(
+      (el) => el.name && el.name.toLowerCase().trim() === cleanQuery,
+    );
+    if (exactNameMatch) {
+      return {
+        selector: exactNameMatch.selector,
+        matched: true,
+        strategy: "semantic",
+        confidence: 0.9,
+      };
+    }
   }
 
   // 4. Substring text or placeholder match on interactive elements
-  const substringMatch = allElements.find((el) => {
-    const name = (el.name || "").toLowerCase();
-    const ph = ((el as { placeholder?: string }).placeholder || "").toLowerCase();
-    const sel = (el.selector || "").toLowerCase();
-    return name.includes(cleanQuery) || ph.includes(cleanQuery) || sel.includes(cleanQuery);
-  });
-  if (substringMatch) {
-    return {
-      selector: substringMatch.selector,
-      matched: true,
-      strategy: "text",
-      confidence: 0.75,
-    };
+  for (const cleanQuery of uniqueQueries) {
+    const substringMatch = allElements.find((el) => {
+      const name = (el.name || "").toLowerCase();
+      const ph = ((el as { placeholder?: string }).placeholder || "").toLowerCase();
+      const sel = (el.selector || "").toLowerCase();
+      return name.includes(cleanQuery) || ph.includes(cleanQuery) || sel.includes(cleanQuery);
+    });
+    if (substringMatch) {
+      return {
+        selector: substringMatch.selector,
+        matched: true,
+        strategy: "text",
+        confidence: 0.75,
+      };
+    }
   }
 
   // 5. Role-appropriate match (e.g. if action is click_submit, find submit button)
@@ -447,6 +483,7 @@ export function generateMultiActionPlan(
       action: "navigate",
       value: "https://supplier.meesho.com/panel/orders",
       selector: "body",
+      skipIfUrlPattern: "meesho\\.com\\/panel|mock.*meesho|localhost.*meesho",
       status: "pending",
       verified: false,
     });
@@ -455,8 +492,9 @@ export function generateMultiActionPlan(
       stepNumber: 2,
       title: "Go to Orders section",
       action: "click",
-      selector: 'a[href*="orders"], button:has-text("Orders"), nav [role="tab"]:has-text("Orders")',
+      selector: 'a[href*="orders"], [role="tab"][data-tab="orders"]',
       textTarget: "Orders",
+      alternateTargets: ["Orders", "My Orders", "All Orders", "Orders Dashboard"],
       status: "pending",
       verified: false,
     });
@@ -465,8 +503,9 @@ export function generateMultiActionPlan(
       stepNumber: 3,
       title: "Filter today's orders",
       action: "click",
-      selector: 'button:has-text("Today"), [data-filter="today"], input[value="today"]',
+      selector: '[data-filter="today"], input[value="today"]',
       textTarget: "Today",
+      alternateTargets: ["Today", "Today's Orders", "Created Today", "Date"],
       status: "pending",
       verified: false,
     });
@@ -475,8 +514,9 @@ export function generateMultiActionPlan(
       stepNumber: 4,
       title: "Find pending orders",
       action: "click",
-      selector: 'button:has-text("Pending"), [data-tab="pending"], input[value="pending"]',
+      selector: '[data-tab="pending"], input[value="pending"]',
       textTarget: "Pending",
+      alternateTargets: ["Pending", "Pending Orders", "Ready to Ship", "Unshipped"],
       status: "pending",
       verified: false,
     });
@@ -485,9 +525,10 @@ export function generateMultiActionPlan(
       stepNumber: 5,
       title: "Copy pending order IDs",
       action: "extract",
-      selector: 'table tbody tr, [data-testid="order-row"], td[class*="order-id"], td:first-child',
+      selector: 'table tbody tr, [data-testid*="order"], [class*="order-card"], td:first-child',
       value: "order_id",
       textTarget: "Order ID",
+      statusFilter: lower.includes("pending") ? "pending" : undefined,
       status: "pending",
       verified: false,
     });

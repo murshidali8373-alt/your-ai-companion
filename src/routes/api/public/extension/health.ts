@@ -21,17 +21,19 @@ export const Route = createFileRoute("/api/public/extension/health")({
         const request = ctx?.request;
         const geminiKey = getGeminiKey();
         const hasGemini = Boolean(geminiKey);
-        const hasLovable = isProviderConfigured("lovable-gateway");
-        const hasAnyProvider =
-          hasGemini ||
-          hasLovable ||
-          isProviderConfigured("groq") ||
-          isProviderConfigured("openrouter") ||
-          isProviderConfigured("openai") ||
-          isProviderConfigured("github") ||
-          isProviderConfigured("cloudflare") ||
-          isProviderConfigured("huggingface") ||
-          isProviderConfigured("ollama");
+        const providerNames = [
+          "gemini",
+          "lovable-gateway",
+          "groq",
+          "openrouter",
+          "openai",
+          "github",
+          "cloudflare",
+          "huggingface",
+          "ollama",
+        ] as const;
+        const configuredProviders = providerNames.filter((p) => isProviderConfigured(p));
+        const hasAnyProvider = configuredProviders.length > 0;
 
         const checks: Record<string, { ok: boolean; detail: string }> = {
           backend: { ok: false, detail: "not checked" },
@@ -40,8 +42,8 @@ export const Route = createFileRoute("/api/public/extension/health")({
             detail: hasGemini
               ? "gemini configured"
               : hasAnyProvider
-                ? "configured"
-                : "not configured",
+                ? `configured (${configuredProviders.join(", ")})`
+                : "not configured — set GEMINI_API_KEY (or GOOGLE_API_KEY) on server or add key in Extension Settings",
           },
           session: { ok: false, detail: "signed out" },
         };
@@ -79,7 +81,19 @@ export const Route = createFileRoute("/api/public/extension/health")({
         }
 
         const ok = Object.values(checks).every((c) => c.ok);
-        return extensionJsonResponse(request, { ok, checks, version: "0.1.0" }, 200);
+        return extensionJsonResponse(
+          request,
+          {
+            ok,
+            checks,
+            providers: {
+              geminiConfigured: hasGemini,
+              configuredProviders,
+            },
+            version: "0.1.0",
+          },
+          200,
+        );
       },
     },
   },

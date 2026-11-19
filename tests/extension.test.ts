@@ -481,4 +481,211 @@ describe("MV3 Chrome Extension and Side Panel", () => {
     expect(spCode).toContain("chrome.storage?.onChanged?.addListener?.");
     expect(popupCode).toContain('windowType: "normal"');
   });
+
+  it("fixes pincode false-positive blocking, Shadow DOM host chains, confirmation fidelity, form-session progression, and auto-mic queueing", async () => {
+    const bgCode = fs.readFileSync(path.join(extDir, "background.js"), "utf-8");
+    const spCode = fs.readFileSync(sidepanelJsPath, "utf-8");
+    const snapCode = fs.readFileSync(path.join(extDir, "snapshot.js"), "utf-8");
+    const formFillerCode = fs.readFileSync(
+      path.join(root, "src/hooks/use-form-filler.ts"),
+      "utf-8",
+    );
+    const inspectorCode = fs.readFileSync(
+      path.join(root, "src/components/webpage-inspector.tsx"),
+      "utf-8",
+    );
+
+    // 1. pincode / pin_code is allowed while OTP / PIN / password stay blocked
+    const { isSensitiveField } = await import("../src/hooks/use-form-filler");
+    const makeMockInput = (attrs: Record<string, string>) =>
+      ({
+        type: attrs.type || "text",
+        name: attrs.name || "",
+        id: attrs.id || "",
+        getAttribute: (k: string) => attrs[k] ?? null,
+      }) as unknown as Element;
+
+    expect(isSensitiveField(makeMockInput({ name: "pincode", placeholder: "Enter pincode" }))).toBe(
+      false,
+    );
+    expect(isSensitiveField(makeMockInput({ name: "pin_code", id: "postal_pin_code" }))).toBe(
+      false,
+    );
+    expect(isSensitiveField(makeMockInput({ name: "otp" }))).toBe(true);
+    expect(isSensitiveField(makeMockInput({ name: "atm_pin" }))).toBe(true);
+    expect(isSensitiveField(makeMockInput({ type: "password", name: "pass" }))).toBe(true);
+    expect(formFillerCode).toContain('[contenteditable="plaintext-only"]');
+
+    // 2. webpage-inspector handles res.needs as string without slicing character 0
+    expect(inspectorCode).toContain(
+      "const firstNeed = Array.isArray(res.needs) ? res.needs[0] : res.needs;",
+    );
+
+    // 3. Shadow DOM >>> host-chain selectors in snapshot.js & background.js
+    expect(snapCode).toContain('chain.join(" >>> ")');
+    expect(bgCode).toContain('chain.join(" >>> ")');
+    expect(bgCode).toContain('sel.includes(" >>> ")');
+    expect(bgCode).toContain("highlightCoords");
+
+    // 4. sidepanel.js queued auto-mic recovery, confirmation metadata, preserved form-session & double-highlight prevention
+    expect(spCode).toContain("let pendingAutoMicRequest = null;");
+    expect(spCode).toContain("pendingAutoMicRequest = { reason, deferUntilSpeechEnd };");
+    expect(spCode).toContain("const queuedReq = pendingAutoMicRequest;");
+    expect(spCode).toContain("candidateIndex: intent.candidateIndex,");
+    expect(spCode).toContain("fallbackSelector: actionToRun.fallbackSelector,");
+    expect(spCode).toContain("skipHighlightRpc: true");
+    expect(spCode).toContain("Preserved ${preserved.map((p) => p.field).join");
+  });
+
+  it("P0: validates Shadow DOM >>> selectors up to 600 chars & 80-char custom tags, trims provider keys, reports honest health & transparent failures", async () => {
+    // 1. ask.ts accepts a 480-char Shadow DOM >>> selector and 50-char custom element tag without returning HTTP 400
+    const { Route: askRoute } = await import("../src/routes/api/public/extension/ask");
+    const postAsk = (
+      askRoute.options.server as {
+        handlers: { POST: (ctx: { request: Request }) => Promise<Response> };
+      }
+    ).handlers.POST;
+
+    const longShadowSelector = `${"my-enterprise-shell >>> shadow-panel >>> ".repeat(11)}input[data-field="customer_order_reference"]`;
+    expect(longShadowSelector.length).toBeGreaterThan(420);
+    expect(longShadowSelector.length).toBeLessThanOrEqual(600);
+    const customTag = "x-enterprise-commerce-order-verification-control"; // 48 chars (> old 24 cap)
+
+    const shadowReq = new Request("http://localhost:3000/api/public/extension/ask", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        question: "Explain this page",
+        intent: "explain_page",
+        snapshot: {
+          url: "https://seller.example.com/orders",
+          origin: "https://seller.example.com",
+          title: "Orders",
+          capturedAt: new Date().toISOString(),
+          headings: [],
+          forms: [
+            {
+              ref: "f1",
+              role: "textbox",
+              name: "Order Ref",
+              tag: customTag,
+              selector: longShadowSelector,
+            },
+          ],
+          controls: [],
+          alerts: [],
+          text: "Orders management page",
+          truncated: false,
+        },
+      }),
+    });
+
+    const shadowRes = await postAsk({ request: shadowReq });
+    expect(shadowRes.status).toBe(200);
+    const shadowBody = await shadowRes.json();
+    expect(shadowBody.error).not.toBe("bad_request");
+
+    // 2. snapshot.js bounds tag to <= 80 chars matching ask.ts
+    const snapCode = fs.readFileSync(path.join(extDir, "snapshot.js"), "utf-8");
+    expect(snapCode).toContain("el.tagName.toLowerCase().slice(0, 80)");
+
+    // 3. provider-keys.server.ts trims keys & rejects placeholder strings
+    const { getProviderKey, isRealKey } = await import("../src/lib/ai/provider-keys.server");
+    const prevGemini = process.env.GEMINI_API_KEY;
+    try {
+      expect(isRealKey("MY_GEMINI_KEY")).toBe(false);
+      expect(isRealKey("replace-with-your-key")).toBe(false);
+      process.env.GEMINI_API_KEY = "   AIzaSyTrimmedTestKey999   ";
+      expect(getProviderKey("gemini")).toBe("AIzaSyTrimmedTestKey999");
+    } finally {
+      if (prevGemini === undefined) delete process.env.GEMINI_API_KEY;
+      else process.env.GEMINI_API_KEY = prevGemini;
+    }
+
+    // 4. health.ts reports actionable unconfigured detail and geminiConfigured flag
+    const { Route: healthRoute } = await import("../src/routes/api/public/extension/health");
+    const getHealth = (
+      healthRoute.options.server as {
+        handlers: { GET: (ctx?: { request?: Request }) => Promise<Response> };
+      }
+    ).handlers.GET;
+
+    const prevKeys = {
+      GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+      GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
+      LOVABLE_API_KEY: process.env.LOVABLE_API_KEY,
+    };
+    try {
+      delete process.env.GEMINI_API_KEY;
+      delete process.env.GOOGLE_API_KEY;
+      delete process.env.LOVABLE_API_KEY;
+
+      const unconfRes = await getHealth({
+        request: new Request("http://localhost:3000/api/public/extension/health"),
+      });
+      expect(unconfRes.status).toBe(200);
+      const unconfJson = await unconfRes.json();
+      expect(unconfJson.checks.ai.ok).toBe(false);
+      expect(unconfJson.checks.ai.detail).toContain("GEMINI_API_KEY");
+      expect(unconfJson.providers.geminiConfigured).toBe(false);
+
+      process.env.GEMINI_API_KEY = "AIzaSyConfiguredTestKey123";
+      const confRes = await getHealth({
+        request: new Request("http://localhost:3000/api/public/extension/health"),
+      });
+      const confJson = await confRes.json();
+      expect(confJson.checks.ai.ok).toBe(true);
+      expect(confJson.checks.ai.detail).toBe("gemini configured");
+      expect(confJson.providers.geminiConfigured).toBe(true);
+    } finally {
+      for (const [k, v] of Object.entries(prevKeys)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+
+    // 5. askGuest propagates transparent rate_limit failure instead of false "missing GEMINI_API_KEY"
+    const { vi } = await import("vitest");
+    vi.resetModules();
+    vi.doMock("../src/lib/ai/orchestrator.server", async () => {
+      const { AiError } = await import("../src/lib/ai/errors");
+      return {
+        generate: vi.fn(async () => {
+          throw new AiError("rate_limit", "Gemini quota exceeded for this project.", {
+            provider: "gemini",
+            resolution: "Wait 60 seconds or switch model.",
+          });
+        }),
+      };
+    });
+    try {
+      const { askGuest } = await import("../src/lib/buddy-service.server");
+      const rateLimitOut = await askGuest({
+        question: "Summarize this page",
+        intent: "explain_page",
+        snapshot: null,
+        source: "extension",
+      });
+      expect(rateLimitOut.aiFallbackUsed).toBe(true);
+      expect(rateLimitOut.providerFailure?.kind).toBe("rate_limit");
+      expect(rateLimitOut.providerFailure?.provider).toBe("gemini");
+      expect(rateLimitOut.providerFailure?.message).toContain("Gemini quota exceeded");
+      expect(rateLimitOut.providerWarning?.status).toBe("rate_limit");
+      expect(rateLimitOut.providerWarning?.missingKey).toBeUndefined();
+    } finally {
+      vi.doUnmock("../src/lib/ai/orchestrator.server");
+      vi.resetModules();
+    }
+
+    // 6. background.js direct Gemini path returns baseProviderWarning (no ReferenceError on providerWarning) and tracks directProviderError
+    const bgCode = fs.readFileSync(path.join(extDir, "background.js"), "utf-8");
+    const spCode = fs.readFileSync(sidepanelJsPath, "utf-8");
+    expect(bgCode).toContain("providerWarning: baseProviderWarning || null");
+    expect(bgCode).not.toMatch(/^\s*providerWarning,\s*$/m);
+    expect(bgCode).toContain("let directProviderError = null;");
+    expect(bgCode).toContain("serverProviderFailure");
+    expect(spCode).toContain(
+      "appendProviderWarningNotice(res.providerWarning, res.providerFailure)",
+    );
+  });
 });

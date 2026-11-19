@@ -69,7 +69,7 @@ export interface AskInput {
 function sanitizeTextForPrompt(raw: string): string {
   return String(raw || "")
     .replace(/\bBearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Bearer [redacted]")
-    .replace(/\b(?:sk|AIza)[A-Za-z0-9_\-]{12,}/g, "[redacted_key]")
+    .replace(/\b(?:sk|AIza)[A-Za-z0-9_-]{12,}/g, "[redacted_key]")
     .replace(
       /\b(password|passwd|pwd|otp|cvv|secret|token)\s*[:=]\s*[^\s,;]+/gi,
       (_match, key) => `${key}=[redacted]`,
@@ -83,6 +83,7 @@ async function callGeminiWithScreenshot(params: {
   userApiKey?: string | null;
 }): Promise<{ text: string; model: string } | null> {
   const { getGeminiKey } = await import("./ai/provider-keys.server");
+  const { normalizeProviderError } = await import("./ai/errors");
   const apiKey = params.userApiKey?.trim() || getGeminiKey();
   if (!apiKey) return null;
 
@@ -93,6 +94,7 @@ async function callGeminiWithScreenshot(params: {
   });
   const cleanData = params.screenshotBase64.replace(/^data:image\/[^;]+;base64,/, "");
   const models = ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
+  let lastError: unknown = null;
   for (const model of models) {
     try {
       const res = await ai.models.generateContent({
@@ -107,11 +109,47 @@ async function callGeminiWithScreenshot(params: {
       });
       const text = (res.text ?? "").trim();
       if (text) return { text, model };
-    } catch {
-      // try next fallback model
+    } catch (err) {
+      lastError = err;
+      const normalized = normalizeProviderError(err, "gemini");
+      if (
+        normalized.kind === "auth" ||
+        normalized.kind === "credits" ||
+        normalized.kind === "blocked"
+      ) {
+        throw normalized;
+      }
     }
   }
+  if (lastError) {
+    throw normalizeProviderError(lastError, "gemini");
+  }
   return null;
+}
+
+export interface ProviderWarningInfo {
+  requestedProvider: string;
+  requestedProviderName: string;
+  status:
+    | "missing_api"
+    | "not_connected"
+    | "auth_error"
+    | "rate_limit"
+    | "timeout"
+    | "outage"
+    | "credits";
+  missingKey?: string;
+  fallbackUsed: string;
+  message: string;
+}
+
+export interface ProviderFailureInfo {
+  kind: string;
+  provider: string;
+  message: string;
+  resolution?: string | undefined;
+  executionTrace?:
+    Array<{ model: string; provider: string; error: string; kind: string }> | undefined;
 }
 
 export interface AskOutput {
@@ -141,15 +179,87 @@ export interface AskOutput {
   blocked?: boolean;
   fellBack?: boolean;
   aiFallbackUsed?: boolean;
-  providerWarning?: {
-    requestedProvider: string;
-    requestedProviderName: string;
-    status: "missing_api" | "not_connected";
-    missingKey?: string;
-    fallbackUsed: string;
-    message: string;
-  } | null;
+  providerWarning?: ProviderWarningInfo | null;
+  providerFailure?: ProviderFailureInfo | null;
   recommendedMode?: BuddyModeRecommendation | null;
+}
+
+function buildProviderFailureDetails(params: {
+  aiError: AiError;
+  effectiveProvider: string;
+  preferredProvider?: string | null;
+  language: string;
+  existingWarning: ProviderWarningInfo | null | undefined;
+}): { providerWarning: ProviderWarningInfo; providerFailure: ProviderFailureInfo } {
+  const failedProviderId = params.aiError.provider || params.effectiveProvider || "gemini";
+  const provMeta = PROVIDERS[failedProviderId as ProviderId];
+  const provName = provMeta?.name || failedProviderId;
+  const isEnglish = params.language === "english";
+  const executionTrace = (
+    params.aiError as Error & {
+      executionTrace?: Array<{ model: string; provider: string; error: string; kind: string }>;
+    }
+  ).executionTrace;
+
+  const isMissingOnServer =
+    params.aiError.kind === "auth" &&
+    /no ai provider is configured|not configured on the server|is not configured/i.test(
+      params.aiError.userMessage,
+    );
+
+  const warningStatus: ProviderWarningInfo["status"] = isMissingOnServer
+    ? "missing_api"
+    : params.aiError.kind === "auth"
+      ? "auth_error"
+      : params.aiError.kind === "rate_limit"
+        ? "rate_limit"
+        : params.aiError.kind === "timeout"
+          ? "timeout"
+          : params.aiError.kind === "credits"
+            ? "credits"
+            : params.aiError.kind === "outage"
+              ? "outage"
+              : "not_connected";
+
+  const missingKey =
+    provMeta?.envKeyName ||
+    (failedProviderId === "gemini"
+      ? "GEMINI_API_KEY"
+      : `${failedProviderId.toUpperCase()}_API_KEY`);
+
+  const detailReason = isMissingOnServer
+    ? isEnglish
+      ? `${missingKey} is not configured on the server or in Settings`
+      : `${missingKey} server ya Settings mein configured nahi hai`
+    : params.aiError.userMessage;
+
+  const message =
+    params.existingWarning?.message && !isMissingOnServer
+      ? `${params.existingWarning.message} (${detailReason})`
+      : isEnglish
+        ? `${provName} unavailable (${detailReason}). Using limited local page helper.`
+        : `${provName} available nahi hai (${detailReason}). Abhi limited local page helper chal raha hai.`;
+
+  return {
+    providerWarning: {
+      requestedProvider:
+        params.preferredProvider && params.preferredProvider !== "auto"
+          ? params.preferredProvider
+          : failedProviderId,
+      requestedProviderName: params.existingWarning?.requestedProviderName || provName,
+      status: warningStatus,
+      missingKey: isMissingOnServer ? missingKey : undefined,
+      fallbackUsed: "Local Grounded Companion",
+      message,
+    },
+    providerFailure: {
+      kind: params.aiError.kind,
+      provider: failedProviderId,
+      message: params.aiError.userMessage,
+      resolution: params.aiError.resolution,
+      executionTrace,
+    },
+  };
 }
 
 function matchSnapshotElementForFallback(
@@ -421,9 +531,7 @@ function buildGroundedSnapshotFallback(params: {
     }
 
     // Detect fill / write / enter requests without a clear value -> NEVER explain the page; ask what to fill!
-    if (
-      /\b(?:fill|bhar|bharo|likh|likho|lkh|lkho|daal|daalo|dalo|type|enter)\b/i.test(qLower)
-    ) {
+    if (/\b(?:fill|bhar|bharo|likh|likho|lkh|lkho|daal|daalo|dalo|type|enter)\b/i.test(qLower)) {
       const hasContentHint =
         /\b(?:kch|kuch|something|ye|yeh|isme|isko|it|this)\b/i.test(qLower) &&
         !/\b(?:with|mein|me|main|in|into)\s+["']?[^"'\s]{2,}["']?\s*$/i.test(qLower);
@@ -447,7 +555,9 @@ function buildGroundedSnapshotFallback(params: {
             actionType: "ask_clarification",
           },
           highlightSelector: matchEl?.selector || null,
-          calloutTitle: matchEl ? (matchEl.name || matchEl.placeholder || "Target Box").slice(0, 50) : null,
+          calloutTitle: matchEl
+            ? (matchEl.name || matchEl.placeholder || "Target Box").slice(0, 50)
+            : null,
           calloutDescription: askText,
           actionType: "ask_clarification",
           targetRect: matchEl?.rect ?? null,
@@ -892,9 +1002,7 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
   const safeSnapshot = input.snapshot
     ? { ...input.snapshot, forms: safeForms ?? input.snapshot.forms }
     : null;
-  const pageContext = safeSnapshot
-    ? buildPageContext(safeSnapshot)
-    : "No page context available.";
+  const pageContext = safeSnapshot ? buildPageContext(safeSnapshot) : "No page context available.";
   const system = buildSystemPrompt({
     persona: {
       name: persona.name,
@@ -1058,6 +1166,23 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       _metadata: { intent: input.intent, model: result.model },
     });
 
+    const effectiveRuntimeWarning: ProviderWarningInfo | null =
+      routingDecision.providerWarning ??
+      (result.fellBack
+        ? {
+            requestedProvider: routingDecision.effectiveProvider,
+            requestedProviderName:
+              PROVIDERS[routingDecision.effectiveProvider as ProviderId]?.name ||
+              routingDecision.effectiveProvider,
+            status: "outage",
+            fallbackUsed: `${result.model} (${result.provider})`,
+            message:
+              persona.language === "english"
+                ? `Primary model was unavailable; fulfilled using ${result.model} (${result.provider}).`
+                : `Primary model available nahi tha; ${result.model} (${result.provider}) se reply diya gaya.`,
+          }
+        : null);
+
     return {
       taskId,
       reply,
@@ -1082,7 +1207,8 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       activeProvider: result.provider,
       latencyMs: result.latencyMs,
       fellBack: result.fellBack || Boolean(routingDecision.providerWarning),
-      providerWarning: routingDecision.providerWarning,
+      providerWarning: effectiveRuntimeWarning,
+      providerFailure: null,
       recommendedMode,
     };
   } catch (error) {
@@ -1107,17 +1233,13 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       aiError,
     });
 
-    const effectiveProviderWarning = routingDecision.providerWarning ?? {
-      requestedProvider: "gemini",
-      requestedProviderName: "Google Gemini",
-      status: aiError.kind === "auth" ? "missing_api" : "not_connected",
-      missingKey: "GEMINI_API_KEY",
-      fallbackUsed: "Local Grounded Companion",
-      message:
-        persona.language === "english"
-          ? `Gemini AI unavailable (${aiError.kind === "auth" ? "GEMINI_API_KEY missing or invalid" : aiError.userMessage}). Using limited local page helper.`
-          : `Gemini AI available nahi hai (${aiError.kind === "auth" ? "GEMINI_API_KEY missing ya invalid hai" : aiError.userMessage}). Abhi limited local page helper chal raha hai.`,
-    };
+    const failureDetails = buildProviderFailureDetails({
+      aiError,
+      effectiveProvider: routingDecision.effectiveProvider,
+      preferredProvider: input.preferredProvider,
+      language: persona.language,
+      existingWarning: routingDecision.providerWarning,
+    });
 
     return {
       taskId,
@@ -1135,7 +1257,8 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       fellBack: true,
       aiFallbackUsed: true,
       blocked: aiError.kind === "credits" || aiError.kind === "blocked",
-      providerWarning: effectiveProviderWarning,
+      providerWarning: failureDetails.providerWarning,
+      providerFailure: failureDetails.providerFailure,
       recommendedMode,
     };
   }
@@ -1217,9 +1340,7 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
   const safeSnapshot = input.snapshot
     ? { ...input.snapshot, forms: safeForms ?? input.snapshot.forms }
     : null;
-  const pageContext = safeSnapshot
-    ? buildPageContext(safeSnapshot)
-    : "No page context available.";
+  const pageContext = safeSnapshot ? buildPageContext(safeSnapshot) : "No page context available.";
   const system = buildSystemPrompt({
     persona: {
       name: persona.name,
@@ -1347,6 +1468,23 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
         ? "point"
         : null);
 
+    const effectiveRuntimeWarning: ProviderWarningInfo | null =
+      routingDecision.providerWarning ??
+      (result.fellBack
+        ? {
+            requestedProvider: routingDecision.effectiveProvider,
+            requestedProviderName:
+              PROVIDERS[routingDecision.effectiveProvider as ProviderId]?.name ||
+              routingDecision.effectiveProvider,
+            status: "outage",
+            fallbackUsed: `${result.model} (${result.provider})`,
+            message:
+              persona.default_language === "english"
+                ? `Primary model was unavailable; fulfilled using ${result.model} (${result.provider}).`
+                : `Primary model available nahi tha; ${result.model} (${result.provider}) se reply diya gaya.`,
+          }
+        : null);
+
     return {
       taskId: null,
       reply,
@@ -1371,7 +1509,8 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
       activeProvider: result.provider,
       latencyMs: result.latencyMs,
       fellBack: result.fellBack || Boolean(routingDecision.providerWarning),
-      providerWarning: routingDecision.providerWarning,
+      providerWarning: effectiveRuntimeWarning,
+      providerFailure: null,
       recommendedMode,
     };
   } catch (error) {
@@ -1389,17 +1528,13 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
       aiError,
     });
 
-    const effectiveProviderWarning = routingDecision.providerWarning ?? {
-      requestedProvider: "gemini",
-      requestedProviderName: "Google Gemini",
-      status: aiError.kind === "auth" ? "missing_api" : "not_connected",
-      missingKey: "GEMINI_API_KEY",
-      fallbackUsed: "Local Grounded Companion",
-      message:
-        persona.default_language === "english"
-          ? `Gemini AI unavailable (${aiError.kind === "auth" ? "GEMINI_API_KEY missing or invalid" : aiError.userMessage}). Using limited local page helper.`
-          : `Gemini AI available nahi hai (${aiError.kind === "auth" ? "GEMINI_API_KEY missing ya invalid hai" : aiError.userMessage}). Abhi limited local page helper chal raha hai.`,
-    };
+    const failureDetails = buildProviderFailureDetails({
+      aiError,
+      effectiveProvider: routingDecision.effectiveProvider,
+      preferredProvider: input.preferredProvider,
+      language: persona.default_language,
+      existingWarning: routingDecision.providerWarning,
+    });
 
     return {
       taskId: null,
@@ -1417,7 +1552,8 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
       fellBack: true,
       aiFallbackUsed: true,
       blocked: aiError.kind === "credits" || aiError.kind === "blocked",
-      providerWarning: effectiveProviderWarning,
+      providerWarning: failureDetails.providerWarning,
+      providerFailure: failureDetails.providerFailure,
       recommendedMode,
     };
   }

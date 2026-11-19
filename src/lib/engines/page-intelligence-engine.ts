@@ -19,6 +19,7 @@ import {
   type PaginationInfo,
   type ScrollableContainerInfo,
 } from "@/shared/page-snapshot";
+import { parseDelimitedText } from "@/shared/document-extractor";
 
 export type PageInspectionCoverage =
   | "visible_only"
@@ -311,7 +312,9 @@ export function detectModalDialog(snapshot: PageSnapshot): ModalDialogInfo {
  * Extracts structured rows and column headers from tabular representations in the snapshot text and controls.
  */
 export function extractComplexTable(snapshot: PageSnapshot): ComplexTableExtraction {
-  const textLines = snapshot.text
+  const rawText = String(snapshot.text || "");
+  const textLines = rawText
+    .replace(/\r\n/g, "\n")
     .split(/\n+/)
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
@@ -335,15 +338,25 @@ export function extractComplexTable(snapshot: PageSnapshot): ComplexTableExtract
     };
   }
 
-  const delimiter = tableLines[0]!.includes("\t")
-    ? "\t"
-    : tableLines[0]!.includes(" | ")
-      ? " | "
-      : tableLines[0]!.includes(",")
-        ? ","
-        : /\s{2,}/;
+  const firstLine = tableLines[0]!;
+  // Use full RFC-4180 state-machine parsing for TSV (\t) or CSV (,) so quoted commas/newlines stay intact
+  if (!firstLine.includes(" | ") && (firstLine.includes("\t") || firstLine.includes(","))) {
+    const forcedDelim = firstLine.includes("\t") ? "\t" : ",";
+    const parsedCsv = parseDelimitedText(rawText, forcedDelim);
+    if (parsedCsv && parsedCsv.rows.length > 0) {
+      return {
+        hasTable: true,
+        headers: parsedCsv.headers,
+        rows: parsedCsv.rows,
+        rowCount: parsedCsv.rowCount,
+        paginationDetected: !!snapshot.pagination?.hasNextPage,
+      };
+    }
+  }
 
-  const rawHeaders = tableLines[0]!.split(delimiter).map((h) => h.trim().replace(/^\||\|$/g, ""));
+  const delimiter = firstLine.includes(" | ") ? " | " : firstLine.includes("\t") ? "\t" : /\s{2,}/;
+
+  const rawHeaders = firstLine.split(delimiter).map((h) => h.trim().replace(/^\||\|$/g, ""));
   const headers = rawHeaders.filter((h) => h.length > 0);
 
   const rows: Array<Record<string, string>> = [];

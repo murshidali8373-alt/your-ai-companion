@@ -28,6 +28,13 @@ export interface ExtractedDocumentFields {
   date?: string;
 }
 
+export interface ParsedDelimitedTable {
+  delimiter: "," | "\t" | ";";
+  headers: string[];
+  rows: Array<Record<string, string>>;
+  rowCount: number;
+}
+
 export interface ExtractedDocumentResult {
   ok: boolean;
   documentType: DocumentType;
@@ -35,8 +42,126 @@ export interface ExtractedDocumentResult {
   confidence: "high" | "medium" | "low";
   fields: ExtractedDocumentFields;
   ambiguousFields: string[];
+  table?: ParsedDelimitedTable;
   notes?: string;
   provider?: string;
+}
+
+/**
+ * RFC-4180 compliant CSV / TSV parser supporting BOM, CRLF/CR/LF,
+ * quoted fields containing delimiters or newlines, and escaped double quotes ("").
+ */
+export function parseDelimitedText(
+  rawText: string,
+  forcedDelimiter?: "," | "\t" | ";",
+): ParsedDelimitedTable | null {
+  const cleaned = String(rawText || "").replace(/^\uFEFF/, "");
+  if (!cleaned.trim()) return null;
+
+  const detectDelimiter = (): "," | "\t" | ";" => {
+    if (forcedDelimiter) return forcedDelimiter;
+    let inQuotes = false;
+    let firstLine = "";
+    for (let i = 0; i < cleaned.length; i++) {
+      const ch = cleaned[i]!;
+      if (ch === '"') {
+        if (inQuotes && cleaned[i + 1] === '"') {
+          i++;
+          continue;
+        }
+        inQuotes = !inQuotes;
+      } else if (!inQuotes && (ch === "\n" || ch === "\r")) {
+        break;
+      }
+      firstLine += ch;
+    }
+    const countUnquoted = (delim: string) => {
+      let c = 0;
+      let q = false;
+      for (let i = 0; i < firstLine.length; i++) {
+        const ch = firstLine[i]!;
+        if (ch === '"') q = !q;
+        else if (!q && ch === delim) c++;
+      }
+      return c;
+    };
+    const tabs = countUnquoted("\t");
+    const commas = countUnquoted(",");
+    const semis = countUnquoted(";");
+    if (tabs >= commas && tabs >= semis && tabs > 0) return "\t";
+    if (semis > commas && semis > 0) return ";";
+    return ",";
+  };
+
+  const delimiter = detectDelimiter();
+  const matrix: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < cleaned.length; i++) {
+    const ch = cleaned[i]!;
+    const next = cleaned[i + 1];
+
+    if (inQuotes) {
+      if (ch === '"') {
+        if (next === '"') {
+          cell += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cell += ch;
+      }
+      continue;
+    }
+
+    if (ch === '"' && cell.length === 0) {
+      inQuotes = true;
+    } else if (ch === delimiter) {
+      row.push(cell.trim());
+      cell = "";
+    } else if (ch === "\r" || ch === "\n") {
+      if (ch === "\r" && next === "\n") i++;
+      row.push(cell.trim());
+      if (row.some((v) => v.length > 0)) {
+        matrix.push(row);
+      }
+      row = [];
+      cell = "";
+    } else {
+      cell += ch;
+    }
+  }
+
+  row.push(cell.trim());
+  if (row.some((v) => v.length > 0)) {
+    matrix.push(row);
+  }
+
+  if (matrix.length < 2) return null;
+  const rawHeaders = matrix[0]!.map((h, idx) => h.trim() || `Column ${idx + 1}`);
+  if (rawHeaders.length < 2) return null;
+
+  const rows: Array<Record<string, string>> = [];
+  for (let r = 1; r < matrix.length; r++) {
+    const cells = matrix[r]!;
+    if (!cells.some((c) => c.length > 0)) continue;
+    const obj: Record<string, string> = {};
+    rawHeaders.forEach((h, idx) => {
+      obj[h] = (cells[idx] ?? "").trim();
+    });
+    rows.push(obj);
+  }
+
+  if (rows.length === 0) return null;
+  return {
+    delimiter,
+    headers: rawHeaders,
+    rows,
+    rowCount: rows.length,
+  };
 }
 
 const SENSITIVE_DOC_KEYS = new Set(["aadhaarNumber", "panNumber", "aadhaar", "pan"]);
@@ -76,13 +201,23 @@ export function sanitizeFieldsForDisplay(fields: ExtractedDocumentFields): Recor
 
 /**
  * Deterministic regex & label-based extractor for plain-text documents,
- * selectable PDF text layers, or test/offline fallback. Never guesses absent fields.
+ * CSV/TSV files, selectable PDF text layers, or offline fallback. Never guesses absent fields.
  */
 export function parseDocumentTextLocally(
   rawText: string,
   fileName = "document",
 ): ExtractedDocumentResult {
-  const text = String(rawText || "").replace(/\r/g, "\n");
+  const text = String(rawText || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
+  const isTsvFile = /\.tsv$/i.test(fileName);
+  const isCsvFile = /\.csv$/i.test(fileName);
+  const forcedDelim = isTsvFile ? "\t" : isCsvFile ? "," : undefined;
+  const parsedTable =
+    isTsvFile || isCsvFile || /[\t,]/.test(text.split("\n")[0] || "")
+      ? parseDelimitedText(rawText, forcedDelim)
+      : null;
+
   const compact = text.replace(/[ \t]+/g, " ");
   const lower = `${fileName} ${compact}`.toLowerCase();
 
@@ -101,6 +236,47 @@ export function parseDocumentTextLocally(
     documentType = "shipping_label";
   } else if (/invoice|tax\s+invoice|gstin|bill\s+no|total\s+amount/i.test(lower)) {
     documentType = "invoice";
+  }
+
+  // If tabular CSV/TSV with multiple rows, extract structural summary cleanly without mixing records
+  if (parsedTable && parsedTable.rowCount > 0) {
+    if (parsedTable.rowCount === 1) {
+      const single = parsedTable.rows[0]!;
+      const colMap: Array<{ re: RegExp; key: keyof ExtractedDocumentFields }> = [
+        { re: /^(?:full\s*)?name$/i, key: "name" },
+        { re: /^(?:email|mail)$/i, key: "email" },
+        { re: /^(?:phone|mobile(?:\s*no|\s*number)?)$/i, key: "phone" },
+        { re: /^address$/i, key: "address" },
+        { re: /^city$/i, key: "city" },
+        { re: /^state$/i, key: "state" },
+        { re: /^(?:pin\s*code|pincode|zip)$/i, key: "pincode" },
+        { re: /^order[\s_-]*id$/i, key: "orderId" },
+        { re: /^(?:invoice[\s_-]*no|invoice[\s_-]*number)$/i, key: "invoiceNumber" },
+        { re: /^(?:amount|total|price)$/i, key: "amount" },
+        { re: /^gstin$/i, key: "gstin" },
+        { re: /^(?:company|seller|vendor)$/i, key: "company" },
+      ];
+      for (const [col, val] of Object.entries(single)) {
+        if (!val) continue;
+        const mCol = colMap.find((c) => c.re.test(col.trim()));
+        if (mCol && !fields[mCol.key]) {
+          fields[mCol.key] = val;
+        }
+      }
+    }
+
+    const foundCount = Object.keys(fields).length;
+    return {
+      ok: true,
+      documentType,
+      fileName,
+      confidence: parsedTable.rowCount >= 1 ? "high" : "low",
+      fields,
+      ambiguousFields,
+      table: parsedTable,
+      notes: `Parsed ${parsedTable.rowCount} delimited row(s) (${parsedTable.headers.join(", ")})${foundCount > 0 ? ` and ${foundCount} direct field(s)` : ""}.`,
+      provider: "local_csv_tsv_parser",
+    };
   }
 
   // Aadhaar: 12 digits (optionally spaced/hyphenated 4-4-4)

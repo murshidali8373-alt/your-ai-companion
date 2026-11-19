@@ -141,7 +141,7 @@ describe("Intelligent Visual Computer Agent — Document OCR, Privacy & Screen A
     expect(html).toContain('id="uploadedDocLabel"');
     expect(html).toContain('id="clearUploadedDocBtn"');
     expect(html).toContain(
-      'accept="image/*,.png,.jpg,.jpeg,.webp,.pdf,.csv,.xlsx,.xls,.docx,.txt,.json"',
+      'accept="image/*,.png,.jpg,.jpeg,.webp,.pdf,.csv,.tsv,.xlsx,.xls,.docx,.txt,.json"',
     );
   });
 

@@ -35,7 +35,7 @@ const STEPS = [
 function Download() {
   const [busy, setBusy] = useState(false);
   const [activeBackendUrl, setActiveBackendUrl] = useState(
-    "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app",
+    "https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app",
   );
 
   useEffect(() => {

@@ -1,12 +1,17 @@
 const $ = (id) => document.getElementById(id);
-const DEFAULT_BASE = "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
-const LEGACY_BROKEN_HOST = "5t53lwemhepi2nbkqb2reo";
+const DEFAULT_BASE = "https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app";
 
 function normalizeBaseUrl(rawUrl) {
-  if (!rawUrl || typeof rawUrl !== "string" || rawUrl.includes(LEGACY_BROKEN_HOST)) {
+  if (!rawUrl || typeof rawUrl !== "string") {
     return DEFAULT_BASE;
   }
-  return rawUrl;
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return parsed.origin;
+    }
+  } catch {}
+  return DEFAULT_BASE;
 }
 
 async function render() {
@@ -29,10 +34,10 @@ $("connect").onclick = async () => {
       if (!t.url) continue;
       try {
         const u = new URL(t.url);
-        if (u.hostname.includes("aistudio.google.com") || u.hostname.includes(LEGACY_BROKEN_HOST)) {
+        if (u.hostname.includes("aistudio.google.com")) {
           continue;
         }
-        if (t.title?.includes("AI Buddy")) {
+        if (t.title?.includes("AI Buddy") || t.title?.includes("your-ai-companion")) {
           buddyTab = t;
           break;
         }
@@ -173,7 +178,7 @@ chrome.storage.local.get(["session", "lastBase"]).then(({ session, lastBase }) =
           : {}),
       })
       .catch(() => {});
-  } else if (lastBase && lastBase.includes(LEGACY_BROKEN_HOST)) {
+  } else if (!lastBase) {
     chrome.storage.local.set({ lastBase: DEFAULT_BASE }).catch(() => {});
   }
 }).catch(() => {});

@@ -1,7 +1,6 @@
 const $ = (id) => document.getElementById(id);
-const DEFAULT_BASE = "https://ais-dev-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
-const FALLBACK_PRE_BASE = "https://ais-pre-asfavkynho62d5znlmqa5n-711254288483.asia-southeast1.run.app";
-const LEGACY_BROKEN_HOST = "5t53lwemhepi2nbkqb2reo";
+const DEFAULT_BASE = "https://ais-dev-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app";
+const FALLBACK_PRE_BASE = "https://ais-pre-5t53lwemhepi2nbkqb2reo-152127168827.asia-east1.run.app";
 const RESTRICTED =
   /^(chrome|edge|about|chrome-extension|devtools|view-source):|chromewebstore\.google\.com|chrome\.google\.com\/webstore/;
 
@@ -32,9 +31,13 @@ async function getResolvedBackendBase() {
     "buddyApiBaseUrl",
   ]);
   let base = session?.apiBase || lastBase || buddyApiBaseUrl;
-  if (base && base.includes(LEGACY_BROKEN_HOST)) {
-    base = DEFAULT_BASE;
-    chrome.storage.local.set({ lastBase: DEFAULT_BASE }).catch(() => {});
+  if (base) {
+    try {
+      const parsed = new URL(base);
+      base = parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.origin : null;
+    } catch {
+      base = null;
+    }
   }
   const tryCandidates = async () => {
     if (verifiedBackendBaseCache) return verifiedBackendBaseCache;
@@ -58,7 +61,6 @@ async function getResolvedBackendBase() {
             if (
               u.protocol.startsWith("http") &&
               !u.hostname.includes("aistudio.google.com") &&
-              !u.hostname.includes(LEGACY_BROKEN_HOST) &&
               isBuddyTab
             ) {
               if (t.title?.includes("AI Buddy") || t.title?.includes("your-ai-companion")) {
@@ -85,12 +87,14 @@ async function getResolvedBackendBase() {
     return base || DEFAULT_BASE;
   };
 
-  if (base && !base.includes("127.0.0.1") && !base.includes("localhost")) {
+  if (base) {
     const ok = await probeBuddyHealthOrigin(base, 1200);
-    if (ok) return base;
-    return tryCandidates();
+    if (ok) {
+      verifiedBackendBaseCache = base;
+      return base;
+    }
   }
-  return base || tryCandidates();
+  return tryCandidates();
 }
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
@@ -457,6 +461,7 @@ let pendingDisambiguation = null;
 let pendingSlot = null;
 let activeFormSession = null;
 let pendingAutoListenAfterSpeech = false;
+let pendingAutoMicRequest = null;
 const sessionTaskContext = {
   lastActionType: null,
   lastTargetField: null,
@@ -482,10 +487,15 @@ function maybeAutoActivateMic({ reason = "incomplete_command", deferUntilSpeechE
     window.__buddyAutoMicLog.push({ reason, deferUntilSpeechEnd, at: Date.now() });
   } catch {}
 
-  if (isLiveVoiceMode || isRecognizing || busy || pendingAction) return false;
+  if (isLiveVoiceMode || busy || pendingAction) return false;
   if (!recognition) {
     // Keep text input focused & ready without error spam when browser has no SpeechRecognition
     return false;
+  }
+
+  if (isRecognizing) {
+    pendingAutoMicRequest = { reason, deferUntilSpeechEnd };
+    return true;
   }
 
   if (deferUntilSpeechEnd && isBuddySpeaking) {
@@ -635,6 +645,7 @@ const BuddyStateManager = {
     pendingSlot = null;
     activeFormSession = null;
     pendingAutoListenAfterSpeech = false;
+    pendingAutoMicRequest = null;
     if ($("highlightBtn")) $("highlightBtn").hidden = true;
     if ($("confirmCard")) $("confirmCard").hidden = true;
     if ($("pageCompletenessBanner")) $("pageCompletenessBanner").hidden = true;
@@ -1190,6 +1201,7 @@ function toggleLiveVoice(forceState) {
   isLiveVoiceMode = next;
   if (!isLiveVoiceMode) {
     clearLiveRestartTimer();
+    pendingAutoMicRequest = null;
     try {
       recognition?.stop?.();
     } catch {}
@@ -1283,6 +1295,7 @@ if (SpeechRecognition) {
             : `Voice input error (${code}).`;
     if (code === "not-allowed" || code === "audio-capture") {
       isLiveVoiceMode = false;
+      pendingAutoMicRequest = null;
       appendHistory("buddy", `🎤 ${msg}`);
     }
     updateVoiceUiState("error", msg);
@@ -1298,6 +1311,16 @@ if (SpeechRecognition) {
           startVoiceListening();
         }
       }, 320);
+      return;
+    }
+    if (pendingAutoMicRequest && !busy && !isBuddySpeaking && liveVoiceState !== "error") {
+      const queuedReq = pendingAutoMicRequest;
+      pendingAutoMicRequest = null;
+      setTimeout(() => {
+        if (!isRecognizing && !busy && !isBuddySpeaking && !isLiveVoiceMode) {
+          maybeAutoActivateMic(queuedReq);
+        }
+      }, 180);
       return;
     }
     if (!busy && !isBuddySpeaking && liveVoiceState !== "error") {
@@ -1363,18 +1386,38 @@ function appendHistory(role, text) {
   box.scrollTop = box.scrollHeight;
 }
 
-function appendProviderWarningNotice(warning) {
-  if (!warning || !warning.requestedProvider || warnedMissingProviders.has(warning.requestedProvider)) {
+function appendProviderWarningNotice(warning, providerFailure = null) {
+  const effectiveWarning =
+    warning ||
+    (providerFailure
+      ? {
+          requestedProvider: providerFailure.provider || "gemini",
+          status: providerFailure.kind || "server_error",
+          message: providerFailure.message,
+        }
+      : null);
+  if (!effectiveWarning || !effectiveWarning.message) {
     return;
   }
-  warnedMissingProviders.add(warning.requestedProvider);
+  const dedupKey = `${effectiveWarning.requestedProvider || "gemini"}:${effectiveWarning.status || "unknown"}:${effectiveWarning.message}`;
+  if (warnedMissingProviders.has(dedupKey)) {
+    return;
+  }
+  warnedMissingProviders.add(dedupKey);
   const box = $("historyBox");
   if (!box) return;
   const notice = document.createElement("div");
   notice.className = "msg-bubble msg-buddy";
   notice.style.cssText =
     "font-size: 10px; border-color: rgba(245, 158, 11, 0.35); background: rgba(245, 158, 11, 0.08); color: #fde68a;";
-  notice.textContent = `ℹ️ ${warning.message}`;
+  const isRuntimeErr =
+    effectiveWarning.status === "rate_limit" ||
+    effectiveWarning.status === "auth_error" ||
+    effectiveWarning.status === "outage" ||
+    effectiveWarning.status === "server_error" ||
+    effectiveWarning.status === "network_error" ||
+    Boolean(providerFailure);
+  notice.textContent = `${isRuntimeErr ? "⚠️" : "ℹ️"} ${effectiveWarning.message}`;
   box.appendChild(notice);
   box.scrollTop = box.scrollHeight;
 }
@@ -2259,6 +2302,7 @@ function renderUploadedDocBar() {
     return;
   }
   const fieldsCount = Object.keys(activeUploadedDocument.fields || {}).length;
+  const tableRowsCount = activeUploadedDocument.table?.rowCount || 0;
   const typeLabel =
     activeUploadedDocument.documentType === "aadhaar"
       ? "Aadhaar Card"
@@ -2268,8 +2312,14 @@ function renderUploadedDocBar() {
           ? "Invoice"
           : activeUploadedDocument.documentType === "shipping_label"
             ? "Shipping Label"
-            : "Document";
-  lbl.textContent = `📄 ${typeLabel} (${activeUploadedDocument.fileName}) · ${fieldsCount} field${fieldsCount === 1 ? "" : "s"} ready`;
+            : tableRowsCount > 0
+              ? "Spreadsheet"
+              : "Document";
+  const countLabel =
+    tableRowsCount > 0 && fieldsCount === 0
+      ? `${tableRowsCount} row${tableRowsCount === 1 ? "" : "s"}`
+      : `${fieldsCount} field${fieldsCount === 1 ? "" : "s"} ready`;
+  lbl.textContent = `📄 ${typeLabel} (${activeUploadedDocument.fileName}) · ${countLabel}`;
   bar.hidden = false;
 }
 
@@ -2527,14 +2577,49 @@ function extractFillDetails(text) {
   const trailingVerbSuffix =
     "(?:fill\\s+(?:(?:kar|kr)\\s*do|krdo|(?:kar|kr)o|karein)|fill|type\\s+(?:(?:kar|kr)\\s*do|krdo|(?:kar|kr)o)|type|likh\\s*(?:do|de|kar|kr)?|likho|lkho|daal\\s*(?:do|de)?|daalo|dalo|bhar\\s*(?:do|de)?|bharo|enter\\s*(?:(?:kar|kr)\\s*do|krdo|(?:kar|kr)o)?|set\\s*(?:(?:kar|kr)\\s*do|krdo|(?:kar|kr)o)|(?:kar|kr)\\s*do|krdo|(?:kar|kr)o)";
 
-  // 1. Explicit key: value or key = value
+  // 1. Explicit key: value or key = value (supports comma, semicolon, newline, AND aur/and/phir/then separators)
+  const keyValPreSplit = cleaned.replace(
+    /\s+(?:and|aur|phir|fir|then)\s+(?=(?:first[\s_]*name|last[\s_]*name|full[\s_]*name|father[\s_]*name|legal_name|trade_name|name|naam|fullname|email|phone|mobile(?:\s*(?:number|no))?|mobilenumber|city|state|country|pincode|pin(?:\s*code)?|zip(?:\s*code)?|gstin|pan(?:\s*number)?|aadhaar(?:\s*number)?|aadhar(?:\s*number)?|dob|gender|father_name|category|bio|notes?|address|pata|search|describe|description|prompt|message|msg|comment|company|subject|title|username|password)\s*[:=])/gi,
+    ", ",
+  );
   const keyValRegex =
-    /\b(name|naam|fullname|legal_name|trade_name|email|phone|mobile|mobilenumber|city|state|country|pincode|pin|zip|gstin|pan|dob|gender|father_name|category|bio|notes?|address|pata|search|describe|description|prompt|message|msg|comment|company|subject|title|username|password)\s*[:=]\s*([^,;\n]+)/gi;
+    /\b(first[\s_]*name|last[\s_]*name|full[\s_]*name|father[\s_]*name|legal_name|trade_name|name|naam|fullname|surname|email|phone|mobile[\s_]*(?:number|no)|mobile|mobilenumber|city|state|country|pincode|pin[\s_]*code|pin|zip[\s_]*code|zip|gstin|pan[\s_]*number|pan|aadhaar[\s_]*number|aadhaar|aadhar[\s_]*number|aadhar|dob|gender|father_name|category|bio|notes?|address|pata|search|describe|description|prompt|message|msg|comment|company|subject|title|username|password)\s*[:=]\s*([^,;\n]+)/gi;
+  const kvNormMap = {
+    naam: "name",
+    fullname: "name",
+    full_name: "name",
+    "full name": "name",
+    first_name: "first name",
+    last_name: "lastname",
+    "last name": "lastname",
+    surname: "lastname",
+    father_name: "fathername",
+    "father name": "fathername",
+    mobilenumber: "phone",
+    "mobile number": "phone",
+    "mobile no": "phone",
+    mobile: "phone",
+    pata: "address",
+    pin: "pincode",
+    "pin code": "pincode",
+    pin_code: "pincode",
+    zip: "pincode",
+    "zip code": "pincode",
+    zip_code: "pincode",
+    aadhaar: "aadhaarnumber",
+    aadhar: "aadhaarnumber",
+    "aadhaar number": "aadhaarnumber",
+    "aadhar number": "aadhaarnumber",
+    "pan number": "pannumber",
+    pan: "pannumber",
+  };
   let m;
-  while ((m = keyValRegex.exec(cleaned)) !== null) {
-    const key = m[1].toLowerCase();
+  while ((m = keyValRegex.exec(keyValPreSplit)) !== null) {
+    const rawKey = m[1].toLowerCase().replace(/\s+/g, " ").trim();
+    const key = kvNormMap[rawKey] || rawKey;
     const val = m[2]
       .replace(new RegExp(`\\s+${trailingVerbSuffix}.*$`, "i"), "")
+      .replace(/^["']|["']$/g, "")
       .trim();
     if (val && !isNonValuePlaceholder(val)) {
       fields[key] = val;
@@ -2542,18 +2627,24 @@ function extractFillDetails(text) {
     }
   }
   if (explicitPairs.length > 0) {
-    return { fields, explicitPairs, overwrite, explicitUserProvided: true };
+    return {
+      fields,
+      explicitPairs,
+      overwrite,
+      explicitUserProvided: true,
+      hasExplicitNoSubmit,
+    };
   }
 
   // Split multi-field instructions cleanly (without mutating values inside clauses)
   const clauses = cleaned
     .split(
-      /\s*(?:,|;|\bphir\b|\bfir\b|\bthen\b|\band then\b|\buske baad\b|\b(?:and|aur)\b(?=\s+(?:fill|type|enter|write|set|likh|likho|daal|daalo|dalo|bhar|bharo|naam|name|full\s*name|first\s*name|last\s*name|surname|family\s*name|first\s*field|second\s*field|last\s*field|doosr[ae]\s*field|email|phone|mobile|address|pata|city|state|country|pincode|pin|zip|gstin|gst|pan|dob|date\s*of\s*birth|father\s*name|gender|company|category|bio|message|msg|comment|subject|title|username)\b))\s*/i,
+      /\s*(?:,|;|\bphir\b|\bfir\b|\bthen\b|\band then\b|\buske baad\b|\b(?:and|aur)\b(?=\s+(?:fill|type|enter|write|set|likh|likho|daal|daalo|dalo|bhar|bharo|naam|name|full\s*name|first\s*name|last\s*name|surname|family\s*name|(?:1st|2nd|3rd|4th|first|second|third|fourth|last|final|next|pehl[aei]|pahl[aei]|doosr[aei]|dusr[aei]|teesr[aei]|tisr[aei]|aakhri|akhri|agla)\s*(?:field|box|input|textbox|wal[aei])|email|phone|mobile|address|pata|city|state|country|pincode|pin|zip|gstin|gst|pan|aadhaar|aadhar|dob|date\s*of\s*birth|father\s*name|gender|company|category|bio|message|msg|comment|subject|title|username)\b))\s*/i,
     )
     .map((c) =>
       c
         .replace(
-          /^(?:(?:pehle|first)\s+(?!field\b|box\b|input\b|textbox\b|dropdown\b|wal[aei]\b)|(?:aur|and|also|next)\s+)/i,
+          /^(?:pehle\s+(?!field\b|box\b|input\b|textbox\b|dropdown\b|wal[aei]\b)|first\s+(?!field\b|box\b|input\b|textbox\b|dropdown\b|wal[aei]\b|name\b)|(?:aur|and|also|next)\s+)/i,
           "",
         )
         .trim(),
@@ -2569,6 +2660,10 @@ function extractFillDetails(text) {
   );
   const patternBRegex =
     /^(?:fill|type|enter|write|put|set|likho|lkho|likh\s+do|daalo|dalo|daal\s+do|bharo)\s+["']?(.+?)["']?\s+(?:in|into|inside|mein|me|main|par|pe|pr)\s+(?:the\s+)?(.+?)[.!?\s]*$/i;
+  const patternBKoRegex = new RegExp(
+    `^["']?(.+?)["']?\\s+ko\\s+(?:the\\s+)?(.+?)\\s+(?:mein|me|main|par|pe|pr|in|into)\\s+${trailingVerbSuffix}[.!?\\s]*$`,
+    "i",
+  );
   const patternCRegex1 =
     /^(?:fill|type|populate)\s+(?:this(?:\s+box|\s+field)?|it)\s+(?:with|as)\s+["']?(.+?)["']?[.!?\s]*$/i;
   const patternCRegex2 =
@@ -2579,12 +2674,32 @@ function extractFillDetails(text) {
   );
 
   const knownFieldExactRe = new RegExp(`^(?:${KNOWN_FIELD_ALIASES})$`, "i");
+  const cleanEdgeQuotes = (s) => String(s || "").trim().replace(/^["']|["']$/g, "").trim();
 
   for (const clause of clauses) {
-    // Pattern B FIRST when explicit fill/type/enter verb places value before in/into/mein <field>
-    let match = clause.match(patternBRegex);
+    // Pattern B-ko: "<value> ko <field> mein daal do"
+    let match = clause.match(patternBKoRegex);
     if (match) {
-      const rawVal = match[1].trim();
+      const rawVal = cleanEdgeQuotes(match[1]);
+      const rawTarget = match[2].trim();
+      const normT = normalizeFillTarget(rawTarget);
+      if (rawVal && !isNonValuePlaceholder(rawVal)) {
+        if (/^(?:is|ye|yeh|isko|isme|is\s*box|this|this\s*box|this\s*field|yahan|yaha|yha)$/i.test(rawTarget)) {
+          explicitPairs.push({ target: "__CURRENT__", value: rawVal, overwrite });
+          continue;
+        }
+        if (normT) {
+          fields[normT] = rawVal;
+          explicitPairs.push({ target: normT, value: rawVal, overwrite });
+          continue;
+        }
+      }
+    }
+
+    // Pattern B FIRST when explicit fill/type/enter verb places value before in/into/mein <field>
+    match = clause.match(patternBRegex);
+    if (match) {
+      const rawVal = cleanEdgeQuotes(match[1]);
       const rawTarget = match[2].trim();
       const normTCheck = normalizeFillTarget(rawTarget);
       const valLooksLikeField = knownFieldExactRe.test(normalizeFillTarget(rawVal));
@@ -2614,7 +2729,7 @@ function extractFillDetails(text) {
         .trim()
         .replace(/^(?:fill|type|enter|write|put|set)\s+/i, "")
         .trim();
-      const rawVal = match[2].trim();
+      const rawVal = cleanEdgeQuotes(match[2]);
       if (!isNonValuePlaceholder(rawVal)) {
         if (/^(?:is|ye|yeh|isko|isme|is\s*box|this|this\s*box|this\s*field|yahan|yaha|yha)$/i.test(rawTarget)) {
           explicitPairs.push({ target: "__CURRENT__", value: rawVal, overwrite });
@@ -2632,7 +2747,7 @@ function extractFillDetails(text) {
     // Fallback Pattern B (when not matched by Pattern A)
     match = clause.match(patternBRegex);
     if (match) {
-      const rawVal = match[1].trim();
+      const rawVal = cleanEdgeQuotes(match[1]);
       const rawTarget = match[2].trim();
       if (!isNonValuePlaceholder(rawVal)) {
         if (/^(?:this|this\s*box|this\s*field|it|here|isko|isme|yahan|yaha|yha)$/i.test(rawTarget)) {
@@ -2651,7 +2766,7 @@ function extractFillDetails(text) {
     // Pattern C: "isko/this <value> se fill/bhar kar do" or "fill this with <value>"
     match = clause.match(patternCRegex1) || clause.match(patternCRegex2);
     if (match && match[1] && !isNonValuePlaceholder(match[1])) {
-      explicitPairs.push({ target: "__CURRENT__", value: match[1].trim(), overwrite });
+      explicitPairs.push({ target: "__CURRENT__", value: cleanEdgeQuotes(match[1]), overwrite });
       continue;
     }
 
@@ -2662,6 +2777,8 @@ function extractFillDetails(text) {
       const keyMap = {
         naam: "name",
         fullname: "name",
+        firstname: "first name",
+        lastname: "lastname",
         surname: "lastname",
         familyname: "lastname",
         dateofbirth: "dob",
@@ -2684,9 +2801,12 @@ function extractFillDetails(text) {
         msg: "message",
       };
       const mappedKey = keyMap[rawT] || rawT;
-      const cleanVal = match[2]
-        .replace(new RegExp(`\\s+${trailingVerbSuffix}$`, "i"), "")
-        .trim();
+      let cleanVal = cleanEdgeQuotes(
+        match[2].replace(new RegExp(`\\s+${trailingVerbSuffix}$`, "i"), ""),
+      );
+      if (/\s+(?:hai|he|h|hoon)$/i.test(cleanVal)) {
+        cleanVal = cleanVal.replace(/\s+(?:hai|he|h|hoon)$/i, "").trim();
+      }
       if (cleanVal && !isNonValuePlaceholder(cleanVal)) {
         fields[mappedKey] = cleanVal;
         explicitPairs.push({ target: mappedKey, value: cleanVal, overwrite });
@@ -2743,15 +2863,19 @@ function extractFillDetails(text) {
   // Fallback Pattern E: natural comma-separated attributes ("name Rahul, email rahul@gmail.com, city Delhi")
   if (explicitPairs.length === 0) {
     const patterns = [
-      { key: "name", regex: /\b(?:name|naam)\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+email|\s+city|\s+pin|\s+phone|\s+mobile|\s+bhar|\s+fill|$)/i },
+      { key: "first name", regex: /\bfirst\s+name\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+last\s+name|\s+surname|\s+email|\s+city|\s+pin|\s+phone|\s+mobile|\s+bhar|\s+fill|$)/i },
+      { key: "lastname", regex: /\b(?:last\s+name|surname)\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+email|\s+city|\s+pin|\s+phone|\s+mobile|\s+bhar|\s+fill|$)/i },
+      { key: "name", regex: /\b(?:name|naam)\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+email|\s+city|\s+pin|\s+phone|\s+mobile|\s+address|\s+bhar|\s+fill|$)/i },
       { key: "email", regex: /\b(?:email|mail)\s+(?:as\s+|is\s+|:\s*)?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i },
       { key: "phone", regex: /\b(?:phone|mobile(?:\s+number)?)\s+(?:as\s+|is\s+|:\s*)?(\+?\d{10,13})/i },
-      { key: "city", regex: /\bcity\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+state|\s+pin|\s+fill|$)/i },
-      { key: "state", regex: /\bstate\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+pin|\s+city|\s+fill|$)/i },
+      { key: "address", regex: /\b(?:address|pata)\s+(?:as\s+|is\s+|:\s*)?([^,\n]+?)(?:,|\s+city|\s+state|\s+pin|\s+bhar|\s+fill|$)/i },
+      { key: "city", regex: /\bcity\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+state|\s+pin|\s+phone|\s+fill|$)/i },
+      { key: "state", regex: /\bstate\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+pin|\s+city|\s+phone|\s+fill|$)/i },
       { key: "pincode", regex: /\b(?:pin|pincode|zip)\s+(?:as\s+|is\s+|:\s*)?(\d{5,6})/i },
       { key: "gstin", regex: /\b(?:gstin|gst)\s+(?:as\s+|is\s+|:\s*)?([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})/i },
     ];
     for (const p of patterns) {
+      if ((p.key === "name") && (fields["first name"] || fields["lastname"])) continue;
       const match = cleaned.match(p.regex);
       if (match && match[1]) {
         const val = match[1].trim();
@@ -4434,10 +4558,16 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     } catch {}
 
     if (needsConfirm) {
+      const resolvedSel =
+        intent.selector ||
+        (intent.target === "__CURRENT__" ? lastHighlightSelector || undefined : undefined);
       pendingAction = {
-        type: "click",
+        type: intent.action || "click",
+        selector: resolvedSel,
         value: intent.target,
         text: intent.target,
+        candidateIndex: intent.candidateIndex,
+        fallbackSelector: lastHighlightSelector || undefined,
       };
       if ($("confirmDesc")) {
         $("confirmDesc").textContent = isHindi
@@ -4495,14 +4625,24 @@ async function executeNaturalBrowserAction(intent, trimmed) {
 
     if (res?.ok) {
       const hasErrFb = Boolean(res.hasErrorFeedback);
-      setRigEmotion(hasErrFb ? "concerned" : "success", hasErrFb ? "Notice" : "Clicked!");
+      const isOpenLink = (res.action || intent.action) === "open_link";
+      setRigEmotion(
+        hasErrFb ? "concerned" : "success",
+        hasErrFb ? "Notice" : isOpenLink ? "Opened!" : "Clicked!",
+      );
       const clickedName = res.text || intent.target;
-      let outcome = isHindi
-        ? `Maine page par "${clickedName}" click kar diya hai!`
-        : `Successfully clicked "${clickedName}"!`;
+      let outcome = isOpenLink
+        ? isHindi
+          ? `Maine link "${clickedName}" khol diya hai${res.newUrl ? ` (${res.newUrl})` : ""}!`
+          : `Opened link "${clickedName}"${res.newUrl ? ` -> ${res.newUrl}` : ""}!`
+        : isHindi
+          ? `Maine page par "${clickedName}" click kar diya hai!`
+          : `Successfully clicked "${clickedName}"!`;
       if (res.stateChange === "navigated") {
         lastHighlightSelector = null;
-        outcome += isHindi ? ` Page naye URL par navigate ho gaya.` : ` Page navigated.`;
+        if (!isOpenLink) {
+          outcome += isHindi ? ` Page naye URL par navigate ho gaya.` : ` Page navigated.`;
+        }
       } else if (res.stateChange === "modal_opened") {
         outcome += isHindi ? ` Dialog/popup open ho gaya.` : ` Modal dialog opened.`;
       } else if (res.stateChange === "toggled" || res.stateChange === "selected") {
@@ -4684,11 +4824,25 @@ async function executeNaturalBrowserAction(intent, trimmed) {
 
     // 3. Explicit key-value pairs OR generic "form fill kar do" without document
     if (!intent.explicitPairs && !intent.fields) {
-      // Check saved userProfile (excluding sensitive fields) before asking user
+      const SENSITIVE_PROFILE_RE =
+        /pass|otp|(?<!postal[\s_-])(?<![a-z0-9])pin(?![a-z0-9]|[\s_-]*code\b)|cvv|cvc|secret|token|card|aadhaar|aadhar|\bpan\b|ifsc|account/i;
+      const EPHEMERAL_PROFILE_RE =
+        /^(?:__current__|search|query|q|chat|msg|message|comment|comments|prompt|note|notes|subject|title)$/i;
+      // Check saved non-sensitive userProfile before asking user step-by-step
       const { userProfile } = await chrome.storage.local.get("userProfile").catch(() => ({}));
       const profilePairs = userProfile
         ? Object.entries(userProfile)
-            .filter(([, v]) => typeof v === "string" && v.trim())
+            .filter(([k, v]) => {
+              const kTrim = String(k || "").trim();
+              return (
+                kTrim &&
+                kTrim.length <= 40 &&
+                !SENSITIVE_PROFILE_RE.test(kTrim) &&
+                !EPHEMERAL_PROFILE_RE.test(kTrim) &&
+                typeof v === "string" &&
+                v.trim()
+              );
+            })
             .map(([k, v]) => ({ target: k, value: v, overwrite: false }))
         : [];
       if (profilePairs.length > 0) {
@@ -5003,13 +5157,16 @@ async function sendQuery(question, intent, options = {}) {
     appendHistory("buddy", currentAnswer);
     recordConversationTurn(trimmed, currentAnswer);
 
-    if (res.providerWarning) {
-      appendProviderWarningNotice(res.providerWarning);
+    if (res.providerWarning || res.providerFailure) {
+      appendProviderWarningNotice(res.providerWarning, res.providerFailure);
     }
     if (res.aiFallbackUsed || res.activeProvider === "local_grounded") {
-      $("statusText").textContent = isHindi
-        ? "Local Helper Mode (Gemini AI key missing/unavailable)"
-        : "Local Helper Mode (Gemini AI unavailable)";
+      const failureReason = res.providerFailure?.message || res.providerWarning?.message;
+      $("statusText").textContent = failureReason
+        ? `Local Helper Mode — ${failureReason}`
+        : isHindi
+          ? "Local Helper Mode (AI provider unavailable)"
+          : "Local Helper Mode (AI provider unavailable)";
     }
 
     const modeRec =
@@ -5164,6 +5321,11 @@ async function sendQuery(question, intent, options = {}) {
           setRigEmotion("confused", "Which one?");
           $("statusText").textContent = askMsg;
           appendHistory("buddy", askMsg);
+          recordSessionAction(
+            `Asked user to pick among ${clickRes.candidates.length} "${actionLabel}" controls`,
+            "unconfirmed",
+          );
+          speakResponse(askMsg, "confused");
         } else if (clickRes?.ok) {
           const hasErrFb = Boolean(clickRes.hasErrorFeedback);
           setRigEmotion(hasErrFb ? "concerned" : "happy", hasErrFb ? "Notice" : execActionName === "open_link" ? "Opened!" : "Clicked!");
@@ -5255,7 +5417,14 @@ async function sendQuery(question, intent, options = {}) {
 
     if (lastHighlightSelector) {
       $("highlightBtn").hidden = false;
-      pointArmAtElement();
+      const coordsArg = res.highlightCoords
+        ? { ...res.highlightCoords, skipHighlightRpc: true }
+        : res.actionType === "point"
+          ? null
+          : res.highlightSelector
+            ? { skipHighlightRpc: true }
+            : null;
+      pointArmAtElement(coordsArg);
     }
     $("speakAnswerBtn").hidden = false;
 
@@ -5284,9 +5453,12 @@ async function sendQuery(question, intent, options = {}) {
       setRigEmotion(emotion, emotion.toUpperCase());
       speakResponse(currentAnswer, emotion);
       if (res.aiFallbackUsed || res.activeProvider === "local_grounded") {
-        $("statusText").textContent = isHindi
-          ? "Local Helper Mode (Gemini AI key missing/unavailable)"
-          : "Local Helper Mode (Gemini AI unavailable)";
+        const failureReason = res.providerFailure?.message || res.providerWarning?.message;
+        $("statusText").textContent = failureReason
+          ? `Local Helper Mode — ${failureReason}`
+          : isHindi
+            ? "Local Helper Mode (AI provider unavailable)"
+            : "Local Helper Mode (AI provider unavailable)";
       } else {
         $("statusText").textContent = res.pageReadable
           ? `Grounded on active page (${active.name}).`
@@ -5646,13 +5818,56 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
       $("statusText").textContent = skipMsg;
       appendHistory("buddy", skipMsg);
     } else if (preserved.length > 0) {
-      setRigEmotion("idle", "Preserved");
-      const presMsg = isHindi
-        ? `🔒 Field "${preserved.map((p) => p.field).join(", ")}" mein pehle se data bhara hua hai. Agar aap badalna chahte hain to "change karke <nayi value> kar do" bolein.`
-        : `🔒 Existing data in "${preserved.map((p) => p.field).join(", ")}" was preserved. Say "change <field> to <value>" if you want to overwrite it.`;
-      recordSessionAction(`Preserved existing values in ${preserved.map((p) => p.field).join(", ")}`, "confirmed");
-      $("statusText").textContent = "Existing field values preserved.";
-      appendHistory("buddy", presMsg);
+      if (extraOpts?.fromFormSession && remainingFields.length > 0 && errors.length === 0) {
+        const nextField = remainingFields[0];
+        if (!activeFormSession) {
+          activeFormSession = {
+            active: true,
+            filledFields: [],
+            lastFilled: null,
+            remainingFields,
+            awaitingField: nextField,
+          };
+        } else {
+          activeFormSession.active = true;
+          activeFormSession.remainingFields = remainingFields;
+          activeFormSession.awaitingField = nextField;
+        }
+        pendingSlot = {
+          type: "fill_value",
+          targetField: nextField.label || "__CURRENT__",
+          targetSelector: nextField.selector || undefined,
+          fromFormSession: true,
+          noSubmitPrompt: Boolean(extraOpts?.noSubmitPrompt),
+        };
+        if (nextField.selector) {
+          lastHighlightSelector = nextField.selector;
+          lastCallout = {
+            title: `Fill: ${nextField.label}`,
+            description: "Waiting for your value",
+          };
+          pointArmAtElement().catch(() => {});
+        }
+        const presNextMsg = isHindi
+          ? `🔒 Pehle se bhare field (${preserved.map((p) => p.field).join(", ")}) safe rakhe gaye hain.\nAb **${nextField.label}** mein kya daalna hai?`
+          : `🔒 Existing field(s) (${preserved.map((p) => p.field).join(", ")}) preserved.\nNext, what should I enter in **${nextField.label}**?`;
+        setRigEmotion("curious", "Need Details");
+        recordSessionAction(`Preserved ${preserved.map((p) => p.field).join(", ")}; waiting for ${nextField.label}`, "confirmed");
+        $("statusText").textContent = `Waiting for ${nextField.label}…`;
+        appendHistory("buddy", presNextMsg);
+        speakResponse(presNextMsg, "curious", {
+          autoListenOnFinish: true,
+          autoListenReason: "incomplete_form_fill",
+        });
+      } else {
+        setRigEmotion("idle", "Preserved");
+        const presMsg = isHindi
+          ? `🔒 Field "${preserved.map((p) => p.field).join(", ")}" mein pehle se data bhara hua hai. Agar aap badalna chahte hain to "change karke <nayi value> kar do" bolein.`
+          : `🔒 Existing data in "${preserved.map((p) => p.field).join(", ")}" was preserved. Say "change <field> to <value>" if you want to overwrite it.`;
+        recordSessionAction(`Preserved existing values in ${preserved.map((p) => p.field).join(", ")}`, "confirmed");
+        $("statusText").textContent = "Existing field values preserved.";
+        appendHistory("buddy", presMsg);
+      }
     } else {
       setRigEmotion("confused", "Not found");
       const notFoundMsg = isHindi
@@ -5707,6 +5922,7 @@ function buildMultiActionPlan(instruction) {
       title: "Open Meesho Supplier Panel",
       action: "navigate",
       value: "https://supplier.meesho.com/panel/orders",
+      skipIfUrlPattern: "meesho\\.com\\/panel|mock.*meesho|localhost.*meesho",
       status: "pending",
     });
     steps.push({
@@ -5714,7 +5930,9 @@ function buildMultiActionPlan(instruction) {
       stepNumber: 2,
       title: "Navigate to Orders",
       action: "click",
+      selector: 'a[href*="orders"], [role="tab"][data-tab="orders"]',
       textTarget: "Orders",
+      alternateTargets: ["Orders", "My Orders", "All Orders", "Order", "Orders Dashboard"],
       status: "pending",
     });
     steps.push({
@@ -5722,7 +5940,9 @@ function buildMultiActionPlan(instruction) {
       stepNumber: 3,
       title: "Filter today's orders",
       action: "click",
+      selector: '[data-filter="today"], input[value="today"]',
       textTarget: "Today",
+      alternateTargets: ["Today", "Today's Orders", "Created Today", "Date", "Order Date"],
       status: "pending",
     });
     steps.push({
@@ -5730,7 +5950,9 @@ function buildMultiActionPlan(instruction) {
       stepNumber: 4,
       title: "Find pending orders",
       action: "click",
+      selector: '[data-tab="pending"], input[value="pending"]',
       textTarget: "Pending",
+      alternateTargets: ["Pending", "Pending Orders", "Ready to Ship", "Unshipped", "New Orders"],
       status: "pending",
     });
     steps.push({
@@ -5739,6 +5961,7 @@ function buildMultiActionPlan(instruction) {
       title: "Copy pending order IDs",
       action: "extract",
       value: "order_id",
+      statusFilter: lower.includes("pending") ? "pending" : undefined,
       status: "pending",
     });
     steps.push({
@@ -5951,7 +6174,141 @@ function renderTaskPlanUI() {
   $("planPauseResumeBtn").textContent = isPlanPaused ? "▶️ Resume" : "⏸️ Pause";
 }
 
+let planRunToken = 0;
+let planLoopRunning = false;
+
+async function persistPlanCheckpoint(plan) {
+  if (!plan) return;
+  try {
+    plan.updatedAt = new Date().toISOString();
+    const checkpoint = {
+      id: plan.id,
+      title: plan.title,
+      originalInstruction: plan.originalInstruction,
+      status: plan.status,
+      currentStepIndex: plan.currentStepIndex || 0,
+      totalSteps: Array.isArray(plan.steps) ? plan.steps.length : 0,
+      steps: plan.steps,
+      extractedData: plan.extractedData || [],
+      updatedAt: plan.updatedAt,
+    };
+    await chrome.storage.local.set({
+      ai_buddy_active_plan: plan,
+      savedCheckpoint: checkpoint,
+    });
+  } catch {
+    // Non-fatal
+  }
+}
+
+async function clearPlanCheckpoints() {
+  try {
+    await chrome.storage.local.remove(["savedCheckpoint", "ai_buddy_active_plan"]);
+  } catch {
+    // Non-fatal
+  }
+}
+
+function sanitizeStepSelector(sel) {
+  if (!sel || typeof sel !== "string") return "";
+  const validParts = sel
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => p && !/:has-text\(|:contains\(/i.test(p));
+  return validParts.join(", ");
+}
+
+function resolveSnapshotElementForStep(step, freshSnap, strategyIndex = 0) {
+  if (!freshSnap || !step) return null;
+  const allElements = [
+    ...(freshSnap.controls || []),
+    ...(freshSnap.forms || []),
+    ...(freshSnap.headings || []),
+    ...(freshSnap.alerts || []),
+  ];
+
+  // Clean non-standard CSS pseudo selectors so querySelectorAll never chokes
+  const sanitized = sanitizeStepSelector(step.selector);
+  if (sanitized !== (step.selector || "")) {
+    step.selector = sanitized || undefined;
+  }
+
+  // If this is a fresh attempt and existing selector still matches snapshot, keep it (unless retrying with alternate strategy)
+  if (strategyIndex === 0 && step.selector && step.selector !== "body") {
+    const stillPresent = allElements.find((el) => el.selector === step.selector);
+    if (stillPresent) {
+      return { selector: stillPresent.selector, strategy: "direct", element: stillPresent };
+    }
+    // Stale selector was deleted/mutated in live DOM — clear it so we re-ground below
+    step.selector = undefined;
+  } else if (strategyIndex > 0) {
+    // On retry, clear previously failing selector so alternate locators take precedence
+    step.selector = undefined;
+  }
+
+  const rawQueries = [
+    step.dynamicTargetQuery,
+    step.textTarget,
+    ...(Array.isArray(step.alternateTargets) ? step.alternateTargets : []),
+    step.title,
+  ]
+    .filter((q) => typeof q === "string" && q.trim().length > 0)
+    .map((q) =>
+      q
+        .toLowerCase()
+        .trim()
+        .replace(/^(?:click|open|press|select|go to|navigate to|find|locate|fill|type|search|copy)\s+/i, "")
+        .replace(/\s+(?:button|btn|link|tab|input|field|box|section)$/i, "")
+        .trim(),
+    )
+    .filter(Boolean);
+
+  const uniqueQueries = [...new Set(rawQueries)];
+  const orderedQueries =
+    strategyIndex > 0 && uniqueQueries.length > 1
+      ? [...uniqueQueries.slice(strategyIndex % uniqueQueries.length), ...uniqueQueries.slice(0, strategyIndex % uniqueQueries.length)]
+      : uniqueQueries;
+
+  const isClickableStep = ["click", "click_submit", "click_delete", "open_link", "open"].includes(step.action);
+  const pool = isClickableStep && (freshSnap.controls || []).length > 0
+    ? [...(freshSnap.controls || []), ...(freshSnap.forms || []), ...(freshSnap.headings || [])]
+    : allElements;
+
+  for (const q of orderedQueries) {
+    const exact = pool.find((el) => (el.name || "").toLowerCase().trim() === q);
+    if (exact?.selector) {
+      return { selector: exact.selector, strategy: "exact_name", queryUsed: q, element: exact };
+    }
+  }
+  for (const q of orderedQueries) {
+    const prefix = pool.find((el) => {
+      const name = (el.name || "").toLowerCase().trim();
+      const ph = (el.placeholder || "").toLowerCase().trim();
+      return name.startsWith(q) || ph.startsWith(q);
+    });
+    if (prefix?.selector) {
+      return { selector: prefix.selector, strategy: "prefix_match", queryUsed: q, element: prefix };
+    }
+  }
+  for (const q of orderedQueries) {
+    const sub = pool.find((el) => {
+      const name = (el.name || "").toLowerCase();
+      const ph = (el.placeholder || "").toLowerCase();
+      const sel = (el.selector || "").toLowerCase();
+      return name.includes(q) || ph.includes(q) || (sel.includes(q) && !/:has-text/i.test(sel));
+    });
+    if (sub?.selector) {
+      return { selector: sub.selector, strategy: "substring_match", queryUsed: q, element: sub };
+    }
+  }
+
+  return null;
+}
+
 async function startMultiActionPlan(instruction) {
+  // Invalidate any previous running loop immediately so a fresh plan is never blocked or corrupted
+  planRunToken++;
+  planLoopRunning = false;
   const plan = buildMultiActionPlan(instruction);
   activePlan = plan;
   isPlanPaused = false;
@@ -5967,177 +6324,216 @@ async function startMultiActionPlan(instruction) {
   );
   setRigEmotion("working", "Planning");
   renderTaskPlanUI();
+  await persistPlanCheckpoint(plan);
 
   // Execute steps sequentially
   await runPlanLoop();
 }
 
-let planLoopRunning = false;
-
 async function runPlanLoop() {
   if (!activePlan || activePlan.status === "cancelled" || planLoopRunning) return;
+  const plan = activePlan;
+  const myRunToken = ++planRunToken;
   planLoopRunning = true;
 
-  // Persist plan state to chrome.storage.local to survive service worker / sidepanel cycles
-  const persistPlanState = async () => {
-    try {
-      await chrome.storage.local.set({ ai_buddy_active_plan: activePlan });
-    } catch {
-      // Non-fatal
-    }
-  };
+  const isStaleRun = () =>
+    !activePlan || activePlan !== plan || myRunToken !== planRunToken || plan.status === "cancelled";
 
-  try {
-  while (activePlan && activePlan.status !== "cancelled" && activePlan.currentStepIndex < activePlan.steps.length) {
-    if (isPlanPaused) {
-      activePlan.status = "paused";
-      await persistPlanState();
-      renderTaskPlanUI();
-      return;
-    }
-
-    const currentStep = activePlan.steps[activePlan.currentStepIndex];
-
-    // Consequential Approval Gate
-    if (currentStep.requiresApproval && currentStep.status !== "awaiting_approval") {
-      currentStep.status = "awaiting_approval";
-      activePlan.status = "awaiting_approval";
-      pendingApprovalStep = currentStep;
-      await persistPlanState();
-      renderTaskPlanUI();
-
-      if ($("consequentialApprovalCard")) {
-        $("consequentialApprovalCard").hidden = false;
-        $("consequentialPrompt").textContent =
-          currentStep.approvalPrompt ||
-          `Buddy needs your confirmation to execute "${currentStep.title}". This step performs changes.`;
-      }
-      setRigEmotion("concerned", "Approval");
-      return; // Wait for user approval click
-    }
-
-    currentStep.status = "running";
-    activePlan.status = "running";
-    renderTaskPlanUI();
-    setRigEmotion("working", `Step ${currentStep.stepNumber}`);
-
-    // --- OAV STAGE 1 & 4: OBSERVE FRESH LIVE DOM & RE-GROUND TARGET ---
+  const regroundStep = async (currentStep, strategyIdx = 0) => {
     try {
       const snapRes = await sendRuntimeMessage({ type: "GET_PAGE_SNAPSHOT" });
+      if (isStaleRun()) return null;
       if (snapRes?.ok && snapRes.snapshot) {
         const freshSnap = snapRes.snapshot;
-        const allElements = [
-          ...(freshSnap.controls || []),
-          ...(freshSnap.forms || []),
-          ...(freshSnap.headings || []),
-          ...(freshSnap.alerts || []),
-        ];
-
-        // If step lacks direct selector or if previous step navigated/mutated DOM
-        const targetQ = (
-          currentStep.dynamicTargetQuery ||
-          currentStep.textTarget ||
-          currentStep.title ||
-          ""
-        )
-          .toLowerCase()
-          .trim();
-
-        if (targetQ && (!currentStep.selector || currentStep.selector === "body")) {
-          const cleanQ = targetQ
-            .replace(/^(click|open|press|select|go to|fill|type|search|find|copy)\s+/i, "")
-            .replace(/\s+(button|link|tab|input|field|box)$/i, "")
-            .trim();
-
-          const matched = allElements.find((el) => {
-            const name = (el.name || "").toLowerCase();
-            const ph = (el.placeholder || "").toLowerCase();
-            return name === cleanQ || name.includes(cleanQ) || ph.includes(cleanQ);
-          });
-
-          if (matched) {
-            currentStep.selector = matched.selector;
-            currentStep.resolvedSelector = matched.selector;
-          }
+        // Skip redundant navigation if browser is already on the target portal
+        if (currentStep.action === "navigate" && currentStep.skipIfUrlPattern && freshSnap.url) {
+          try {
+            if (new RegExp(currentStep.skipIfUrlPattern, "i").test(freshSnap.url)) {
+              return { skipNavigateAlreadyThere: true, currentUrl: freshSnap.url };
+            }
+          } catch {}
+        }
+        const resolved = resolveSnapshotElementForStep(currentStep, freshSnap, strategyIdx);
+        if (resolved?.selector) {
+          currentStep.selector = sanitizeStepSelector(resolved.selector) || resolved.selector;
+          currentStep.resolvedSelector = currentStep.selector;
+          currentStep.locatorStrategy = resolved.strategy;
+          if (resolved.queryUsed) currentStep.textTarget = currentStep.textTarget || resolved.queryUsed;
         }
       }
     } catch {
       // Non-fatal: continue with pre-configured step target
     }
+    return null;
+  };
 
-    // --- OAV STAGE 5: DISPATCH STEP ACTION ---
-    const res = await sendRuntimeMessage({
-      type: "EXECUTE_STEP",
-      step: currentStep,
-      options: {
-        extractedDataStore: activePlan.extractedData,
-        uploadedDocumentFields: activeUploadedDocument?.fields || {},
-      },
-    });
-
-    // --- OAV STAGE 6: TRIPLE-SIGNAL PAGE SETTLE DETECTOR ---
-    try {
-      await sendRuntimeMessage({
-        type: "WAIT_FOR_PAGE_SETTLE",
-        timeoutMs: 4000,
-      });
-    } catch {
-      // Non-fatal
-    }
-
-    if (!activePlan || activePlan.status === "cancelled") return;
-    if (res?.ok) {
-      currentStep.status = "completed";
-      currentStep.verified = true;
-      currentStep.result = res.result;
-
-      if (res.extractedData) {
-        currentStep.extractedData = res.extractedData;
-        if (Array.isArray(res.extractedData)) {
-          activePlan.extractedData.push(...res.extractedData);
-        } else {
-          activePlan.extractedData.push(res.extractedData);
-        }
-        renderExtractedDataUI();
+  try {
+    while (!isStaleRun() && plan.currentStepIndex < plan.steps.length) {
+      if (isPlanPaused) {
+        plan.status = "paused";
+        await persistPlanCheckpoint(plan);
+        if (!isStaleRun()) renderTaskPlanUI();
+        return;
       }
 
-      activePlan.currentStepIndex++;
-      await persistPlanState();
-      renderTaskPlanUI();
-      await new Promise((r) => setTimeout(r, 400));
-      if (!activePlan || activePlan.status === "cancelled") return;
-    } else {
-      currentStep.status = "failed";
-      currentStep.error = res?.error || "Action execution failed";
-      activePlan.status = "failed";
-      await persistPlanState();
-      recordTaskExecution(activePlan).catch(() => {});
-      renderTaskPlanUI();
-      setRigEmotion("error", "Failed");
-      appendHistory("buddy", `⚠️ Step ${currentStep.stepNumber} failed: ${currentStep.error}`);
-      if ($("planRetryBtn")) $("planRetryBtn").hidden = false;
-      return;
-    }
-  }
+      const currentStep = plan.steps[plan.currentStepIndex];
 
-  if (!activePlan || activePlan.status === "cancelled") return;
-  // All steps completed
-  activePlan.status = "completed";
-  if ($("planRetryBtn")) $("planRetryBtn").hidden = true;
-  await persistPlanState();
-  recordTaskExecution(activePlan).catch(() => {});
-  try {
-    await chrome.storage.local.remove("savedCheckpoint");
-  } catch {}
-  renderTaskPlanUI();
-  setRigEmotion("celebrate", "Done");
-  const extractedCount = activePlan.extractedData.length;
-  appendHistory(
-    "buddy",
-    `✅ Multi-action workflow completed! Executed and verified all ${activePlan.steps.length} steps.${extractedCount > 0 ? ` Extracted ${extractedCount} items.` : ""}`,
-  );
+      // Consequential Approval Gate
+      if (currentStep.requiresApproval && currentStep.status !== "awaiting_approval") {
+        currentStep.status = "awaiting_approval";
+        plan.status = "awaiting_approval";
+        pendingApprovalStep = currentStep;
+        await persistPlanCheckpoint(plan);
+        if (isStaleRun()) return;
+        renderTaskPlanUI();
+
+        if ($("consequentialApprovalCard")) {
+          $("consequentialApprovalCard").hidden = false;
+          $("consequentialPrompt").textContent =
+            currentStep.approvalPrompt ||
+            `Buddy needs your confirmation to execute "${currentStep.title}". This step performs changes.`;
+        }
+        setRigEmotion("concerned", "Approval");
+        return; // Wait for user approval click
+      }
+
+      currentStep.status = "running";
+      plan.status = "running";
+      renderTaskPlanUI();
+      setRigEmotion("working", `Step ${currentStep.stepNumber}`);
+      await persistPlanCheckpoint(plan);
+      if (isStaleRun()) return;
+
+      // --- OAV STAGE 1 & 4: OBSERVE FRESH LIVE DOM & RE-GROUND TARGET ---
+      const strategyIdx = currentStep.locatorStrategyIndex || currentStep.retryCount || 0;
+      const navCheck = await regroundStep(currentStep, strategyIdx);
+      if (isStaleRun()) return;
+
+      let res;
+      if (navCheck?.skipNavigateAlreadyThere) {
+        res = {
+          ok: true,
+          verified: true,
+          result: `Already on target portal (${navCheck.currentUrl}).`,
+        };
+      } else {
+        // --- OAV STAGE 5: DISPATCH STEP ACTION ---
+        res = await sendRuntimeMessage({
+          type: "EXECUTE_STEP",
+          step: currentStep,
+          options: {
+            extractedDataStore: plan.extractedData,
+            uploadedDocumentFields: activeUploadedDocument?.fields || {},
+            statusFilter: currentStep.statusFilter,
+            useAlternateLocators: strategyIdx > 0,
+            locatorStrategyIndex: strategyIdx,
+          },
+        });
+        if (isStaleRun()) return;
+
+        // Automatic recoverable alternate-locator retry (max 1 auto-retry before surfacing manual Retry button)
+        if (!res?.ok && !res?.awaitingApproval && (currentStep.retryCount || 0) < 1 && currentStep.action !== "navigate") {
+          currentStep.retryCount = (currentStep.retryCount || 0) + 1;
+          currentStep.locatorStrategyIndex = currentStep.retryCount;
+          currentStep.selector = undefined;
+          await sendRuntimeMessage({ type: "WAIT_FOR_PAGE_SETTLE", timeoutMs: 1500 }).catch(() => {});
+          if (isStaleRun()) return;
+          await regroundStep(currentStep, currentStep.locatorStrategyIndex);
+          if (isStaleRun()) return;
+          res = await sendRuntimeMessage({
+            type: "EXECUTE_STEP",
+            step: currentStep,
+            options: {
+              extractedDataStore: plan.extractedData,
+              uploadedDocumentFields: activeUploadedDocument?.fields || {},
+              statusFilter: currentStep.statusFilter,
+              useAlternateLocators: true,
+              locatorStrategyIndex: currentStep.locatorStrategyIndex,
+            },
+          });
+        }
+      }
+
+      if (isStaleRun()) return;
+
+      // --- OAV STAGE 6: TRIPLE-SIGNAL PAGE SETTLE DETECTOR ---
+      try {
+        await sendRuntimeMessage({
+          type: "WAIT_FOR_PAGE_SETTLE",
+          timeoutMs: 4000,
+        });
+      } catch {
+        // Non-fatal
+      }
+
+      if (isStaleRun()) return;
+
+      if (res?.awaitingApproval) {
+        currentStep.status = "awaiting_approval";
+        plan.status = "awaiting_approval";
+        pendingApprovalStep = currentStep;
+        await persistPlanCheckpoint(plan);
+        renderTaskPlanUI();
+        return;
+      }
+
+      if (res?.ok) {
+        currentStep.status = "completed";
+        currentStep.verified = true;
+        currentStep.error = undefined;
+        currentStep.result = res.result;
+
+        if (res.extractedData) {
+          currentStep.extractedData = res.extractedData;
+          if (!Array.isArray(plan.extractedData)) plan.extractedData = [];
+          if (Array.isArray(res.extractedData)) {
+            plan.extractedData.push(...res.extractedData);
+          } else {
+            plan.extractedData.push(res.extractedData);
+          }
+          renderExtractedDataUI();
+        }
+
+        plan.currentStepIndex++;
+        await persistPlanCheckpoint(plan);
+        if (isStaleRun()) return;
+        renderTaskPlanUI();
+        await new Promise((r) => setTimeout(r, 350));
+        if (isStaleRun()) return;
+      } else {
+        currentStep.status = "failed";
+        currentStep.error = res?.error || res?.message || "Action execution failed";
+        plan.status = "failed";
+        await persistPlanCheckpoint(plan);
+        recordTaskExecution(plan).catch(() => {});
+        if (isStaleRun()) return;
+        renderTaskPlanUI();
+        setRigEmotion("error", "Failed");
+        appendHistory("buddy", `⚠️ Step ${currentStep.stepNumber} failed: ${currentStep.error}`);
+        if ($("planRetryBtn")) $("planRetryBtn").hidden = false;
+        return;
+      }
+    }
+
+    if (isStaleRun()) return;
+    // All steps completed
+    plan.status = "completed";
+    if ($("planRetryBtn")) $("planRetryBtn").hidden = true;
+    await persistPlanCheckpoint(plan);
+    recordTaskExecution(plan).catch(() => {});
+    await clearPlanCheckpoints();
+    if (isStaleRun()) return;
+    renderTaskPlanUI();
+    setRigEmotion("celebrate", "Done");
+    const extractedCount = Array.isArray(plan.extractedData) ? plan.extractedData.length : 0;
+    appendHistory(
+      "buddy",
+      `✅ Multi-action workflow completed! Executed and verified all ${plan.steps.length} steps.${extractedCount > 0 ? ` Extracted ${extractedCount} items.` : ""}`,
+    );
   } finally {
-    planLoopRunning = false;
+    if (myRunToken === planRunToken || activePlan !== plan) {
+      planLoopRunning = false;
+    }
   }
 }
 
@@ -6190,8 +6586,17 @@ function handleInFlightControlCommand(text) {
         } else if (data.ai_buddy_active_plan) {
           activePlan = data.ai_buddy_active_plan;
           isPlanPaused = false;
+          pendingApprovalStep = null;
+          const curStep = activePlan.steps?.[activePlan.currentStepIndex || 0];
+          if (curStep && (curStep.status === "running" || curStep.status === "failed")) {
+            curStep.status = "pending";
+          }
           activePlan.status = "running";
+          planLoopRunning = false;
           renderTaskPlanUI();
+          if (Array.isArray(activePlan.extractedData) && activePlan.extractedData.length > 0) {
+            renderExtractedDataUI();
+          }
           runPlanLoop();
           appendHistory("buddy", "Resuming saved workflow plan…");
         } else {
@@ -6212,6 +6617,8 @@ function handleInFlightControlCommand(text) {
       $("approveConsequentialBtn")?.click();
     } else if (activePlan.status === "paused") {
       $("planPauseResumeBtn")?.click();
+    } else if (activePlan.status === "failed") {
+      $("planRetryBtn")?.click();
     } else {
       appendHistory("buddy", "Task execution is active and proceeding.");
     }
@@ -6380,7 +6787,7 @@ async function handleUploadedDocumentFile(file) {
   const isHindi = active.defaultLanguage !== "english";
   const isImage = file.type.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(file.name);
   const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
-  const isTextLike = /\.(txt|csv|json)$/i.test(file.name);
+  const isTextLike = /\.(txt|csv|tsv|json)$/i.test(file.name);
 
   if (!isImage && !isPdf && !isTextLike) {
     const tag = `[Attached: ${file.name} (${Math.round(file.size / 1024)} KB)] `;
@@ -6436,18 +6843,30 @@ async function handleUploadedDocumentFile(file) {
       },
     });
 
-    if (extractRes?.ok && Object.keys(extractRes.fields || {}).length > 0) {
+    const hasFields = Object.keys(extractRes?.fields || {}).length > 0;
+    const hasTable = Boolean(extractRes?.table?.rowCount > 0);
+    if (extractRes?.ok && (hasFields || hasTable)) {
       setActiveUploadedDocument(extractRes);
-      const maskedKeys = Object.entries(extractRes.fields).map(
+      const maskedKeys = Object.entries(extractRes.fields || {}).map(
         ([k, v]) => `${k}: ${maskSensitiveDocValue(k, v)}`,
       );
-      setRigEmotion("happy", "Doc Ready");
-      $("statusText").textContent = `Document "${file.name}" read (${maskedKeys.length} fields).`;
-      const msg = isHindi
-        ? `📄 Document (${extractRes.documentType?.toUpperCase() || "ID"}) read kar liya gaya hai! Extracted fields: ${Object.keys(extractRes.fields).join(", ")}.\nAb aap bol sakte hain: "Buddy, is page ka form fill kar do."`
-        : `📄 Read "${file.name}" (${extractRes.documentType || "document"}). Extracted fields: ${Object.keys(extractRes.fields).join(", ")}.\nSay "Buddy, fill this form" whenever you're ready!`;
-      appendHistory("buddy", msg);
-      speakResponse(msg, "happy");
+      setRigEmotion("happy", hasTable && !hasFields ? "Sheet Ready" : "Doc Ready");
+      if (hasTable && !hasFields) {
+        const cols = (extractRes.table.headers || []).join(", ");
+        $("statusText").textContent = `Spreadsheet "${file.name}" loaded (${extractRes.table.rowCount} rows).`;
+        const msg = isHindi
+          ? `📊 Spreadsheet "${file.name}" read kar li hai! ${extractRes.table.rowCount} rows aur columns (${cols}) parsed hain.`
+          : `📊 Loaded "${file.name}": ${extractRes.table.rowCount} rows across columns: ${cols}.`;
+        appendHistory("buddy", msg);
+        speakResponse(msg, "happy");
+      } else {
+        $("statusText").textContent = `Document "${file.name}" read (${maskedKeys.length} fields).`;
+        const msg = isHindi
+          ? `📄 Document (${extractRes.documentType?.toUpperCase() || "ID"}) read kar liya gaya hai! Extracted fields: ${Object.keys(extractRes.fields).join(", ")}.\nAb aap bol sakte hain: "Buddy, is page ka form fill kar do."`
+          : `📄 Read "${file.name}" (${extractRes.documentType || "document"}). Extracted fields: ${Object.keys(extractRes.fields).join(", ")}.\nSay "Buddy, fill this form" whenever you're ready!`;
+        appendHistory("buddy", msg);
+        speakResponse(msg, "happy");
+      }
     } else {
       setActiveUploadedDocument({
         fileName: file.name,
@@ -6603,26 +7022,42 @@ document.querySelectorAll("[data-multi-task]").forEach((chip) => {
 });
 
 if ($("planPauseResumeBtn")) {
-  $("planPauseResumeBtn").onclick = () => {
+  $("planPauseResumeBtn").onclick = async () => {
     if (!activePlan) return;
     isPlanPaused = !isPlanPaused;
-    if (!isPlanPaused && activePlan.status === "paused") {
-      activePlan.status = "running";
+    if (isPlanPaused) {
+      activePlan.status = "paused";
+      await persistPlanCheckpoint(activePlan);
       renderTaskPlanUI();
-      runPlanLoop();
     } else {
+      const curStep = activePlan.steps?.[activePlan.currentStepIndex || 0];
+      if (curStep && (curStep.status === "running" || curStep.status === "failed")) {
+        curStep.status = "pending";
+      }
+      activePlan.status = "running";
+      await persistPlanCheckpoint(activePlan);
       renderTaskPlanUI();
+      if (!planLoopRunning) {
+        runPlanLoop();
+      }
     }
   };
 }
 
 if ($("planSkipBtn")) {
-  $("planSkipBtn").onclick = () => {
+  $("planSkipBtn").onclick = async () => {
     if (!activePlan || activePlan.currentStepIndex >= activePlan.steps.length) return;
+    planRunToken++;
+    planLoopRunning = false;
+    isPlanPaused = false;
     const st = activePlan.steps[activePlan.currentStepIndex];
     st.status = "skipped";
     activePlan.currentStepIndex++;
+    activePlan.status = "running";
+    pendingApprovalStep = null;
     if ($("consequentialApprovalCard")) $("consequentialApprovalCard").hidden = true;
+    if ($("planRetryBtn")) $("planRetryBtn").hidden = true;
+    await persistPlanCheckpoint(activePlan);
     renderTaskPlanUI();
     runPlanLoop();
   };
@@ -6631,11 +7066,14 @@ if ($("planSkipBtn")) {
 if ($("planStopBtn")) {
   $("planStopBtn").onclick = () => {
     if (!activePlan) return;
+    planRunToken++;
+    planLoopRunning = false;
     activePlan.status = "cancelled";
     isPlanPaused = false;
+    pendingApprovalStep = null;
     if ($("consequentialApprovalCard")) $("consequentialApprovalCard").hidden = true;
     if ($("planRetryBtn")) $("planRetryBtn").hidden = true;
-    chrome.storage.local.remove(["savedCheckpoint", "ai_buddy_active_plan"]).catch(() => {});
+    clearPlanCheckpoints();
     renderTaskPlanUI();
     setRigEmotion("idle", "Stopped");
     appendHistory("buddy", "⏹️ Multi-action execution plan stopped by user.");
@@ -6643,12 +7081,24 @@ if ($("planStopBtn")) {
 }
 
 if ($("planRetryBtn")) {
-  $("planRetryBtn").onclick = () => {
+  $("planRetryBtn").onclick = async () => {
     if (!activePlan) return;
+    planRunToken++;
+    planLoopRunning = false;
+    isPlanPaused = false;
     const st = activePlan.steps[activePlan.currentStepIndex];
-    if (st) st.status = "pending";
+    if (st) {
+      st.status = "pending";
+      st.error = undefined;
+      st.retryCount = (st.retryCount || 0) + 1;
+      st.locatorStrategyIndex = st.retryCount;
+      // Clear stale selector so alternate locator strategies run fresh against live DOM
+      st.selector = undefined;
+      st.resolvedSelector = undefined;
+    }
     activePlan.status = "running";
     if ($("planRetryBtn")) $("planRetryBtn").hidden = true;
+    await persistPlanCheckpoint(activePlan);
     renderTaskPlanUI();
     runPlanLoop();
   };
@@ -6657,24 +7107,30 @@ if ($("planRetryBtn")) {
 if ($("approveConsequentialBtn")) {
   $("approveConsequentialBtn").onclick = async () => {
     if (!pendingApprovalStep || !activePlan) return;
+    planRunToken++;
+    planLoopRunning = false;
     if ($("consequentialApprovalCard")) $("consequentialApprovalCard").hidden = true;
     pendingApprovalStep.requiresApproval = false;
     pendingApprovalStep.status = "pending";
     pendingApprovalStep = null;
     activePlan.status = "running";
+    await persistPlanCheckpoint(activePlan);
     renderTaskPlanUI();
     await runPlanLoop();
   };
 }
 
 if ($("rejectConsequentialBtn")) {
-  $("rejectConsequentialBtn").onclick = () => {
+  $("rejectConsequentialBtn").onclick = async () => {
     if (!pendingApprovalStep || !activePlan) return;
+    planRunToken++;
+    planLoopRunning = false;
     if ($("consequentialApprovalCard")) $("consequentialApprovalCard").hidden = true;
     pendingApprovalStep.status = "skipped";
     pendingApprovalStep = null;
     activePlan.currentStepIndex++;
     activePlan.status = "running";
+    await persistPlanCheckpoint(activePlan);
     renderTaskPlanUI();
     runPlanLoop();
   };
@@ -6799,10 +7255,33 @@ if ($("confirmApproveBtn")) {
         action: actionToRun.type,
         selector: actionToRun.selector,
         value: actionToRun.value,
+        options: {
+          candidateIndex: actionToRun.candidateIndex,
+          fallbackSelector: actionToRun.fallbackSelector,
+        },
       });
 
-      if (res?.ok) {
+      if (res?.ambiguous && Array.isArray(res.candidates) && res.candidates.length > 1) {
+        const active = getActiveBuddy();
+        const isHindi = active?.defaultLanguage !== "english";
+        pendingDisambiguation = {
+          action: res.action || actionToRun.type || "click",
+          target: actionToRun.text || actionToRun.value || "element",
+          candidates: res.candidates,
+        };
+        const listText = res.candidates
+          .map((c) => `${c.index}. "${c.text}"${c.context ? ` — [${c.context}]` : ` (${c.tag})`}`)
+          .join("\n");
+        const askMsg = isHindi
+          ? `🤔 "${pendingDisambiguation.target}" ke ${res.candidates.length} controls mile:\n${listText}\nKaunsa chahiye? (1-${res.candidates.length})`
+          : `🤔 Found ${res.candidates.length} controls matching "${pendingDisambiguation.target}":\n${listText}\nWhich one should I pick? (1-${res.candidates.length})`;
+        setRigEmotion("confused", "Which one?");
+        $("statusText").textContent = askMsg;
+        appendHistory("buddy", askMsg);
+        speakResponse(askMsg, "confused");
+      } else if (res?.ok) {
         const hasErrFb = Boolean(res.hasErrorFeedback);
+        if (res.stateChange === "navigated") lastHighlightSelector = null;
         setRigEmotion(hasErrFb ? "concerned" : "happy", hasErrFb ? "Notice" : "Done");
         let doneText = res.message || "Action finished successfully.";
         if (Array.isArray(res.pageFeedback) && res.pageFeedback.length > 0 && !doneText.includes(res.pageFeedback[0])) {
@@ -6856,7 +7335,7 @@ if ($("connectBtn")) {
         if (!t.url) continue;
         try {
           const u = new URL(t.url);
-          if (u.hostname.includes("aistudio.google.com") || u.hostname.includes(LEGACY_BROKEN_HOST)) {
+          if (u.hostname.includes("aistudio.google.com")) {
             continue;
           }
           if (t.title?.includes("AI Buddy") || t.title?.includes("your-ai-companion")) {
@@ -7115,21 +7594,44 @@ if ($("resumeSavedTaskBtn")) {
     if (card) card.hidden = true;
     switchTab("chat");
 
-    if (ai_buddy_active_plan && Array.isArray(ai_buddy_active_plan.steps) && ai_buddy_active_plan.steps.length > 0) {
-      activePlan = ai_buddy_active_plan;
+    const sourcePlan =
+      ai_buddy_active_plan &&
+      Array.isArray(ai_buddy_active_plan.steps) &&
+      ai_buddy_active_plan.steps.length > 0 &&
+      ai_buddy_active_plan.status !== "completed" &&
+      ai_buddy_active_plan.status !== "cancelled"
+        ? ai_buddy_active_plan
+        : savedCheckpoint &&
+            Array.isArray(savedCheckpoint.steps) &&
+            savedCheckpoint.steps.length > 0 &&
+            savedCheckpoint.status !== "completed" &&
+            savedCheckpoint.status !== "cancelled"
+          ? savedCheckpoint
+          : null;
+
+    if (sourcePlan) {
+      planRunToken++;
+      planLoopRunning = false;
+      activePlan = sourcePlan;
+      if (!Array.isArray(activePlan.extractedData)) activePlan.extractedData = [];
       isPlanPaused = false;
       pendingApprovalStep = null;
-      const curStep = activePlan.steps[activePlan.currentStepIndex];
+      const idx = Math.min(Math.max(0, activePlan.currentStepIndex || 0), activePlan.steps.length - 1);
+      activePlan.currentStepIndex = idx;
+      const curStep = activePlan.steps[idx];
       if (curStep && (curStep.status === "failed" || curStep.status === "running")) {
         curStep.status = "pending";
+        curStep.selector = undefined;
       }
       activePlan.status = "running";
+      if ($("planRetryBtn")) $("planRetryBtn").hidden = true;
       appendHistory(
         "buddy",
-        `▶️ Resuming task: "${activePlan.title}". Continuing from step ${activePlan.currentStepIndex + 1} of ${activePlan.steps.length}.`,
+        `▶️ Resuming task: "${activePlan.title}". Continuing from step ${idx + 1} of ${activePlan.steps.length}.`,
       );
       setRigEmotion("working", "Resuming");
       renderTaskPlanUI();
+      if (activePlan.extractedData.length > 0) renderExtractedDataUI();
       await runPlanLoop();
     } else if (savedCheckpoint?.originalInstruction || savedCheckpoint?.title) {
       await startMultiActionPlan(savedCheckpoint.originalInstruction || savedCheckpoint.title, true);
@@ -7487,7 +7989,11 @@ function updateProviderNoticeUI(providerId) {
 async function selectProvider(providerId) {
   if (!providerId) return;
   selectedProvider = providerId;
-  warnedMissingProviders.delete(providerId);
+  for (const key of [...warnedMissingProviders]) {
+    if (key === providerId || key.startsWith(`${providerId}:`)) {
+      warnedMissingProviders.delete(key);
+    }
+  }
   await chrome.storage.local.set({ selectedProvider: providerId });
   if ($("providerSelector")) {
     $("providerSelector").value = providerId;
@@ -7793,10 +8299,7 @@ async function loadSettingsTab() {
       : "Guest mode (All 16 specialist buddies ready offline). Connect for cloud memory.";
   }
   if ($("settingsApiBaseInput")) {
-    let resolved = session?.apiBase || lastBase;
-    if (resolved && resolved.includes(LEGACY_BROKEN_HOST)) {
-      resolved = DEFAULT_BASE;
-    }
+    const resolved = session?.apiBase || lastBase;
     $("settingsApiBaseInput").value = resolved || DEFAULT_BASE;
   }
   if ($("settingsApiKeyInput")) {
@@ -7819,6 +8322,7 @@ if ($("settingsSaveApiKeyBtn")) {
   $("settingsSaveApiKeyBtn").onclick = async () => {
     const val = $("settingsApiKeyInput")?.value?.trim() || "";
     await chrome.storage.local.set({ userApiKey: val });
+    warnedMissingProviders.clear();
     loadModelHubStatus();
     if ($("settingsApiKeyFeedback")) {
       $("settingsApiKeyFeedback").textContent = val
@@ -7883,7 +8387,6 @@ if ($("settingsDetectHostBtn")) {
           if (
             u.protocol.startsWith("http") &&
             !u.hostname.includes("aistudio.google.com") &&
-            !u.hostname.includes(LEGACY_BROKEN_HOST) &&
             isBuddyTab
           ) {
             if (t.title?.includes("AI Buddy")) candidates.unshift(u.origin);
