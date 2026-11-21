@@ -718,6 +718,9 @@ export function SiteFooter() {
           <Link to="/download" className="hover:text-foreground">
             Download
           </Link>
+          <Link to="/verification" className="hover:text-foreground">
+            Verification
+          </Link>
           <Link to="/auth" className="hover:text-foreground">
             Sign in
           </Link>

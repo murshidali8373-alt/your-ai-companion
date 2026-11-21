@@ -1,7 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { AlertTriangle, Send, Stethoscope, Trash2, Globe, Cpu, Sparkles } from "lucide-react";
+import {
+  AlertTriangle,
+  ClipboardCheck,
+  Cpu,
+  Globe,
+  Send,
+  Sparkles,
+  Stethoscope,
+  Trash2,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -12,6 +21,7 @@ import { VoiceBar } from "@/components/voice-bar";
 import { AiModelHub } from "@/components/ai-model-hub";
 import { WebpageInspector } from "@/components/webpage-inspector";
 import { BuddyEmotionControlPanel } from "@/components/buddy-emotion-control-panel";
+import { VerificationDashboard } from "@/components/verification-dashboard";
 import { useBuddyStateManager, BUDDY_EMOTION_STATES } from "@/hooks/use-buddy-state-manager";
 import { SingleSpeaker } from "@/shared/voice-turn";
 import { Badge } from "@/components/ui/badge";
@@ -97,7 +107,9 @@ function Dashboard() {
     buddy.setEmotion(BUDDY_EMOTION_STATES.IDLE, { reason: "Conversation reset" });
   }, [buddy]);
 
-  const [activeTab, setActiveTab] = useState<"stage" | "hub" | "inspector" | "emotions">("stage");
+  const [activeTab, setActiveTab] = useState<
+    "stage" | "hub" | "inspector" | "emotions" | "verification"
+  >("stage");
   const [selectedModelId, setSelectedModelId] = useState<string>("gemini-3.8-flash");
 
   useEffect(() => {
@@ -293,6 +305,15 @@ function Dashboard() {
             <Globe className="h-3.5 w-3.5" />
             Webpage Assistant
           </Button>
+          <Button
+            variant={activeTab === "verification" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setActiveTab("verification")}
+            className="h-8 text-xs font-medium gap-1.5"
+          >
+            <ClipboardCheck className="h-3.5 w-3.5" />
+            Verification
+          </Button>
         </div>
 
         <div className="flex items-center gap-2">
@@ -325,6 +346,8 @@ function Dashboard() {
       )}
 
       {activeTab === "inspector" && <WebpageInspector activeModelId={selectedModelId} />}
+
+      {activeTab === "verification" && <VerificationDashboard />}
 
       {activeTab === "stage" && (
         <>

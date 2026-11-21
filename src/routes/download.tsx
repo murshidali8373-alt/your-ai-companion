@@ -122,6 +122,9 @@ function Download() {
               <Link to="/connect">Connect Extension (/connect)</Link>
             </Button>
             <Button asChild variant="outline">
+              <Link to="/verification">Verification Dashboard</Link>
+            </Button>
+            <Button asChild variant="outline">
               <Link to="/auth">Sign in with Email</Link>
             </Button>
           </div>
