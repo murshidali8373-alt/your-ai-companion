@@ -43,6 +43,13 @@ import { can, type PermissionLevel } from "@/shared/permissions";
 import { permissionDeniedMessage } from "@/shared/permissions";
 import { checkUrl } from "@/shared/restricted-url";
 
+import {
+  runUnifiedOrchestrator,
+  reportExecutionError,
+  type OrchestrationMetadata,
+} from "./engines/unified-orchestrator";
+import type { TaskSessionContext } from "@/shared/task-context";
+
 export const DAILY_REQUEST_LIMIT = 300;
 
 type Db = SupabaseClient<Database>;
@@ -72,6 +79,8 @@ export interface AskInput {
     activeElementLabel?: string | null;
     recentFields?: string[];
   } | null;
+  sessionContext?: TaskSessionContext | null;
+  activeTabId?: number | null;
 }
 
 function sanitizeTextForPrompt(raw: string): string {
@@ -103,13 +112,14 @@ async function callGeminiWithScreenshot(params: {
     httpOptions: { headers: { "User-Agent": "aistudio-build" } },
   });
   const cleanData = params.screenshotBase64.replace(/^data:image\/[^;]+;base64,/, "");
-  const defaultModels = ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
+  const defaultModels = ["gemini-4-hydrogen", "gemini-3.1-flash-lite"];
   const models =
     params.strictModel && params.preferredModel && params.preferredModel !== "auto"
       ? [params.preferredModel]
       : params.preferredModel && params.preferredModel !== "auto"
         ? [params.preferredModel, ...defaultModels.filter((m) => m !== params.preferredModel)]
         : defaultModels;
+  const visualPrompt = `${params.userText}\n\n[VISUAL INTELLIGENCE INSPECTION]\nInspect the visible screenshot carefully for:\n1) Primary visible buttons/controls and labels.\n2) Any blocking modals, cookie/promo overlays, or confirmation dialogs.\n3) Loading spinners, skeleton placeholders, or disabled submit controls.\n4) Inline validation warnings or unexpected visual UI changes.\nGround your reply strictly in what is visibly shown; never invent elements not seen.`;
   let lastError: unknown = null;
   for (const model of models) {
     try {
@@ -118,7 +128,7 @@ async function callGeminiWithScreenshot(params: {
         contents: {
           parts: [
             { inlineData: { mimeType: "image/jpeg", data: cleanData } },
-            { text: params.userText },
+            { text: visualPrompt },
           ],
         },
         config: { systemInstruction: params.system },
@@ -198,6 +208,14 @@ export interface AskOutput {
   providerWarning?: ProviderWarningInfo | null;
   providerFailure?: ProviderFailureInfo | null;
   recommendedMode?: BuddyModeRecommendation | null;
+  orchestration?: OrchestrationMetadata | null;
+  sessionContext?: TaskSessionContext | null;
+  selfHealing?: {
+    reportId: string;
+    fingerprint: string;
+    attribution: string;
+    recoveryStrategy: string;
+  } | null;
 }
 
 function buildProviderFailureDetails(params: {
@@ -1173,8 +1191,49 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
   const historyBlock = input.history?.length
     ? `\n\nRECENT CONVERSATION:\n${input.history.map((h) => `${h.role === "user" ? "USER" : persona.name}: ${sanitizeTextForPrompt(h.content)}`).join("\n\n")}`
     : "";
-  const user = `${pageContext}${docSummaryBlock}${actionContextBlock}${historyBlock}\n\nUSER (${input.source}): ${sanitizeTextForPrompt(question)}`;
-  await event(db, taskId, userId, "understand", `Context ~${estimateTokens(user)} tokens`);
+
+  const unifiedResult = await runUnifiedOrchestrator({
+    instruction: question,
+    intentHint: input.intent,
+    snapshot: safeSnapshot,
+    history: input.history,
+    buddySlug: persona.slug,
+    customBuddyId: input.customBuddyId,
+    permissionLevel: permission,
+    privacyMode,
+    activeTabId: input.activeTabId,
+    sessionContext: input.sessionContext,
+    uploadedDocumentSummary: input.uploadedDocumentSummary,
+    actionContext: input.actionContext,
+    userMemories: memories.map((m, idx) => ({
+      id: `mem_${idx}`,
+      kind: "long_term_fact" as const,
+      key: m.key,
+      value: m.value,
+      updatedAt: new Date().toISOString(),
+    })),
+    hasVision: !isGeneralChat && Boolean(input.screenshotBase64),
+  });
+
+  const orchestrationHintParts: string[] = [];
+  if (unifiedResult.blockedByCapability) {
+    orchestrationHintParts.push(`CAPABILITY NOTICE: ${unifiedResult.blockedByCapability.reason}`);
+  }
+  if (!isGeneralChat && unifiedResult.engineInsightsBlock) {
+    orchestrationHintParts.push(`ENGINE INSIGHTS:\n${unifiedResult.engineInsightsBlock}`);
+  }
+  const orchestrationHintBlock = orchestrationHintParts.length
+    ? `\n\n${orchestrationHintParts.join("\n")}`
+    : "";
+
+  const user = `${pageContext}${docSummaryBlock}${actionContextBlock}${orchestrationHintBlock}${historyBlock}\n\nUSER (${input.source}): ${sanitizeTextForPrompt(question)}`;
+  await event(
+    db,
+    taskId,
+    userId,
+    "understand",
+    `Context ~${estimateTokens(user)} tokens [${unifiedResult.orchestration.path}]`,
+  );
 
   const recommendedMode = recommendSpecialistBuddy({
     question,
@@ -1351,6 +1410,8 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       providerWarning: effectiveRuntimeWarning,
       providerFailure: null,
       recommendedMode,
+      orchestration: unifiedResult.orchestration,
+      sessionContext: unifiedResult.sessionContext,
     };
   } catch (error) {
     const aiError =
@@ -1359,6 +1420,16 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
         : new AiError("outage", "Something went wrong on my side. Try once more.", {
             cause: error,
           });
+    const shRecord = reportExecutionError(
+      {
+        component: "ai_provider",
+        error: aiError,
+        taskId: taskId ?? undefined,
+        currentOperation: "buddy_ask_inference",
+        pageUrl: input.snapshot?.url,
+      },
+      unifiedResult.sessionContext,
+    );
     await event(db, taskId, userId, "recover", `${aiError.kind}: ${aiError.userMessage}`);
     if (taskId) {
       await db
@@ -1397,6 +1468,14 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
         providerWarning: failureDetails.providerWarning,
         providerFailure: failureDetails.providerFailure,
         recommendedMode,
+        orchestration: unifiedResult.orchestration,
+        sessionContext: unifiedResult.sessionContext,
+        selfHealing: {
+          reportId: shRecord.report.id,
+          fingerprint: shRecord.report.fingerprint,
+          attribution: shRecord.report.attribution,
+          recoveryStrategy: shRecord.recovery.strategy,
+        },
       };
     }
 
@@ -1427,6 +1506,14 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       providerWarning: failureDetails.providerWarning,
       providerFailure: failureDetails.providerFailure,
       recommendedMode,
+      orchestration: unifiedResult.orchestration,
+      sessionContext: unifiedResult.sessionContext,
+      selfHealing: {
+        reportId: shRecord.report.id,
+        fingerprint: shRecord.report.fingerprint,
+        attribution: shRecord.report.attribution,
+        recoveryStrategy: shRecord.recovery.strategy,
+      },
     };
   }
 }
@@ -1566,7 +1653,35 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
   const historyBlock = input.history?.length
     ? `\n\nRECENT CONVERSATION:\n${input.history.map((h) => `${h.role === "user" ? "USER" : persona.name}: ${sanitizeTextForPrompt(h.content)}`).join("\n\n")}`
     : "";
-  const user = `${pageContext}${docSummaryBlock}${actionContextBlock}${historyBlock}\n\nUSER (${input.source}): ${sanitizeTextForPrompt(question)}`;
+
+  const unifiedResult = await runUnifiedOrchestrator({
+    instruction: question,
+    intentHint: input.intent,
+    snapshot: safeSnapshot,
+    history: input.history,
+    buddySlug: persona.slug,
+    customBuddyId: input.customBuddyId,
+    permissionLevel: permission,
+    privacyMode: true,
+    activeTabId: input.activeTabId,
+    sessionContext: input.sessionContext,
+    uploadedDocumentSummary: input.uploadedDocumentSummary,
+    actionContext: input.actionContext,
+    hasVision: !isGeneralChat && Boolean(input.screenshotBase64),
+  });
+
+  const orchestrationHintParts: string[] = [];
+  if (unifiedResult.blockedByCapability) {
+    orchestrationHintParts.push(`CAPABILITY NOTICE: ${unifiedResult.blockedByCapability.reason}`);
+  }
+  if (!isGeneralChat && unifiedResult.engineInsightsBlock) {
+    orchestrationHintParts.push(`ENGINE INSIGHTS:\n${unifiedResult.engineInsightsBlock}`);
+  }
+  const orchestrationHintBlock = orchestrationHintParts.length
+    ? `\n\n${orchestrationHintParts.join("\n")}`
+    : "";
+
+  const user = `${pageContext}${docSummaryBlock}${actionContextBlock}${orchestrationHintBlock}${historyBlock}\n\nUSER (${input.source}): ${sanitizeTextForPrompt(question)}`;
 
   const recommendedMode = recommendSpecialistBuddy({
     question,
@@ -1708,6 +1823,8 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
       providerWarning: effectiveRuntimeWarning,
       providerFailure: null,
       recommendedMode,
+      orchestration: unifiedResult.orchestration,
+      sessionContext: unifiedResult.sessionContext,
     };
   } catch (error) {
     const aiError =
@@ -1716,6 +1833,15 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
         : new AiError("outage", "Something went wrong on my side. Try once more.", {
             cause: error,
           });
+    const shRecord = reportExecutionError(
+      {
+        component: "ai_provider",
+        error: aiError,
+        currentOperation: "buddy_ask_guest_inference",
+        pageUrl: input.snapshot?.url,
+      },
+      unifiedResult.sessionContext,
+    );
     const failureDetails = buildProviderFailureDetails({
       aiError,
       effectiveProvider: routingDecision.effectiveProvider,
@@ -1747,6 +1873,14 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
         providerWarning: failureDetails.providerWarning,
         providerFailure: failureDetails.providerFailure,
         recommendedMode,
+        orchestration: unifiedResult.orchestration,
+        sessionContext: unifiedResult.sessionContext,
+        selfHealing: {
+          reportId: shRecord.report.id,
+          fingerprint: shRecord.report.fingerprint,
+          attribution: shRecord.report.attribution,
+          recoveryStrategy: shRecord.recovery.strategy,
+        },
       };
     }
 
@@ -1777,6 +1911,14 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
       providerWarning: failureDetails.providerWarning,
       providerFailure: failureDetails.providerFailure,
       recommendedMode,
+      orchestration: unifiedResult.orchestration,
+      sessionContext: unifiedResult.sessionContext,
+      selfHealing: {
+        reportId: shRecord.report.id,
+        fingerprint: shRecord.report.fingerprint,
+        attribution: shRecord.report.attribution,
+        recoveryStrategy: shRecord.recovery.strategy,
+      },
     };
   }
 }

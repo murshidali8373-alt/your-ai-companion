@@ -262,3 +262,60 @@ export function compareActionStates(
     verified: mutated,
   };
 }
+
+export interface ClosedLoopRecoveryDecision {
+  action:
+    | "retry_with_alternate_locator"
+    | "re_inspect_dom"
+    | "visual_coordinate_fallback"
+    | "ask_user"
+    | "report_bug";
+  reason: string;
+  shouldRetry: boolean;
+}
+
+/**
+ * Closed-loop execution recovery selector: picks bounded recovery steps after failed DOM action.
+ */
+export function evaluateClosedLoopRecovery(params: {
+  attempt: number;
+  maxRetries: number;
+  errorMessage: string;
+  hasAlternateLocator: boolean;
+  hasScreenshotFallback: boolean;
+}): ClosedLoopRecoveryDecision {
+  const msg = params.errorMessage.toLowerCase();
+  if (/restricted|permission|password|otp|payment|sensitive/.test(msg)) {
+    return {
+      action: "ask_user",
+      reason: "Blocked by security or permission gate; cannot auto-retry.",
+      shouldRetry: false,
+    };
+  }
+  if (params.attempt >= params.maxRetries) {
+    if (params.hasScreenshotFallback) {
+      return {
+        action: "visual_coordinate_fallback",
+        reason: "DOM retries exhausted; escalating to screenshot visual targeting.",
+        shouldRetry: true,
+      };
+    }
+    return {
+      action: /syntax|selector|cannot read|undefined is not/.test(msg) ? "report_bug" : "ask_user",
+      reason: "Bounded retry budget exhausted.",
+      shouldRetry: false,
+    };
+  }
+  if (params.hasAlternateLocator) {
+    return {
+      action: "retry_with_alternate_locator",
+      reason: "Retrying with next semantic/alternate locator candidate.",
+      shouldRetry: true,
+    };
+  }
+  return {
+    action: "re_inspect_dom",
+    reason: "Re-capturing fresh DOM snapshot before retrying.",
+    shouldRetry: true,
+  };
+}

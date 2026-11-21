@@ -58,6 +58,7 @@ export interface SemanticMatchResult {
   element: SnapshotElement;
   confidence: number;
   matchReason: string;
+  ambiguousCandidates?: Array<{ name: string; selector: string; role: string }>;
 }
 
 export interface DynamicMutationSummary {
@@ -173,41 +174,65 @@ export function findSemanticTarget(
   const q = query.toLowerCase().trim();
   if (!q) return null;
 
-  const elements = Array.from(page.elementIndex.values());
-  let bestMatch: SemanticMatchResult | null = null;
+  const seen = new Set<SnapshotElement>();
+  const elements: SnapshotElement[] = [];
+  for (const el of page.elementIndex.values()) {
+    if (!seen.has(el)) {
+      seen.add(el);
+      elements.push(el);
+    }
+  }
+
+  const scored: SemanticMatchResult[] = [];
+  const tokens = q.split(/\s+/).filter((t) => t.length > 2);
 
   for (const el of elements) {
     let score = 0;
     const nameLower = (el.name || "").toLowerCase();
+    const ariaLower = (el.ariaLabel || "").toLowerCase();
     const roleLower = (el.role || "").toLowerCase();
     const placeholderLower = (el.placeholder || "").toLowerCase();
+    const titleLower = (el.title || "").toLowerCase();
     const selectorLower = (el.selector || "").toLowerCase();
 
-    // Exact matches
-    if (nameLower === q) score += 50;
-    else if (nameLower.includes(q)) score += 30;
+    if (nameLower === q || ariaLower === q) score += 55;
+    else if (nameLower.includes(q) || ariaLower.includes(q)) score += 32;
 
-    if (placeholderLower && placeholderLower.includes(q)) score += 25;
+    if (placeholderLower === q) score += 40;
+    else if (placeholderLower && placeholderLower.includes(q)) score += 25;
+
+    if (titleLower && titleLower.includes(q)) score += 18;
     if (selectorLower.includes(q.replace(/\s+/g, "-"))) score += 15;
+    if (selectorLower.includes(">>>")) score += 4;
 
-    // Token overlap
-    const tokens = q.split(/\s+/).filter((t) => t.length > 2);
     for (const token of tokens) {
       if (nameLower.includes(token)) score += 10;
+      if (ariaLower.includes(token)) score += 9;
       if (placeholderLower.includes(token)) score += 8;
       if (roleLower.includes(token)) score += 5;
     }
 
-    if (score > (bestMatch?.confidence ?? 0)) {
-      bestMatch = {
+    if (score >= 15) {
+      scored.push({
         element: el,
         confidence: score,
-        matchReason: `Matched on ${nameLower ? `name "${el.name}"` : `role "${el.role}"`}`,
-      };
+        matchReason: `Matched via ${nameLower ? `name "${el.name}"` : ariaLower ? `aria "${el.ariaLabel}"` : `role "${el.role}"`}${el.selector.includes(">>>") ? " (Shadow DOM)" : ""}`,
+      });
     }
   }
 
-  return bestMatch && bestMatch.confidence >= 15 ? bestMatch : null;
+  if (scored.length === 0) return null;
+  scored.sort((a, b) => b.confidence - a.confidence);
+  const top = scored[0]!;
+  const closeTies = scored.filter((s) => s.confidence >= top.confidence - 5);
+  if (closeTies.length > 1) {
+    top.ambiguousCandidates = closeTies.slice(0, 4).map((c) => ({
+      name: c.element.name || c.element.placeholder || c.element.role,
+      selector: c.element.selector,
+      role: c.element.role,
+    }));
+  }
+  return top;
 }
 
 /**
@@ -401,5 +426,114 @@ export function detectDynamicInfiniteScroll(
     infiniteScrolled,
     newItemsCount,
     previousItemsCount: beforeCount,
+  };
+}
+
+export interface VisualUiStateSummary {
+  isLoading: boolean;
+  hasBlockingModal: boolean;
+  disabledSubmitCount: number;
+  invalidFieldCount: number;
+  warnings: string[];
+}
+
+/**
+ * Inspects snapshot for loading indicators, blocking overlays, disabled submits, and invalid fields.
+ */
+export function detectVisualUiState(snapshot: PageSnapshot): VisualUiStateSummary {
+  const modal = detectModalDialog(snapshot);
+  const explicitModals = snapshot.modals ?? [];
+  const hasBlockingModal = modal.isBlocking || explicitModals.some((m) => m.isBlocking);
+  const loadingIndicators = snapshot.loadingIndicators ?? [];
+  const disabledSubmits =
+    snapshot.disabledSubmits ??
+    snapshot.controls
+      .filter(
+        (c) =>
+          c.disabled &&
+          c.role === "button" &&
+          /submit|save|checkout|pay|continue|next/i.test(c.name || ""),
+      )
+      .map((c) => c.name || c.selector);
+  const invalidFields = snapshot.forms.filter((f) => f.invalid || Boolean(f.errorMessage));
+
+  const warnings: string[] = [];
+  if (loadingIndicators.length > 0) {
+    warnings.push(`Page appears busy/loading (${loadingIndicators.slice(0, 2).join(", ")}).`);
+  }
+  if (hasBlockingModal) {
+    warnings.push(
+      `Blocking modal/overlay detected: "${modal.modalTitle || explicitModals[0]?.title || "Dialog"}".`,
+    );
+  }
+  if (disabledSubmits.length > 0) {
+    warnings.push(`Disabled submit button(s): ${disabledSubmits.join(", ")}.`);
+  }
+  if (invalidFields.length > 0) {
+    warnings.push(`${invalidFields.length} field(s) have validation errors.`);
+  }
+
+  return {
+    isLoading: loadingIndicators.length > 0,
+    hasBlockingModal,
+    disabledSubmitCount: disabledSubmits.length,
+    invalidFieldCount: invalidFields.length,
+    warnings,
+  };
+}
+
+/**
+ * Compares before and after PageSnapshots cleanly for closed-loop visual + DOM verification.
+ */
+export function compareBeforeAfterStates(
+  before: PageSnapshot,
+  after: PageSnapshot,
+): {
+  changed: boolean;
+  urlChanged: boolean;
+  scrollChanged: boolean;
+  domDelta: number;
+  unexpectedModalAppeared: boolean;
+  newAlerts: string[];
+  summary: string;
+} {
+  const urlChanged = before.url !== after.url;
+  const scrollChanged =
+    (before.pageCompleteness?.scrollTop ?? 0) !== (after.pageCompleteness?.scrollTop ?? 0);
+  const beforeCount = before.controls.length + before.forms.length + before.headings.length;
+  const afterCount = after.controls.length + after.forms.length + after.headings.length;
+  const domDelta = afterCount - beforeCount;
+
+  const beforeAlerts = new Set(before.alerts.map((a) => a.name));
+  const newAlerts = after.alerts.filter((a) => !beforeAlerts.has(a.name)).map((a) => a.name);
+
+  const beforeModal = detectModalDialog(before);
+  const afterModal = detectModalDialog(after);
+  const unexpectedModalAppeared = !beforeModal.hasModal && afterModal.hasModal;
+
+  const textChanged = before.text.slice(0, 1200) !== after.text.slice(0, 1200);
+  const changed =
+    urlChanged ||
+    scrollChanged ||
+    domDelta !== 0 ||
+    textChanged ||
+    newAlerts.length > 0 ||
+    unexpectedModalAppeared;
+
+  const parts: string[] = [];
+  if (urlChanged) parts.push(`navigated to ${after.url}`);
+  if (scrollChanged) parts.push("scroll offset updated");
+  if (domDelta !== 0) parts.push(`DOM elements delta ${domDelta > 0 ? `+${domDelta}` : domDelta}`);
+  if (unexpectedModalAppeared) parts.push(`overlay appeared (${afterModal.modalTitle || "modal"})`);
+  if (newAlerts.length > 0) parts.push(`${newAlerts.length} new alert(s)`);
+
+  return {
+    changed,
+    urlChanged,
+    scrollChanged,
+    domDelta,
+    unexpectedModalAppeared,
+    newAlerts,
+    summary: parts.length > 0 ? parts.join(", ") : "No observable DOM or URL change detected.",
   };
 }

@@ -1,4 +1,28 @@
 import { useState, useCallback, useRef } from "react";
+import type { UndoableFieldRecord } from "@/shared/browser-action";
+
+export interface FormFillErrorItem {
+  selector: string;
+  fieldLabel: string;
+  kind:
+    | "required"
+    | "invalid_email"
+    | "invalid_phone"
+    | "invalid_format"
+    | "invalid_dropdown"
+    | "inline_error"
+    | "server_error"
+    | "disabled_submit";
+  message: string;
+}
+
+export interface FormValidationReport {
+  valid: boolean;
+  errorCount: number;
+  errors: FormFillErrorItem[];
+  disabledSubmits: string[];
+  summary: string;
+}
 
 export interface FieldInteractabilityStatus {
   interactable: boolean;
@@ -50,6 +74,7 @@ export interface FormFillResult {
   preserved: PreservedFieldResult[];
   skipped: SkippedFieldResult[];
   errors: FieldErrorResult[];
+  undoRecords?: UndoableFieldRecord[];
   summary: string;
   pendingSubmission?: PendingSubmissionData | null;
 }
@@ -389,9 +414,28 @@ async function applyValueWithTimedEvents(
     el.isContentEditable ||
     el.getAttribute("contenteditable") === "true" ||
     el.getAttribute("contenteditable") === "" ||
-    el.getAttribute("contenteditable") === "plaintext-only"
+    el.getAttribute("contenteditable") === "plaintext-only" ||
+    el.classList?.contains?.("ProseMirror") ||
+    el.classList?.contains?.("ql-editor") ||
+    el.classList?.contains?.("mce-content-body")
   ) {
-    el.innerText = strVal;
+    // Rich-text editors (ProseMirror, Quill, TinyMCE, generic contenteditable):
+    // Preserve paragraph formatting structure if markup exists, otherwise update text cleanly.
+    const isRichFormatting = /<\/?(p|b|strong|i|em|ul|ol|li|br)>/i.test(strVal);
+    if (isRichFormatting && "innerHTML" in el) {
+      el.innerHTML = strVal;
+    } else if (
+      (el.classList?.contains?.("ProseMirror") || el.classList?.contains?.("ql-editor")) &&
+      "innerHTML" in el &&
+      el.innerHTML?.includes("<p")
+    ) {
+      const escaped = strVal.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      el.innerHTML = `<p>${escaped}</p>`;
+      el.innerText = strVal;
+    } else {
+      el.innerText = strVal;
+      if ("textContent" in el) el.textContent = strVal;
+    }
   } else {
     // Native prototype descriptor setter ensures React / Vue / Angular register the value change
     const isTextarea = el.tagName === "TEXTAREA";
@@ -433,7 +477,7 @@ async function applyValueWithTimedEvents(
       ""
     );
   }
-  return (el as HTMLInputElement).value || el.innerText || "";
+  return (el as HTMLInputElement).value || el.innerText || el.textContent || "";
 }
 
 /**
@@ -515,6 +559,7 @@ export async function executeFormFill(
     preserved: [],
     skipped: [],
     errors: [],
+    undoRecords: [],
     summary: "",
   };
 
@@ -528,7 +573,7 @@ export async function executeFormFill(
   // Query interactable inputs in container
   const allFormElements = [
     ...root.querySelectorAll(
-      'input, textarea, select, [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], [role="combobox"]',
+      'input, textarea, select, [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], .ProseMirror, .ql-editor, .mce-content-body, [role="combobox"], [role="listbox"]',
     ),
   ] as HTMLElement[];
 
@@ -574,7 +619,8 @@ export async function executeFormFill(
     }
 
     // 2. Preservation Check: preserve user value unless overwrite is requested
-    const existingVal = (candidate as HTMLInputElement).value || candidate.innerText || "";
+    const existingVal =
+      (candidate as HTMLInputElement).value || candidate.innerText || candidate.textContent || "";
     if (existingVal.trim() && !opts.overwrite) {
       fillResult.preserved.push({
         key,
@@ -617,6 +663,23 @@ export async function executeFormFill(
       };
 
       fillResult.filled.push(filledItem);
+      fillResult.undoRecords?.push({
+        id: `undo_${Date.now().toString(36)}_${currentIndex}`,
+        selector: candidate.id
+          ? `#${candidate.id}`
+          : `[name="${(candidate as HTMLInputElement).name || key}"]`,
+        fieldLabel: (candidate as HTMLInputElement).name || candidate.id || key,
+        previousValue: existingVal,
+        newValue: verifiedValue,
+        previousChecked:
+          (candidate as HTMLInputElement).type === "checkbox" ||
+          (candidate as HTMLInputElement).type === "radio"
+            ? Boolean((candidate as HTMLInputElement).checked)
+            : undefined,
+        wasSelect: candidate.tagName === "SELECT",
+        wasRichText: Boolean(candidate.isContentEditable),
+        capturedAt: new Date().toISOString(),
+      });
       successfullyFilledElements.push(candidate);
       opts.onFieldFilled?.(filledItem);
 
@@ -802,3 +865,253 @@ export function useFormFiller(initialOptions?: UseFormFillerOptions) {
 }
 
 export default useFormFiller;
+
+/**
+ * Inspects custom dropdowns (React Select, MUI, AntD, ARIA combobox/listbox, native <select>)
+ * and selects one or more options cleanly, verifying the resulting displayed text/value.
+ */
+export async function selectCustomDropdown(
+  triggerEl: HTMLElement,
+  desiredValue: string,
+  container?: HTMLElement | Document,
+): Promise<{ ok: boolean; selectedText: string; framework: string; reason?: string }> {
+  const targetNorm = normalizeId(desiredValue);
+  if (!targetNorm) {
+    return {
+      ok: false,
+      selectedText: "",
+      framework: "unknown",
+      reason: "Empty dropdown option value.",
+    };
+  }
+
+  if (triggerEl.tagName === "SELECT") {
+    const sel = triggerEl as HTMLSelectElement;
+    const match = [...sel.options].find(
+      (o) =>
+        normalizeId(o.value) === targetNorm ||
+        normalizeId(o.text) === targetNorm ||
+        o.text.toLowerCase().includes(desiredValue.toLowerCase()),
+    );
+    if (!match) {
+      return {
+        ok: false,
+        selectedText: sel.value || "",
+        framework: "native_select",
+        reason: `Option "${desiredValue}" not found in select dropdown.`,
+      };
+    }
+    sel.value = match.value;
+    sel.dispatchEvent(new Event("input", { bubbles: true }));
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    return { ok: true, selectedText: match.text || match.value, framework: "native_select" };
+  }
+
+  const root = container || (typeof document !== "undefined" ? document : null);
+  triggerEl.focus?.();
+  triggerEl.click?.();
+  await sleep(45);
+
+  const optionQuery =
+    '[role="option"], [role="menuitem"], .ant-select-item-option, .MuiMenuItem-root, [class*="-option"], li';
+  const candidates = (
+    root && typeof root.querySelectorAll === "function"
+      ? [...root.querySelectorAll(optionQuery)]
+      : []
+  ) as HTMLElement[];
+
+  const matched = candidates.find((opt) => {
+    const txt = (opt.innerText || opt.textContent || "").trim();
+    const norm = normalizeId(txt);
+    return norm === targetNorm || norm.includes(targetNorm);
+  });
+
+  if (!matched) {
+    return {
+      ok: false,
+      selectedText: triggerEl.innerText || (triggerEl as HTMLInputElement).value || "",
+      framework: triggerEl.getAttribute("role") || "custom",
+      reason: `Option "${desiredValue}" was not found after opening dropdown menu.`,
+    };
+  }
+
+  const labelText = (matched.innerText || matched.textContent || desiredValue).trim();
+  matched.click?.();
+  matched.setAttribute?.("aria-selected", "true");
+  triggerEl.setAttribute?.("data-selected-value", labelText);
+  if ("value" in triggerEl) {
+    (triggerEl as HTMLInputElement).value = labelText;
+  } else {
+    triggerEl.innerText = labelText;
+  }
+  triggerEl.dispatchEvent?.(new Event("change", { bubbles: true }));
+
+  const readBack = (
+    triggerEl.getAttribute?.("data-selected-value") ||
+    (triggerEl as HTMLInputElement).value ||
+    triggerEl.innerText ||
+    ""
+  ).trim();
+  const verified =
+    normalizeId(readBack).includes(targetNorm) || normalizeId(readBack) === targetNorm;
+
+  return {
+    ok: verified,
+    selectedText: readBack,
+    framework: triggerEl.getAttribute("role") || "custom_dropdown",
+    reason: verified ? undefined : "Selected value did not persist in dropdown control.",
+  };
+}
+
+/**
+ * Validates form fields for required empty values, invalid email/phone, ARIA errors, and disabled submits.
+ */
+export function validateFormErrors(container?: HTMLElement | Document): FormValidationReport {
+  const root = container || (typeof document !== "undefined" ? document : null);
+  if (!root) {
+    return {
+      valid: true,
+      errorCount: 0,
+      errors: [],
+      disabledSubmits: [],
+      summary: "No DOM container available to inspect.",
+    };
+  }
+
+  const errors: FormFillErrorItem[] = [];
+  const inputs = [
+    ...root.querySelectorAll("input, textarea, select, [role='combobox']"),
+  ] as HTMLElement[];
+
+  for (const el of inputs) {
+    const input = el as HTMLInputElement;
+    const label =
+      input.name || el.id || el.getAttribute("aria-label") || input.placeholder || "Unnamed field";
+    const selector = el.id
+      ? `#${el.id}`
+      : input.name
+        ? `[name="${input.name}"]`
+        : el.tagName.toLowerCase();
+    const val = (input.value || el.innerText || "").trim();
+    const isRequired = Boolean(input.required || el.getAttribute("aria-required") === "true");
+
+    if (isRequired && !val) {
+      errors.push({
+        selector,
+        fieldLabel: label,
+        kind: "required",
+        message: `${label} is required but currently empty.`,
+      });
+      continue;
+    }
+
+    if (val && (input.type === "email" || /email/i.test(label))) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
+        errors.push({
+          selector,
+          fieldLabel: label,
+          kind: "invalid_email",
+          message: `${label} has an invalid email format ("${val}").`,
+        });
+      }
+    }
+
+    if (val && (input.type === "tel" || /phone|mobile/i.test(label))) {
+      const digits = val.replace(/\D/g, "");
+      if (digits.length < 7 || digits.length > 15) {
+        errors.push({
+          selector,
+          fieldLabel: label,
+          kind: "invalid_phone",
+          message: `${label} has an invalid phone number ("${val}").`,
+        });
+      }
+    }
+
+    if (el.getAttribute("aria-invalid") === "true") {
+      errors.push({
+        selector,
+        fieldLabel: label,
+        kind: "inline_error",
+        message: `${label} is marked invalid on the page.`,
+      });
+    }
+  }
+
+  const alertEls = [
+    ...root.querySelectorAll('[role="alert"], .error, .error-message, .invalid-feedback'),
+  ] as HTMLElement[];
+  for (const al of alertEls) {
+    const txt = (al.innerText || al.textContent || "").trim();
+    if (txt) {
+      errors.push({
+        selector: al.id ? `#${al.id}` : "[role='alert']",
+        fieldLabel: "Page alert",
+        kind: "server_error",
+        message: txt,
+      });
+    }
+  }
+
+  const disabledSubmits: string[] = [];
+  const submitBtns = [
+    ...root.querySelectorAll('button[type="submit"], input[type="submit"]'),
+  ] as HTMLButtonElement[];
+  for (const btn of submitBtns) {
+    if (btn.disabled || btn.getAttribute("aria-disabled") === "true") {
+      disabledSubmits.push((btn.innerText || btn.value || "Submit").trim());
+    }
+  }
+
+  const summary =
+    errors.length === 0 && disabledSubmits.length === 0
+      ? "Form passed validation checks with zero errors."
+      : `Found ${errors.length} form validation issue(s)${disabledSubmits.length > 0 ? ` and ${disabledSubmits.length} disabled submit button(s)` : ""}.`;
+
+  return {
+    valid: errors.length === 0 && disabledSubmits.length === 0,
+    errorCount: errors.length,
+    errors,
+    disabledSubmits,
+    summary,
+  };
+}
+
+/**
+ * Updates only the requested field(s) in place without wiping or altering unrelated form fields.
+ */
+export async function applyPartialFormUpdate(
+  updates: Record<string, unknown>,
+  container?: HTMLElement | Document,
+): Promise<FormFillResult> {
+  return executeFormFill(
+    updates,
+    {
+      overwrite: true,
+      requireConfirmationBeforeSubmit: false,
+    },
+    container,
+  );
+}
+
+/**
+ * Restores a single field back to its recorded previous value from an UndoableFieldRecord.
+ */
+export async function restoreFieldFromUndoRecord(
+  record: UndoableFieldRecord,
+  container?: HTMLElement | Document,
+): Promise<{ ok: boolean; restoredValue: string }> {
+  const root = container || (typeof document !== "undefined" ? document : null);
+  if (!root || typeof root.querySelector !== "function") {
+    return { ok: false, restoredValue: "" };
+  }
+  const el = root.querySelector(record.selector) as HTMLElement | null;
+  if (!el) return { ok: false, restoredValue: "" };
+
+  const restored = await applyValueWithTimedEvents(
+    el,
+    record.previousChecked !== undefined ? record.previousChecked : record.previousValue,
+    { eventDelayMs: 10, scrollDelayMs: 10, focusDelayMs: 10 },
+  );
+  return { ok: true, restoredValue: restored };
+}

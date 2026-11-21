@@ -468,9 +468,13 @@ const sessionTaskContext = {
   lastActionType: null,
   lastTargetField: null,
   lastTargetSelector: null,
+  lastTargetRef: null,
   lastOptions: null,
   lastItems: null,
   recentFields: [],
+  undoStack: [],
+  originalTabId: null,
+  openTabs: [],
   lastActionProposal: null,
 };
 const sessionActionLog = [];
@@ -531,7 +535,18 @@ function maybeAutoActivateMic({ reason = "incomplete_command", deferUntilSpeechE
   return true;
 }
 
-function recordTaskContext({ actionType, targetField, targetSelector, options, items, proposal } = {}) {
+function recordTaskContext({
+  actionType,
+  targetField,
+  targetSelector,
+  targetRef,
+  undoRecord,
+  originalTabId,
+  openTabId,
+  options,
+  items,
+  proposal,
+} = {}) {
   if (actionType) sessionTaskContext.lastActionType = actionType;
   if (targetField && targetField !== "__CURRENT__") {
     sessionTaskContext.lastTargetField = targetField;
@@ -541,6 +556,14 @@ function recordTaskContext({ actionType, targetField, targetSelector, options, i
     ].slice(0, 6);
   }
   if (targetSelector !== undefined) sessionTaskContext.lastTargetSelector = targetSelector;
+  if (targetRef !== undefined) sessionTaskContext.lastTargetRef = targetRef;
+  if (undoRecord && undoRecord.selector) {
+    sessionTaskContext.undoStack = [...(sessionTaskContext.undoStack || []), undoRecord].slice(-25);
+  }
+  if (originalTabId !== undefined) sessionTaskContext.originalTabId = originalTabId;
+  if (openTabId !== undefined && !sessionTaskContext.openTabs.includes(openTabId)) {
+    sessionTaskContext.openTabs = [...sessionTaskContext.openTabs, openTabId].slice(-12);
+  }
   if (options !== undefined) sessionTaskContext.lastOptions = options;
   if (items !== undefined) sessionTaskContext.lastItems = items;
   if (proposal !== undefined) sessionTaskContext.lastActionProposal = proposal;
@@ -3220,6 +3243,33 @@ function parseActionIntent(text) {
       }
     }
 
+    // Resume interrupted / paused multi-step plan ("continue from where you stopped", "jahan ruke the wahan se aage badho")
+    if (
+      /^(?:continue\s+from\s+where\s+(?:you|we)\s+stopped|resume\s+(?:task|plan|workflow|from\s+checkpoint)|(?:jahan|jaha)\s+ruke\s+the\s+(?:wahan\s+se\s+)?(?:aage|continue|shuru)\s*(?:karo|kro|(?:kar|kr)\s*do)?|aage\s+continue\s*(?:karo|kro)?)[.!?\s]*$/i.test(
+        lower,
+      )
+    ) {
+      return { type: "RESUME_PLAN" };
+    }
+
+    // Contextual pronoun actions referencing last highlighted/targeted element ("hover over it", "double click this", "right click it", "open it in another tab")
+    const refSel = ctx.session?.lastTargetRef?.selector || ctx.session?.lastTargetSelector || null;
+    const refLabel = ctx.session?.lastTargetRef?.label || ctx.session?.lastTargetField || null;
+    if (refSel || refLabel) {
+      if (/^(?:hover(?:\s+(?:over|on))?\s+(?:it|this|that)|(?:is|us)\s*(?:par|pe|pr)\s+hover\s*(?:karo|kro)?)[.!?\s]*$/i.test(lower)) {
+        return { type: "HOVER", target: refLabel || "__CURRENT__", selector: refSel };
+      }
+      if (/^(?:double[\s-]*click(?:\s+on)?\s+(?:it|this|that)|(?:is|us)\s*(?:par|pe|pr)\s+double[\s-]*click\s*(?:karo|kro)?)[.!?\s]*$/i.test(lower)) {
+        return { type: "DOUBLE_CLICK", target: refLabel || "__CURRENT__", selector: refSel };
+      }
+      if (/^(?:right[\s-]*click(?:\s+on)?\s+(?:it|this|that)|(?:is|us)\s*(?:par|pe|pr)\s+right[\s-]*click\s*(?:karo|kro)?)[.!?\s]*$/i.test(lower)) {
+        return { type: "RIGHT_CLICK", target: refLabel || "__CURRENT__", selector: refSel };
+      }
+      if (/^(?:open\s+(?:it|this|that)\s+in\s+(?:another|a\s+new|new)\s+tab|(?:isko|use)\s+naye\s+tab\s+mein\s+kholo)[.!?\s]*$/i.test(lower)) {
+        return { type: "TAB_ACTION", action: "open_tab", target: refLabel || "__CURRENT__", selector: refSel };
+      }
+    }
+
     // Short affirmative follow-up ("hnn kr do", "haan kar do", "ok kar do", "yes")
     if (
       /^(?:haan|yes|ok|okay|theek\s+hai|thik\s+hai|sahi\s+hai)?\s*(?:kar\s+do|karo|do\s+it|proceed|confirm|chalo)?[.!?\s]*$/i.test(
@@ -3300,6 +3350,42 @@ function parseActionIntent(text) {
     return { type: "HISTORY_NAV", direction: "reload" };
   }
 
+  // 2b-2. UNDO REVERSIBLE ACTION ("undo", "undo last edit", "wapas pehle jaisa karo")
+  if (
+    /^(?:undo(?:\s+(?:last\s+(?:edit|change|fill|action)|that|it|tab|navigation))?|revert\s+last\s+(?:edit|change|field)|wapas\s+pehle\s+jaisa\s*(?:karo|kro|(?:kar|kr)\s*do)?|pichla\s+(?:change|edit)\s+hatao)[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
+    return {
+      type: "UNDO_ACTION",
+      scope: /\b(?:navigation|page\s+nav|history)\b/i.test(lower) ? "navigation" : "field",
+    };
+  }
+
+  // 2b-3. MULTI-TAB ORCHESTRATION ("return to original tab", "open X in another tab", "close this tab")
+  if (
+    /^(?:return\s+to\s+(?:the\s+)?original\s+tab|go\s+back\s+to\s+(?:the\s+)?(?:original|first|previous)\s+tab|(?:original|pehle|pichle)\s+tab\s+(?:par|pe|pr)\s+(?:wapas\s+)?(?:jao|chalo|aao))[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
+    return { type: "TAB_ACTION", action: "return_original" };
+  }
+  const openTabMatch =
+    normStripped.match(/^(?:open|launch)\s+(.+?)\s+in\s+(?:another|a\s+new|new)\s+tab[.!?\s]*$/i) ||
+    normStripped.match(/^(.+?)\s+(?:ko\s+)?(?:naye|new)\s+tab\s+(?:mein|me|main)\s+(?:kholo|khol\s+do|open\s*(?:karo|kro)?)[.!?\s]*$/i);
+  if (openTabMatch?.[1]) {
+    return { type: "TAB_ACTION", action: "open_tab", target: openTabMatch[1].trim() };
+  }
+  if (/^(?:close\s+(?:this|the\s+current)\s+tab|(?:ye|yeh|is|current)\s+tab\s+(?:band|close)\s*(?:karo|kro|(?:kar|kr)\s*do)?)[.!?\s]*$/i.test(lower)) {
+    return { type: "TAB_ACTION", action: "close_tab" };
+  }
+  const switchTabMatch =
+    normStripped.match(/^switch\s+(?:to\s+)?(?:the\s+)?(.+?)\s+tab[.!?\s]*$/i) ||
+    normStripped.match(/^(.+?)\s+tab\s+(?:par|pe|pr)\s+(?:switch|jao)[.!?\s]*$/i);
+  if (switchTabMatch?.[1] && !/^(?:orders?|settings?|history|home)$/i.test(switchTabMatch[1].trim())) {
+    return { type: "TAB_ACTION", action: "switch_tab", target: switchTabMatch[1].trim() };
+  }
+
   // 2c. PAGE INVENTORY ("Is page par kya kya hai") — works locally without AI key
   if (
     /^(?:is\s+page\s+(?:par|pe|pr|mein|me|main)\s+kya\s+(?:kya\s+)?(?:hai|he)|page\s+(?:par|pe|pr|mein|me|main)\s+kya\s+(?:kya\s+)?(?:hai|he)|what\s+is\s+on\s+(?:this\s+)?page|what'?s\s+on\s+(?:this\s+)?page|list\s+(?:page\s+)?(?:elements|fields|buttons|controls))[.!?\s]*$/i.test(
@@ -3330,6 +3416,15 @@ function parseActionIntent(text) {
     return { type: "ACTIVITY_LOG" };
   }
 
+  // 2e-0. VALIDATE FORM ERRORS ("check form errors", "validate form", "form mein errors check karo")
+  if (
+    /^(?:check\s+(?:the\s+)?form\s+errors?|validate\s+(?:the\s+|this\s+)?form|form\s+(?:validate\s*(?:karo|kro|(?:kar|kr)\s*do)?|(?:mein|me)\s+errors?\s+check\s*(?:karo|kro)?))[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
+    return { type: "VALIDATE_FORM" };
+  }
+
   // 2e-0. EXPLAIN PAGE ERRORS / INVALID FIELDS (Strictly separated from FORM_FILL)
   if (
     /(?:analyze|analyse|fix\s*&?\s*explain|explain)\s+.*?\b(?:errors?|alerts?|invalid\s+(?:form\s+)?fields?|issues?)\b/i.test(
@@ -3354,7 +3449,28 @@ function parseActionIntent(text) {
     return { type: "EXPLAIN" };
   }
 
-  // 3. SCROLL (named container, scroll-to-element, or directional)
+  // 3. SMART SCROLLING, PAGINATION & INFINITE SCROLL
+  const infiniteScrollMatch =
+    lower.match(/^(?:keep\s+scrolling|infinite\s+scroll|scroll\s+and\s+(?:load|collect)(?:\s+all)?(?:\s+items)?|(?:neeche|niche)\s+scroll\s+karke\s+(?:sab|saare|all)\s+items?\s+(?:collect|load|nikaalo)\s*(?:karo|kro)?)(?:\s+until\s+(.+))?[.!?\s]*$/i);
+  if (infiniteScrollMatch) {
+    return { type: "INFINITE_SCROLL", targetText: infiniteScrollMatch[1]?.trim() || undefined };
+  }
+
+  const scrollUntilTextMatch =
+    lower.match(/^scroll\s+until\s+(?:you\s+see\s+|the\s+)?["']?(.+?)["']?(?:\s+appears?)?[.!?\s]*$/i) ||
+    lower.match(/^jab\s+tak\s+["']?(.+?)["']?\s+na\s+dikhe\s+scroll\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i);
+  if (scrollUntilTextMatch?.[1]) {
+    return { type: "SCROLL_UNTIL_TEXT", text: scrollUntilTextMatch[1].trim() };
+  }
+
+  const paginateMatch =
+    lower.match(/^(?:go\s+to\s+(?:the\s+)?(last|next)\s+page|(last|aakhri|agle|next)\s+page\s+(?:par|pe|pr)\s+(?:jao|chalo)|(?:go\s+to\s+)?page\s+(\d+)|page\s+(\d+)\s+(?:par|pe|pr)\s+(?:jao|chalo))[.!?\s]*$/i);
+  if (paginateMatch) {
+    const rawPg = (paginateMatch[1] || paginateMatch[2] || paginateMatch[3] || paginateMatch[4] || "next").toLowerCase();
+    const mappedPg = rawPg === "aakhri" ? "last" : rawPg === "agle" ? "next" : rawPg;
+    return { type: "PAGINATE", targetPage: mappedPg };
+  }
+
   const namedContainerScrollMatch =
     lower.match(
       /^(.+?)\s+(?:ko|box\s+ko|area\s+ko|section\s+ko|panel\s+ko)\s+(neeche|niche|upar|left|right|baayein|daayein|down|up)\s+scroll\s*(?:karo|kro|(?:kar|kr)\s*do|karein)?[.!?\s]*$/i,
@@ -3394,7 +3510,7 @@ function parseActionIntent(text) {
   }
 
   if (
-    /^(?:(?:thoda|thoda\s+aur|aur|please|ab)?\s*)?(?:scroll\s+(?:down|up|left|right|to\s+top|top|to\s+bottom|bottom)|(?:neeche|niche|upar|left|right|baayein|daayein)\s+scroll(?:\s*(?:karo|kro|(?:kar|kr)\s*do|karein))?|(?:page\s+ko\s+)?(?:neeche|niche|upar)\s+(?:jao|le\s+jao|(?:kar|kr)o|(?:kar|kr)do)|neeche\s+jao|upar\s+jao|page\s+down|page\s+up|(?:page\s+ke\s+)?(?:last|bottom|end|aakhir)\s+(?:mein|me|par|pr)\s+(?:jao|le\s+jao)|(?:page\s+ke\s+)?(?:top|shuru)\s+(?:mein|me|par|pr)\s+(?:jao|le\s+jao))[.!?\s]*$/i.test(
+    /^(?:(?:thoda|thoda\s+aur|aur|please|ab)?\s*)?(?:scroll\s+(?:down|up|left|right|to\s+top|top|to\s+bottom|bottom)|(?:neeche|niche|upar|left|right|baayein|daayein)\s+scroll(?:\s*(?:karo|kro|(?:kar|kr)\s*do|karein))?|(?:page\s+ko\s+)?(?:neeche|niche|upar)\s+(?:jao|le\s+jao|(?:kar|kr)o|(?:kar|kr)do)|neeche\s+jao|upar\s+jao|page\s+down|page\s+up|(?:page\s+ke\s+)?(?:last|bottom|end|aakhri)\s+(?:mein|me|par|pr)\s+(?:jao|le\s+jao)|(?:page\s+ke\s+)?(?:top|shuru)\s+(?:mein|me|par|pr)\s+(?:jao|le\s+jao))[.!?\s]*$/i.test(
       lower,
     )
   ) {
@@ -3403,8 +3519,80 @@ function parseActionIntent(text) {
     else if (/\b(?:left|baayein|baaye)\b/i.test(lower)) dir = "left";
     else if (/\b(?:right|daayein|daaye)\b/i.test(lower)) dir = "right";
     else if (/\b(?:top|shuru)\b/i.test(lower)) dir = "top";
-    else if (/\b(?:bottom|last|end|aakhir)\b/i.test(lower)) dir = "bottom";
+    else if (/\b(?:bottom|last|end|aakhri)\b/i.test(lower)) dir = "bottom";
     return { type: "SCROLL", direction: dir };
+  }
+
+  // 3a-2. PHASE 2 ELEMENT INTERACTIONS (HOVER, DOUBLE CLICK, RIGHT CLICK, FOCUS, CLEAR FIELD, DRAG & DROP, ORDINAL ITEMS)
+  const hoverMatch =
+    lower.match(/^hover\s+(?:over|on)\s+(?:the\s+)?(.+?)[.!?\s]*$/i) ||
+    lower.match(/^(.+?)\s+(?:par|pe|pr)\s+hover\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i);
+  if (hoverMatch) {
+    const t = (hoverMatch[1] || hoverMatch[2] || "").trim();
+    if (t) return { type: "HOVER", target: t };
+  }
+
+  const dblClickMatch =
+    lower.match(/^double[\s-]*click\s+(?:on\s+)?(?:the\s+)?(.+?)[.!?\s]*$/i) ||
+    lower.match(/^(.+?)\s+(?:par|pe|pr)\s+double[\s-]*click\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i);
+  if (dblClickMatch) {
+    const t = (dblClickMatch[1] || dblClickMatch[2] || "").trim();
+    if (t) return { type: "DOUBLE_CLICK", target: t };
+  }
+
+  const rightClickMatch =
+    lower.match(/^right[\s-]*click\s+(?:on\s+)?(?:the\s+)?(.+?)[.!?\s]*$/i) ||
+    lower.match(/^(.+?)\s+(?:par|pe|pr)\s+right[\s-]*click\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i);
+  if (rightClickMatch) {
+    const t = (rightClickMatch[1] || rightClickMatch[2] || "").trim();
+    if (t) return { type: "RIGHT_CLICK", target: t };
+  }
+
+  const focusMatch =
+    lower.match(/^focus\s+(?:on\s+)?(?:the\s+)?(.+?)[.!?\s]*$/i) ||
+    lower.match(/^(.+?)\s+(?:par|pe|pr)\s+focus\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i);
+  if (focusMatch) {
+    const t = (focusMatch[1] || focusMatch[2] || "").trim();
+    if (t) return { type: "FOCUS", target: t };
+  }
+
+  const clearFieldMatch =
+    lower.match(/^clear\s+(?:the\s+)?(.+?)\s+(?:field|box|input|textbox)[.!?\s]*$/i) ||
+    lower.match(/^(.+?)\s+(?:field|box|input|textbox)\s+(?:clear|saaf|khali)\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i) ||
+    lower.match(/^clear\s+(?:the\s+)?(name|email|phone|mobile|address|search|city|state|pincode)\s*(?:field)?[.!?\s]*$/i);
+  if (clearFieldMatch) {
+    const t = (clearFieldMatch[1] || "").trim();
+    if (t) return { type: "CLEAR_FIELD", target: normalizeFillTarget(t) || t };
+  }
+
+  const dragMatch =
+    normStripped.match(/^drag\s+(?:the\s+)?(.+?)\s+(?:to|onto|into)\s+(?:the\s+)?(.+?)[.!?\s]*$/i) ||
+    normStripped.match(/^(.+?)\s+ko\s+(.+?)\s+(?:mein|me|par|pe|pr)\s+drag\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i);
+  if (dragMatch?.[1] && dragMatch?.[2]) {
+    return { type: "DRAG_AND_DROP", source: dragMatch[1].trim(), target: dragMatch[2].trim() };
+  }
+
+  const ordinalItemMatch =
+    lower.match(/^(?:open|click(?:\s+on)?|select)\s+(?:the\s+)?(1st|2nd|3rd|4th|5th|first|second|third|fourth|fifth|last)\s+(product|listing|item|result|card|row|order)[.!?\s]*$/i) ||
+    lower.match(/^(pehl[aei]|doosr[aei]|dusr[aei]|teesr[aei]|tisr[aei]|chauth[aei]|aakhri)\s+(product|listing|item|result|card|row|order)\s+(?:par\s+click\s*(?:karo|kro|(?:kar|kr)\s*do)?|kholo|open\s*(?:karo|kro)?|select\s*(?:karo|kro)?)[.!?\s]*$/i);
+  if (ordinalItemMatch) {
+    const ordToken = ordinalItemMatch[1].toLowerCase();
+    const kind = ordinalItemMatch[2].toLowerCase();
+    const ordMap = {
+      "1st": 1, first: 1, pehla: 1, pehli: 1, pehle: 1,
+      "2nd": 2, second: 2, doosra: 2, doosri: 2, doosre: 2, dusra: 2, dusri: 2, dusre: 2,
+      "3rd": 3, third: 3, teesra: 3, teesri: 3, teesre: 3, tisra: 3, tisri: 3, tisre: 3,
+      "4th": 4, fourth: 4, chautha: 4, chauthi: 4, chauthe: 4,
+      "5th": 5, fifth: 5,
+      last: -1, aakhri: -1,
+    };
+    const isOpen = /\b(?:open|kholo)\b/i.test(lower);
+    return {
+      type: "ORDINAL_ITEM",
+      index: ordMap[ordToken] ?? 1,
+      targetKind: kind,
+      openAction: isOpen,
+    };
   }
 
   // 3b. NEXT FORM FIELD / FORM INSPECT ("Ab next field mein kya bharna hai?", "Yahan kya fill karna hai?")
@@ -3469,14 +3657,25 @@ function parseActionIntent(text) {
       return { type: "SEARCH_NEED_QUERY", engine: "google" };
     }
 
-    // Retry last failed/unresponsive click with alternate click method
+    // Retry last failed/unresponsive click or try alternate way
     if (
-      ctx?.lastExecutionAttempt &&
-      /^(?:(?:doosre|dusre|alternate|other)\s+(?:method|tareeke|way)\s+(?:se\s+)?(?:try|click)\s*(?:karo|kar\s+do)?|(?:phir\s+se|dobara|again)\s+(?:click|try)\s*(?:karo|kar\s+do)?|try\s+alternate\s+click)[.!?\s]*$/i.test(
+      /^(?:(?:doosre|dusre|alternate|other|try\s+another)\s+(?:method|tareeke|way)(?:\s+se\s+(?:try|click)\s*(?:karo|kar\s+do)?)?|(?:phir\s+se|dobara|again)\s+(?:click|try)\s*(?:karo|kar\s+do)?|try\s+alternate\s+click)[.!?\s]*$/i.test(
         lower,
       )
     ) {
-      return { type: "RETRY_LAST_CLICK", attempt: ctx.lastExecutionAttempt };
+      if (ctx?.lastExecutionAttempt) {
+        return { type: "RETRY_LAST_CLICK", attempt: ctx.lastExecutionAttempt };
+      }
+      if (ctx?.session?.lastTargetRef?.label || ctx?.session?.lastTargetSelector) {
+        return {
+          type: "RETRY_LAST_CLICK",
+          attempt: {
+            action: "click",
+            target: ctx.session.lastTargetRef?.label || "__CURRENT__",
+            selector: ctx.session.lastTargetRef?.selector || ctx.session.lastTargetSelector,
+          },
+        };
+      }
     }
 
     const openWebsiteMatch =
@@ -3696,6 +3895,18 @@ function parseActionIntent(text) {
       noSubmitPrompt: Boolean(fillDetails.hasExplicitNoSubmit),
       useUploadedDocument: Boolean(activeUploadedDocument && !fillDetails.explicitPairs),
     };
+  }
+
+  // 7b. PARTIAL CONVERSATIONAL FIELD / CUSTOM DROPDOWN UPDATE ("change the product color to black", "product color ko black kar do")
+  const partialChangeMatch =
+    normStripped.match(/^(?:change|update|set|modify)\s+(?:the\s+)?(.+?)\s+(?:to|as)\s+["']?(.+?)["']?[.!?\s]*$/i) ||
+    normStripped.match(/^(.+?)\s+(?:ko|ka)\s+["']?(.+?)["']?\s+(?:badal|change|update|set)\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i);
+  if (partialChangeMatch?.[1] && partialChangeMatch?.[2] && !/\b(?:tab|page|buddy|language|mode)\b/i.test(partialChangeMatch[1])) {
+    const pf = normalizeFillTarget(partialChangeMatch[1]) || partialChangeMatch[1].trim();
+    const pv = partialChangeMatch[2].trim();
+    if (pf && pv && !isNonValuePlaceholder(pv)) {
+      return { type: "PARTIAL_UPDATE", targetField: pf, value: pv };
+    }
   }
 
   // 8. SELECT / DROPDOWN COMMAND
@@ -3968,6 +4179,19 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     "RETRY_LAST_CLICK",
     "DOWNLOAD",
     "FORM_FILL",
+    "PARTIAL_UPDATE",
+    "HOVER",
+    "DOUBLE_CLICK",
+    "RIGHT_CLICK",
+    "CLEAR_FIELD",
+    "DRAG_AND_DROP",
+    "SCROLL_UNTIL_TEXT",
+    "INFINITE_SCROLL",
+    "PAGINATE",
+    "UNDO_ACTION",
+    "TAB_ACTION",
+    "ORDINAL_ITEM",
+    "RESUME_PLAN",
   ]);
   if (mutatingIntents.has(intent.type)) {
     const { permissionLevel } = await getPermissionSettings();
@@ -4714,6 +4938,336 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     return true;
   }
 
+  if (intent.type === "RESUME_PLAN") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    if (!activePlan || activePlan.currentStepIndex >= (activePlan.steps?.length || 0)) {
+      const noPlanMsg = isHindi
+        ? "ℹ️ Abhi koi ruka hua multi-step task nahi hai jise resume kiya jaye."
+        : "ℹ️ There is no paused or interrupted multi-step task to resume right now.";
+      appendHistory("buddy", noPlanMsg);
+      $("statusText").textContent = noPlanMsg;
+      return true;
+    }
+    isPlanPaused = false;
+    setRigEmotion("working", "Resuming…");
+    const resumeMsg = isHindi
+      ? `▶️ Jahan task ruka tha (Step ${(activePlan.currentStepIndex || 0) + 1}/${activePlan.steps.length}) wahan se continue kar raha hoon.`
+      : `▶️ Resuming task from step ${(activePlan.currentStepIndex || 0) + 1} of ${activePlan.steps.length}.`;
+    appendHistory("buddy", resumeMsg);
+    await runPlanLoop();
+    return true;
+  }
+
+  if (intent.type === "UNDO_ACTION") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    const lastUndo = sessionTaskContext.undoStack?.length
+      ? sessionTaskContext.undoStack[sessionTaskContext.undoStack.length - 1]
+      : null;
+    if (!lastUndo && intent.scope !== "navigation") {
+      const noneMsg = isHindi
+        ? "ℹ️ Undo karne ke liye abhi koi recent verified edit nahi hai."
+        : "ℹ️ There is no recent verified field edit to undo.";
+      setRigEmotion("idle", "No Undo");
+      appendHistory("buddy", noneMsg);
+      $("statusText").textContent = noneMsg;
+      return true;
+    }
+    setRigEmotion("working", "Undoing…");
+    const res = await sendRuntimeMessage({
+      type: "EXECUTE_ACTION",
+      action: "undo_reversible_action",
+      selector: lastUndo?.selector || undefined,
+      options: { scope: intent.scope || "field", undoRecord: lastUndo },
+    });
+    if (res?.ok) {
+      if (intent.scope !== "navigation" && sessionTaskContext.undoStack.length > 0) {
+        sessionTaskContext.undoStack.pop();
+      }
+      setRigEmotion("happy", "Undone!");
+      const okMsg = isHindi
+        ? `↩️ ${res.message || "Pichla change wapas pehle jaisa kar diya hai."}`
+        : `↩️ ${res.message}`;
+      recordSessionAction(okMsg, "confirmed");
+      appendHistory("buddy", okMsg);
+      $("statusText").textContent = okMsg;
+      speakResponse(okMsg, "happy");
+    } else {
+      setRigEmotion("error", "Undo Failed");
+      const errMsg = res?.message || "Could not undo the last action.";
+      appendHistory("buddy", `⚠️ ${errMsg}`);
+      $("statusText").textContent = errMsg;
+    }
+    return true;
+  }
+
+  if (intent.type === "TAB_ACTION") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    if (intent.action === "return_original") {
+      const origId = sessionTaskContext.originalTabId;
+      if (!origId) {
+        const msg = isHindi
+          ? "ℹ️ Original tab ID record nahi hai — pehle kisi doosre tab mein jaane par yeh track hota hai."
+          : "ℹ️ No original tab recorded yet in this session.";
+        appendHistory("buddy", msg);
+        return true;
+      }
+      const res = await sendRuntimeMessage({ type: "SWITCH_TAB", tabId: origId });
+      const msg = res?.ok
+        ? isHindi
+          ? `🗂️ Original tab ("${res.title || origId}") par wapas aa gaye hain.`
+          : `🗂️ Returned to original tab ("${res.title || origId}").`
+        : res?.message || "Could not return to the original tab.";
+      setRigEmotion(res?.ok ? "happy" : "error", res?.ok ? "Switched" : "Failed");
+      appendHistory("buddy", res?.ok ? msg : `⚠️ ${msg}`);
+      return true;
+    }
+    if (intent.action === "open_tab") {
+      const activeTab = await queryActiveWebTab().catch(() => null);
+      if (activeTab?.id && !sessionTaskContext.originalTabId) {
+        recordTaskContext({ originalTabId: activeTab.id });
+      }
+      let targetUrl = intent.url;
+      if (!targetUrl && /^https?:\/\//i.test(String(intent.target || ""))) {
+        targetUrl = intent.target;
+      } else if (!targetUrl) {
+        const dest = resolveWebsiteDestination(intent.target || "", false);
+        targetUrl = dest?.url;
+      }
+      const res = await sendRuntimeMessage({ type: "OPEN_TAB", url: targetUrl });
+      if (res?.ok && res.tabId) {
+        recordTaskContext({ openTabId: res.tabId });
+      }
+      const msg = res?.ok
+        ? isHindi
+          ? `🗂️ Naya tab khol diya hai (${res.url || targetUrl}). Wapas aane ke liye "return to original tab" bolein.`
+          : `🗂️ Opened in a new tab (${res.url || targetUrl}). Say "return to original tab" anytime.`
+        : res?.message || "Could not open a new tab.";
+      setRigEmotion(res?.ok ? "happy" : "error", res?.ok ? "Tab Opened" : "Blocked");
+      recordSessionAction(msg, res?.ok ? "confirmed" : "failed");
+      appendHistory("buddy", res?.ok ? msg : `⚠️ ${msg}`);
+      return true;
+    }
+    if (intent.action === "close_tab") {
+      const activeTab = await queryActiveWebTab().catch(() => null);
+      const res = await sendRuntimeMessage({ type: "CLOSE_TAB", tabId: activeTab?.id });
+      const msg = res?.ok
+        ? isHindi
+          ? "🗂️ Tab safely band kar diya hai."
+          : "🗂️ Closed the tab safely."
+        : res?.message || "Could not close that tab safely.";
+      setRigEmotion(res?.ok ? "happy" : "concerned", res?.ok ? "Closed" : "Protected");
+      appendHistory("buddy", res?.ok ? msg : `🛡️ ${msg}`);
+      return true;
+    }
+    if (intent.action === "switch_tab") {
+      const tabsRes = await sendRuntimeMessage({ type: "GET_TABS" });
+      const q = String(intent.target || "").toLowerCase();
+      const matched = (tabsRes?.tabs || []).find(
+        (t) => (t.title || "").toLowerCase().includes(q) || (t.url || "").toLowerCase().includes(q),
+      );
+      if (!matched) {
+        appendHistory("buddy", `⚠️ Could not find an open tab matching "${intent.target}".`);
+        return true;
+      }
+      const activeTab = await queryActiveWebTab().catch(() => null);
+      if (activeTab?.id && !sessionTaskContext.originalTabId) {
+        recordTaskContext({ originalTabId: activeTab.id });
+      }
+      const res = await sendRuntimeMessage({ type: "SWITCH_TAB", tabId: matched.id });
+      setRigEmotion(res?.ok ? "happy" : "error", res?.ok ? "Switched" : "Failed");
+      appendHistory("buddy", res?.ok ? `🗂️ Switched to tab "${matched.title}".` : `⚠️ ${res?.message || "Switch failed."}`);
+      return true;
+    }
+  }
+
+  if (intent.type === "VALIDATE_FORM") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    setRigEmotion("thinking", "Validating…");
+    const res = await sendRuntimeMessage({ type: "VALIDATE_FORM_ERRORS" });
+    if (res?.ok) {
+      setRigEmotion(res.valid ? "success" : "concerned", res.valid ? "Valid" : "Issues");
+      const msg = res.valid
+        ? isHindi
+          ? "✅ Form ke sabhi visible fields valid hain!"
+          : "✅ Form validation passed with zero errors!"
+        : `⚠️ ${res.errorCount} validation issue(s):\n${(res.errors || []).map((e) => `• ${e.field}: ${e.message}`).join("\n")}`;
+      appendHistory("buddy", msg);
+      $("statusText").textContent = res.message || msg;
+      speakResponse(msg, res.valid ? "success" : "concerned");
+    } else {
+      setRigEmotion("error", "Failed");
+      appendHistory("buddy", `⚠️ ${res?.message || "Could not validate form on this page."}`);
+    }
+    return true;
+  }
+
+  if (intent.type === "HOVER" || intent.type === "DOUBLE_CLICK" || intent.type === "RIGHT_CLICK" || intent.type === "FOCUS" || intent.type === "CLEAR_FIELD" || intent.type === "DRAG_AND_DROP") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    const actMap = {
+      HOVER: "hover_element",
+      DOUBLE_CLICK: "double_click",
+      RIGHT_CLICK: "right_click",
+      FOCUS: "focus_element",
+      CLEAR_FIELD: "clear_field",
+      DRAG_AND_DROP: "drag_and_drop",
+    };
+    const actionName = actMap[intent.type];
+    setRigEmotion("pointing", "Acting…");
+    let dragTargetSel = undefined;
+    let dragSourceSel = intent.selector || undefined;
+    if (intent.type === "DRAG_AND_DROP") {
+      const snapRes = await sendRuntimeMessage({ type: "GET_PAGE_SNAPSHOT" });
+      const pool = [...(snapRes?.snapshot?.controls || []), ...(snapRes?.snapshot?.forms || [])];
+      const findSel = (q) =>
+        pool.find((e) => `${e.name || ""} ${e.text || ""} ${e.placeholder || ""}`.toLowerCase().includes(q.toLowerCase()))?.selector;
+      dragSourceSel = findSel(intent.source || "") || intent.source;
+      dragTargetSel = findSel(intent.target || "") || intent.target;
+    }
+    const res = await sendRuntimeMessage({
+      type: "EXECUTE_ACTION",
+      action: actionName,
+      selector: dragSourceSel,
+      value: intent.type === "DRAG_AND_DROP" ? dragTargetSel : intent.target,
+      options: {
+        text: intent.target,
+        targetSelector: dragTargetSel,
+      },
+    });
+    if (res?.ok) {
+      if (res.selector) {
+        lastHighlightSelector = res.selector;
+        recordTaskContext({
+          actionType: actionName,
+          targetField: intent.target || res.text || null,
+          targetSelector: res.selector,
+          targetRef: { label: intent.target || res.text || "element", selector: res.selector, actionType: actionName, capturedAt: Date.now() },
+          undoRecord: res.undoRecord || undefined,
+        });
+      }
+      setRigEmotion("success", "Done!");
+      const msg = `✅ ${res.message}`;
+      recordSessionAction(msg, "confirmed");
+      appendHistory("buddy", msg);
+      $("statusText").textContent = msg;
+      speakResponse(msg, "success");
+    } else {
+      setRigEmotion("error", "Not found");
+      const failMsg = res?.message || `Could not perform ${actionName} on "${intent.target}".`;
+      recordSessionAction(failMsg, "failed");
+      appendHistory("buddy", `⚠️ ${failMsg}`);
+      $("statusText").textContent = failMsg;
+    }
+    return true;
+  }
+
+  if (intent.type === "SCROLL_UNTIL_TEXT" || intent.type === "INFINITE_SCROLL" || intent.type === "PAGINATE") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    const actionMap = {
+      SCROLL_UNTIL_TEXT: "scroll_until_text",
+      INFINITE_SCROLL: "infinite_scroll",
+      PAGINATE: "paginate",
+    };
+    const actName = actionMap[intent.type];
+    setRigEmotion("working", "Navigating…");
+    const res = await sendRuntimeMessage({
+      type: "EXECUTE_ACTION",
+      action: actName,
+      value: intent.text || intent.targetText || intent.targetPage,
+      options: {
+        text: intent.text,
+        targetText: intent.targetText,
+        targetPage: intent.targetPage,
+      },
+    });
+    if (res?.ok) {
+      setRigEmotion("happy", "Done!");
+      const msg = `📜 ${res.message}`;
+      recordSessionAction(msg, "confirmed");
+      appendHistory("buddy", msg);
+      $("statusText").textContent = msg;
+      speakResponse(msg, "happy");
+    } else {
+      setRigEmotion("error", "Not found");
+      const failMsg = res?.message || `Could not complete ${actName}.`;
+      recordSessionAction(failMsg, "failed");
+      appendHistory("buddy", `⚠️ ${failMsg}`);
+      $("statusText").textContent = failMsg;
+    }
+    return true;
+  }
+
+  if (intent.type === "ORDINAL_ITEM") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    setRigEmotion("thinking", "Locating…");
+    const snapRes = await sendRuntimeMessage({ type: "GET_PAGE_SNAPSHOT" });
+    const controls = snapRes?.snapshot?.controls || [];
+    const products = controls.filter(
+      (c) => /\b(a|button)\b/i.test(c.tag || "") && (c.name || c.text || "").trim().length >= 2,
+    );
+    if (products.length === 0) {
+      setRigEmotion("confused", "Not found");
+      appendHistory("buddy", `⚠️ Could not find selectable ${intent.targetKind || "item"} cards on this page.`);
+      return true;
+    }
+    const idx = intent.index === -1 ? products.length - 1 : Math.min(products.length - 1, Math.max(0, intent.index - 1));
+    const chosen = products[idx];
+    const res = await sendRuntimeMessage({
+      type: "EXECUTE_ACTION",
+      action: intent.openAction ? "open_link" : "click",
+      selector: chosen.selector,
+      value: chosen.name || chosen.text,
+    });
+    if (res?.ok) {
+      recordTaskContext({
+        actionType: "ordinal_click",
+        targetField: chosen.name || chosen.text,
+        targetSelector: chosen.selector,
+        targetRef: { label: chosen.name || chosen.text, selector: chosen.selector, actionType: "click", capturedAt: Date.now() },
+      });
+      setRigEmotion("success", "Opened!");
+      const msg = `✅ ${res.message || `Clicked item #${idx + 1}.`}`;
+      appendHistory("buddy", msg);
+      speakResponse(msg, "success");
+    } else {
+      appendHistory("buddy", `⚠️ ${res?.message || `Could not click item #${idx + 1}.`}`);
+    }
+    return true;
+  }
+
+  if (intent.type === "PARTIAL_UPDATE") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    const customDrop = await sendRuntimeMessage({
+      type: "EXECUTE_ACTION",
+      action: "select_custom_dropdown",
+      value: intent.value,
+      options: { targetField: intent.targetField, value: intent.value },
+    });
+    if (customDrop?.ok) {
+      if (customDrop.undoRecord) recordTaskContext({ undoRecord: customDrop.undoRecord });
+      setRigEmotion("success", "Updated!");
+      const okMsg = `✅ ${customDrop.message}`;
+      recordSessionAction(okMsg, "confirmed");
+      appendHistory("buddy", okMsg);
+      speakResponse(okMsg, "success");
+      return true;
+    }
+    await startSmartFormFill(null, {
+      explicitPairs: [{ target: intent.targetField, value: intent.value, overwrite: true }],
+      overwrite: true,
+      explicitUserProvided: true,
+      fromChatCommand: true,
+    });
+    return true;
+  }
+
   if (intent.type === "SCROLL") {
     appendHistory("user", trimmed);
     $("promptInput").value = "";
@@ -4767,13 +5321,22 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     $("promptInput").value = "";
     setRigEmotion("working", "Selecting…");
     $("statusText").textContent = `Selecting "${intent.value}"…`;
-    const res = await sendRuntimeMessage({
+    let res = await sendRuntimeMessage({
       type: "EXECUTE_ACTION",
       action: "select",
       value: intent.value,
       options: { targetField: intent.targetField || "", text: intent.value },
     });
+    if (!res?.ok) {
+      res = await sendRuntimeMessage({
+        type: "EXECUTE_ACTION",
+        action: "select_custom_dropdown",
+        value: intent.value,
+        options: { targetField: intent.targetField || "", value: intent.value },
+      });
+    }
     if (res?.ok) {
+      if (res.undoRecord) recordTaskContext({ undoRecord: res.undoRecord });
       setRigEmotion("happy", "Selected!");
       const msg = isHindi
         ? `✅ Dropdown mein "${intent.value}" select kar diya hai.`
@@ -6100,10 +6663,18 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
     const { filled, preserved, skipped, errors, remainingFields = [] } = res.results;
     if (filled.length > 0) {
       const lastFilledItem = filled[filled.length - 1];
+      for (const fItem of filled) {
+        if (fItem?.undoRecord) {
+          recordTaskContext({ undoRecord: fItem.undoRecord });
+        }
+      }
       recordTaskContext({
         actionType: "fill",
         targetField: lastFilledItem.field,
         targetSelector: lastFilledItem.selector || undefined,
+        targetRef: lastFilledItem.selector
+          ? { label: lastFilledItem.field, selector: lastFilledItem.selector, actionType: "fill", capturedAt: Date.now() }
+          : undefined,
       });
       if (!activeFormSession) {
         activeFormSession = {
@@ -9272,7 +9843,185 @@ chrome.runtime?.onMessage?.addListener?.((msg) => {
     }
     return false;
   }
+  if (msg.type === "SELF_HEAL_EVENT" && msg.session) {
+    handleIncomingSelfHealSession(msg.session);
+    return false;
+  }
   return false;
+});
+
+// --- SELF-HEALING SIDEPANEL MONITOR & GRANULAR APPROVAL CONTROLLER ---
+let activeSelfHealSession = null;
+
+function renderSelfHealCard(session, previewText) {
+  const card = $("selfHealCard");
+  if (!card) return;
+  if (!session) {
+    card.hidden = true;
+    return;
+  }
+  activeSelfHealSession = session;
+  const badge = $("selfHealAttributionBadge");
+  const summary = $("selfHealSummary");
+  const preview = $("selfHealPreview");
+  if (badge) {
+    badge.textContent = `${session.report?.attribution || "triaged"} · ${session.status}`;
+  }
+  if (summary) {
+    summary.textContent =
+      session.diagnosis?.rootCause ||
+      session.report?.errorMessage ||
+      "Self-healing diagnostic ready.";
+  }
+  if (preview) {
+    if (previewText) {
+      preview.textContent = previewText;
+      preview.hidden = false;
+    } else {
+      preview.hidden = true;
+    }
+  }
+  card.hidden = false;
+}
+
+function handleIncomingSelfHealSession(session) {
+  // Only prompt the user with the repair card for internal AI Buddy code issues needing escalation
+  if (session?.localRecovery?.shouldCallAi && session?.report?.attribution === "ai_buddy_code") {
+    renderSelfHealCard(session, session.localRecovery?.description || "");
+  }
+}
+
+async function dispatchSelfHealAction(action, approvedAction) {
+  if (!activeSelfHealSession?.repairId) return;
+  const summary = $("selfHealSummary");
+  if (summary) summary.textContent = `Running ${action}...`;
+  const res = await sendRuntimeMessage({
+    type: "SELF_HEAL_ACTION",
+    payload: {
+      action,
+      repairId: activeSelfHealSession.repairId,
+      approvedAction,
+    },
+  });
+  if (res?.session) {
+    activeSelfHealSession = res.session;
+  }
+  let previewText = res?.message || "";
+  if (res?.excerpts?.length) {
+    previewText = res.excerpts
+      .map((ex) => `// ${ex.file}:${ex.startLine}-${ex.endLine}\n${ex.snippet}`)
+      .join("\n\n");
+  } else if (res?.diffPreviews?.length) {
+    previewText = res.diffPreviews.map((d) => d.unifiedDiff).join("\n\n");
+  } else if (res?.verificationResults?.length) {
+    previewText =
+      `${res.message}\n\n` +
+      res.verificationResults
+        .map((v) => `${v.passed ? "PASS" : "FAIL"} ${v.name}: ${v.summary}`)
+        .join("\n");
+  } else if (res?.preparedPatch) {
+    previewText = `${res.message}\n\n${res.preparedPatch}`;
+  } else if (res?.prUrl) {
+    previewText = `${res.message}\nPR: ${res.prUrl}`;
+  }
+  renderSelfHealCard(activeSelfHealSession, previewText);
+}
+
+if ($("selfHealDiagnoseBtn")) {
+  $("selfHealDiagnoseBtn").onclick = () => dispatchSelfHealAction("diagnose", "diagnose_only");
+}
+if ($("selfHealShowCodeBtn")) {
+  $("selfHealShowCodeBtn").onclick = () =>
+    dispatchSelfHealAction("show_code", "show_affected_code");
+}
+if ($("selfHealPrepareBtn")) {
+  $("selfHealPrepareBtn").onclick = () =>
+    dispatchSelfHealAction("prepare_repair", "prepare_repair");
+}
+if ($("selfHealApplyBtn")) {
+  $("selfHealApplyBtn").onclick = () =>
+    dispatchSelfHealAction("apply_repair_and_test", "apply_repair_and_test");
+}
+if ($("selfHealPrBtn")) {
+  $("selfHealPrBtn").onclick = () =>
+    dispatchSelfHealAction("create_github_pr", "create_github_pr");
+}
+if ($("selfHealCancelBtn")) {
+  $("selfHealCancelBtn").onclick = async () => {
+    if (activeSelfHealSession?.repairId) {
+      await sendRuntimeMessage({
+        type: "SELF_HEAL_ACTION",
+        payload: { action: "cancel", repairId: activeSelfHealSession.repairId },
+      });
+    }
+    renderSelfHealCard(null);
+  };
+}
+
+if ($("settingsSelfHealStatusBtn")) {
+  $("settingsSelfHealStatusBtn").onclick = async () => {
+    const fb = $("settingsSelfHealFeedback");
+    if (fb) {
+      fb.textContent = "Checking Self-Healing telemetry & Knowledge Base...";
+      fb.style.display = "block";
+    }
+    const res = await sendRuntimeMessage({ type: "SELF_HEAL_GET_STATUS" });
+    if (fb) {
+      if (res?.usage) {
+        fb.textContent = `KB: ${res.kbCount || 0} repairs · Local recoveries: ${res.usage.localRecoveriesCount} · Suppressed dupes: ${res.usage.suppressedDuplicatesCount} · AI calls/hr: ${res.usage.aiCallsThisHour}`;
+      } else {
+        fb.textContent = res?.offline
+          ? `Offline mode · ${(res.recentReports || []).length} local buffered report(s).`
+          : "Self-Healing telemetry ready.";
+      }
+    }
+    if (res?.sessions?.length) {
+      const latest = res.sessions[0];
+      if (latest && latest.status !== "cancelled") {
+        renderSelfHealCard(
+          {
+            repairId: latest.repairId,
+            status: latest.status,
+            report: { attribution: latest.attribution, errorMessage: latest.errorMessage },
+          },
+          "",
+        );
+      }
+    }
+  };
+}
+
+window.addEventListener("error", (ev) => {
+  sendRuntimeMessage(
+    {
+      type: "SELF_HEAL_REPORT",
+      component: "side_panel",
+      errorMessage: ev.error?.message || ev.message || "Sidepanel runtime error",
+      errorType: ev.error?.name || "Error",
+      stackTrace: ev.error?.stack,
+      file: ev.filename,
+      line: ev.lineno,
+      column: ev.colno,
+      currentOperation: "sidepanel_global_error",
+    },
+    { silent: true },
+  );
+});
+
+window.addEventListener("unhandledrejection", (ev) => {
+  const reason = ev.reason;
+  sendRuntimeMessage(
+    {
+      type: "SELF_HEAL_REPORT",
+      component: "unhandled_rejection",
+      errorMessage:
+        reason instanceof Error ? reason.message : String(reason || "Sidepanel unhandled rejection"),
+      errorType: reason instanceof Error ? reason.name : "PromiseRejection",
+      stackTrace: reason instanceof Error ? reason.stack : undefined,
+      currentOperation: "sidepanel_unhandled_rejection",
+    },
+    { silent: true },
+  );
 });
 
 // Guard against blank states on window focus and tab visibility transitions

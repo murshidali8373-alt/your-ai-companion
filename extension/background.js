@@ -65,6 +65,133 @@ function swLog(level, stage, detail = {}) {
   } catch {}
 }
 
+// --- SELF-HEALING RUNTIME MONITOR & ERROR REPORTER ---
+const swSelfHealState = {
+  recentFingerprints: new Map(),
+  recentReports: [],
+  activeSession: null,
+  activeTaskSessionContext: null,
+  maxReports: 40,
+};
+
+function redactSensitiveForSw(raw) {
+  return String(raw || "")
+    .replace(/\bBearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Bearer [REDACTED_TOKEN]")
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{8,}\b/g, "[REDACTED_JWT]")
+    .replace(/\bAIza[0-9A-Za-z_-]{20,}\b/g, "[REDACTED_GEMINI_KEY]")
+    .replace(/\bsk-(?:proj-|or-v1-)?[0-9A-Za-z_-]{16,}\b/g, "[REDACTED_API_KEY]")
+    .replace(/\b(?:ghp|gho|ghu|ghs)_[0-9A-Za-z]{20,}\b/g, "[REDACTED_GITHUB_TOKEN]")
+    .replace(/\bgithub_pat_[0-9A-Za-z_]{20,}\b/g, "[REDACTED_GITHUB_TOKEN]")
+    .replace(
+      /((?:api[_-]?key|secret|password|passwd|pwd|otp|cvv|pin|token|authorization)\s*[:=]\s*["']?)([^\s"',;}\]]{2,})(["']?)/gi,
+      (_m, prefix, _v, suffix) => `${prefix}[REDACTED]${suffix || ""}`,
+    )
+    .replace(/([?&](?:token|key|apiKey|code|secret|auth)=)([^&\s#]+)/gi, (_m, p) => `${p}[REDACTED]`);
+}
+
+async function callBackendSelfHeal(payload, method = "POST") {
+  const { session, lastBase } = await chrome.storage.local.get(["session", "lastBase"]);
+  const apiBase = await resolveExtensionApiBase(session, lastBase);
+  const headers = { "content-type": "application/json" };
+  if (session?.accessToken) {
+    headers["authorization"] = `Bearer ${session.accessToken}`;
+  }
+  const url = `${apiBase}/api/public/extension/self-heal`;
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: method === "GET" ? undefined : JSON.stringify(payload),
+    credentials: "omit",
+  });
+  const data = await res.json().catch(() => null);
+  return { ok: Boolean(res.ok && data?.ok !== false), status: res.status, data };
+}
+
+async function reportSwRuntimeError(component, errOrMsg, context = {}) {
+  try {
+    const rawMessage =
+      errOrMsg instanceof Error
+        ? errOrMsg.message
+        : typeof errOrMsg === "string"
+          ? errOrMsg
+          : String(errOrMsg || "Unknown runtime error");
+    const cleanMessage = redactSensitiveForSw(rawMessage).slice(0, 1200);
+    const cleanStack =
+      errOrMsg instanceof Error && errOrMsg.stack
+        ? redactSensitiveForSw(errOrMsg.stack).slice(0, 2500)
+        : context.stackTrace
+          ? redactSensitiveForSw(context.stackTrace).slice(0, 2500)
+          : undefined;
+    const fpKey = `${component}|${cleanMessage.slice(0, 100).toLowerCase()}`;
+    const prevTs = swSelfHealState.recentFingerprints.get(fpKey) || 0;
+    const now = Date.now();
+    if (now - prevTs < 60_000) {
+      return { ok: true, deduplicated: true };
+    }
+    swSelfHealState.recentFingerprints.set(fpKey, now);
+
+    const reportPayload = {
+      action: "report_error",
+      component: component || "runtime_exception",
+      errorMessage: cleanMessage,
+      errorType: errOrMsg instanceof Error ? errOrMsg.name : context.errorType || "Error",
+      stackTrace: cleanStack,
+      file: context.file,
+      line: context.line,
+      column: context.column,
+      relatedFunction: context.relatedFunction,
+      currentOperation: context.currentOperation,
+      pageUrl: context.pageUrl ? redactSensitiveForSw(context.pageUrl) : undefined,
+      extensionVersion: chrome.runtime?.getManifest?.()?.version || "0.1.0",
+      relevantLogs: commLogBuffer
+        .slice(-8)
+        .map((l) => redactSensitiveForSw(`${l.stage}: ${JSON.stringify(l).slice(0, 160)}`)),
+    };
+
+    swSelfHealState.recentReports.unshift({
+      ts: new Date(now).toISOString(),
+      component: reportPayload.component,
+      errorMessage: cleanMessage,
+    });
+    if (swSelfHealState.recentReports.length > swSelfHealState.maxReports) {
+      swSelfHealState.recentReports.length = swSelfHealState.maxReports;
+    }
+
+    swLog("warn", "self_heal:captured", {
+      component: reportPayload.component,
+      errorMessage: cleanMessage.slice(0, 160),
+    });
+
+    const backendRes = await callBackendSelfHeal(reportPayload, "POST").catch(() => null);
+    if (backendRes?.data?.session) {
+      swSelfHealState.activeSession = backendRes.data.session;
+      sendPanelNotification({
+        type: "SELF_HEAL_EVENT",
+        session: backendRes.data.session,
+        usage: backendRes.data.usage,
+      });
+    }
+    return backendRes?.data || { ok: true, localOnly: true };
+  } catch {
+    return { ok: false };
+  }
+}
+
+self.addEventListener("error", (ev) => {
+  reportSwRuntimeError("runtime_exception", ev.error || ev.message || "Unhandled SW error", {
+    file: ev.filename,
+    line: ev.lineno,
+    column: ev.colno,
+    currentOperation: "sw_global_error",
+  });
+});
+
+self.addEventListener("unhandledrejection", (ev) => {
+  reportSwRuntimeError("unhandled_rejection", ev.reason || "Unhandled SW promise rejection", {
+    currentOperation: "sw_unhandled_rejection",
+  });
+});
+
 function sendPanelNotification(payload) {
   try {
     chrome.runtime
@@ -449,6 +576,32 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     );
     return true;
   }
+  if (msg.type === "OPEN_TAB") {
+    openBrowserTab(msg.url, msg.active !== false).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
+    );
+    return true;
+  }
+  if (msg.type === "CLOSE_TAB") {
+    closeBrowserTabSafely({
+      tabId: msg.tabId,
+      url: msg.url,
+      allowCloseUserTab: Boolean(msg.allowCloseUserTab),
+    }).then(safeReply, (e) => safeReply({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === "READ_TAB_SNAPSHOT") {
+    readTabSnapshot(msg.tabId).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
+    );
+    return true;
+  }
+  if (msg.type === "VALIDATE_FORM_ERRORS") {
+    executeAction("validate_form_errors", msg.selector, null, msg.options || {}).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
+    );
+    return true;
+  }
   if (msg.type === "KEYBOARD_ACTION") {
     keyboardAction(msg.key, msg.selector, msg.options).then(safeReply, (e) =>
       safeReply({ ok: false, error: String(e?.message || e) }),
@@ -528,6 +681,58 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     getSnapshotForActiveTab().then(safeReply, (e) =>
       safeReply({ ok: false, error: String(e?.message || e) }),
     );
+    return true;
+  }
+  if (msg.type === "SELF_HEAL_REPORT") {
+    reportSwRuntimeError(msg.component || "side_panel", msg.errorMessage || "Reported error", {
+      errorType: msg.errorType,
+      stackTrace: msg.stackTrace,
+      file: msg.file,
+      line: msg.line,
+      column: msg.column,
+      currentOperation: msg.currentOperation,
+      pageUrl: msg.pageUrl,
+    }).then(safeReply, (e) => safeReply({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === "SELF_HEAL_GET_STATUS") {
+    callBackendSelfHeal(null, "GET")
+      .then((res) => {
+        if (res?.ok && res.data) {
+          safeReply(res.data);
+        } else {
+          safeReply({
+            ok: true,
+            offline: true,
+            recentReports: swSelfHealState.recentReports,
+            activeSession: swSelfHealState.activeSession,
+          });
+        }
+      })
+      .catch((e) => safeReply({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === "SELF_HEAL_ACTION") {
+    (async () => {
+      const { userApiKey, customBaseUrl, selectedProvider } = await chrome.storage.local.get([
+        "userApiKey",
+        "customBaseUrl",
+        "selectedProvider",
+      ]);
+      const payload = {
+        ...msg.payload,
+        preferredProvider:
+          msg.payload?.preferredProvider ||
+          (selectedProvider && selectedProvider !== "auto" ? selectedProvider : undefined),
+        userApiKey: msg.payload?.userApiKey || userApiKey || undefined,
+        customBaseUrl: msg.payload?.customBaseUrl || customBaseUrl || undefined,
+      };
+      const res = await callBackendSelfHeal(payload, "POST");
+      if (res?.data?.session) {
+        swSelfHealState.activeSession = res.data.session;
+      }
+      safeReply(res?.data || { ok: false, message: "Self-healing backend unreachable." });
+    })().catch((e) => safeReply({ ok: false, message: String(e?.message || e) }));
     return true;
   }
   swLog("warn", "onMessage:unhandled_type", { traceId, type: msg.type });
@@ -2377,6 +2582,8 @@ async function ask(
     screenshotBase64: screenshotBase64 || undefined,
     uploadedDocumentSummary: effectiveDocSummary || undefined,
     actionContext: effectiveActionContext || undefined,
+    sessionContext: swSelfHealState.activeTaskSessionContext || undefined,
+    activeTabId: tab?.id ?? undefined,
     history: formattedHistory.length > 0 ? formattedHistory : undefined,
     buddySlug: buddySlug || undefined,
     customBuddyId: customBuddyId || undefined,
@@ -2619,6 +2826,9 @@ async function ask(
         highlightCoords = hlRes;
       }
     }
+    if (body.sessionContext) {
+      swSelfHealState.activeTaskSessionContext = body.sessionContext;
+    }
     return { ...body, pageReadable: Boolean(snapshot), snapshot, highlightCoords };
   } catch (err) {
     try {
@@ -2668,6 +2878,10 @@ async function ask(
       }
     } catch {}
 
+    reportSwRuntimeError("api_communication", err, {
+      currentOperation: "extension_ask_fetch",
+      pageUrl: snapshot?.url,
+    });
     return {
       error: "network",
       message: `Could not reach AI Buddy service at ${apiBase || DEFAULT_HOST}. Check your connection or update the Server URL in Settings.`,
@@ -3775,6 +3989,7 @@ async function smartFillForm(fields, options = {}) {
             ? candidate.innerText || candidate.textContent || ""
             : candidate.value || "";
 
+        const prevRawVal = check.isSensitive ? "" : String(currentVal || "");
         if (!isCheckbox && !isRadio && String(currentVal).trim() && !overwrite) {
           results.preserved.push({
             key,
@@ -4100,13 +4315,24 @@ async function smartFillForm(fields, options = {}) {
             verified = false;
           }
 
+          const fillSelector = getUniqueSelector(candidate);
           if (verified) {
             results.filled.push({
               key,
               field: fieldLabel,
-              selector: getUniqueSelector(candidate),
+              selector: fillSelector,
               value: maskedVal,
               verified: true,
+              undoRecord: check.isSensitive
+                ? undefined
+                : {
+                    id: `undo_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+                    selector: fillSelector,
+                    fieldLabel,
+                    previousValue: prevRawVal,
+                    newValue: maskedVal,
+                    capturedAt: new Date().toISOString(),
+                  },
             });
             successfullyFilled.push(candidate);
           } else {
@@ -6226,6 +6452,532 @@ async function executeAction(action, selector, value, options = {}) {
         };
       }
 
+      // --- 9. PHASE 2 INTERACTION ACTIONS (HOVER, DOUBLE CLICK, RIGHT CLICK, FOCUS, CLEAR, DRAG & DROP) ---
+      const resolvePhase2El = (selectorArg, textArg, poolSelector = 'button, a, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], input, textarea, select, [contenteditable="true"], [tabindex]:not([tabindex="-1"]), td, li, div, span') => {
+        if (selectorArg) {
+          const direct = queryDeepSelector(selectorArg);
+          if (direct) return direct;
+        }
+        const hint = normalize(String(textArg || "")).toLowerCase()
+          .replace(/^(?:the|a|an|ye|yeh|wo|woh|is|this)\s+/i, "")
+          .replace(/\s+(?:button|btn|tab|link|menu|field|box|input|element|row)$/i, "")
+          .trim();
+        if (!hint) return null;
+        const nodes = queryAllDeep(poolSelector).filter(isVisible);
+        let best = null;
+        let bestScore = 0;
+        for (const n of nodes) {
+          const t = normalize(
+            n.innerText || n.value || n.getAttribute?.("aria-label") || n.getAttribute?.("placeholder") || n.getAttribute?.("title") || n.getAttribute?.("name") || "",
+          ).toLowerCase();
+          if (!t) continue;
+          let sc = 0;
+          if (t === hint) sc = 100;
+          else if (t.startsWith(hint)) sc = 75;
+          else if (t.includes(hint)) sc = 55;
+          if (sc > 0 && ["BUTTON", "A", "INPUT", "SELECT", "TEXTAREA"].includes(n.tagName)) sc += 10;
+          sc -= Math.min(20, Math.floor(t.length / 25));
+          if (sc > bestScore) {
+            bestScore = sc;
+            best = n;
+          }
+        }
+        return best;
+      };
+
+      if (act === "hover_element" || act === "hover") {
+        const el = resolvePhase2El(sel, opts?.text || val);
+        if (!el) return { ok: false, action: "hover_element", message: `Element "${sel || opts?.text || val || "target"}" not found for hover.` };
+        el.scrollIntoView?.({ behavior: "smooth", block: "center" });
+        const beforeTextLen = (document.body?.innerText || "").length;
+        const r = el.getBoundingClientRect();
+        const evOpts = { bubbles: true, cancelable: true, clientX: Math.round(r.left + r.width / 2), clientY: Math.round(r.top + r.height / 2) };
+        try {
+          el.dispatchEvent(new PointerEvent("pointerover", evOpts));
+          el.dispatchEvent(new PointerEvent("pointerenter", evOpts));
+        } catch {}
+        el.dispatchEvent(new MouseEvent("mouseover", evOpts));
+        el.dispatchEvent(new MouseEvent("mouseenter", evOpts));
+        await new Promise((res) => setTimeout(res, 120));
+        const afterTextLen = (document.body?.innerText || "").length;
+        const label = normalize(el.innerText || el.getAttribute?.("aria-label") || el.tagName).slice(0, 50);
+        return {
+          ok: true,
+          verified: true,
+          hovered: true,
+          selector: getUniqueSelector(el),
+          text: label,
+          action: "hover_element",
+          domDelta: afterTextLen - beforeTextLen,
+          message: `Hovered over "${label}".`,
+        };
+      }
+
+      if (act === "double_click") {
+        const el = resolvePhase2El(sel, opts?.text || val);
+        if (!el) return { ok: false, action: "double_click", message: `Element "${sel || opts?.text || val || "target"}" not found for double click.` };
+        el.scrollIntoView?.({ behavior: "smooth", block: "center" });
+        dispatchRealClick(el);
+        dispatchRealClick(el);
+        const r = el.getBoundingClientRect();
+        el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, clientX: Math.round(r.left + r.width / 2), clientY: Math.round(r.top + r.height / 2) }));
+        const label = normalize(el.innerText || el.getAttribute?.("aria-label") || el.tagName).slice(0, 40);
+        return {
+          ok: true,
+          verified: true,
+          focused: document.activeElement === el,
+          selector: getUniqueSelector(el),
+          text: label,
+          action: "double_click",
+          message: `Double-clicked "${label}".`,
+        };
+      }
+
+      if (act === "right_click") {
+        const el = resolvePhase2El(sel, opts?.text || val);
+        if (!el) return { ok: false, action: "right_click", message: `Element "${sel || opts?.text || val || "target"}" not found for right click.` };
+        el.scrollIntoView?.({ behavior: "smooth", block: "center" });
+        const r = el.getBoundingClientRect();
+        const evOpts = { bubbles: true, cancelable: true, button: 2, buttons: 2, clientX: Math.round(r.left + r.width / 2), clientY: Math.round(r.top + r.height / 2) };
+        el.dispatchEvent(new MouseEvent("mousedown", evOpts));
+        el.dispatchEvent(new MouseEvent("mouseup", { ...evOpts, buttons: 0 }));
+        el.dispatchEvent(new MouseEvent("contextmenu", evOpts));
+        const label = normalize(el.innerText || el.getAttribute?.("aria-label") || el.tagName).slice(0, 40);
+        return {
+          ok: true,
+          verified: true,
+          contextMenuTriggered: true,
+          selector: getUniqueSelector(el),
+          text: label,
+          action: "right_click",
+          message: `Triggered context menu on "${label}".`,
+        };
+      }
+
+      if (act === "focus_element" || act === "focus") {
+        const el = resolvePhase2El(sel, opts?.text || val, 'input, textarea, select, [contenteditable="true"], [role="combobox"], button, a, [tabindex]:not([tabindex="-1"])');
+        if (!el) return { ok: false, action: "focus_element", message: `Element "${sel || opts?.text || val || "target"}" not found to focus.` };
+        el.scrollIntoView?.({ behavior: "smooth", block: "center" });
+        el.focus?.();
+        el.dispatchEvent(new FocusEvent("focus", { bubbles: true }));
+        const isFocused = document.activeElement === el || el.contains?.(document.activeElement);
+        return {
+          ok: true,
+          verified: isFocused,
+          isFocused,
+          selector: getUniqueSelector(el),
+          action: "focus_element",
+          message: isFocused ? `Focused element "${normalize(el.name || el.id || el.placeholder || sel || "target")}".` : `Focused container around "${sel || opts?.text || "target"}".`,
+        };
+      }
+
+      if (act === "clear_field") {
+        const el = sel
+          ? queryDeepSelector(sel)
+          : opts?.text || (val && val !== "__CURRENT__")
+            ? resolvePhase2El(null, opts?.text || val, 'input:not([type="hidden"]), textarea, [contenteditable="true"]')
+            : document.activeElement;
+        if (!el || el === document.body) return { ok: false, action: "clear_field", message: "No editable field found to clear." };
+        const fieldDesc = `${el.name || ""} ${el.id || ""} ${el.type || ""} ${el.getAttribute?.("aria-label") || ""}`;
+        if (SENSITIVE.test(fieldDesc) || el.type === "password") {
+          return { ok: false, action: "clear_field", message: "Security block: cannot modify sensitive/password field." };
+        }
+        const prevVal = el.isContentEditable ? (el.innerText || "") : (el.value || "");
+        if (el.isContentEditable) {
+          el.innerText = "";
+        } else {
+          const proto = el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement?.prototype : window.HTMLInputElement?.prototype;
+          const nativeSet = proto ? Object.getOwnPropertyDescriptor(proto, "value")?.set : null;
+          if (nativeSet) nativeSet.call(el, "");
+          else el.value = "";
+        }
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        const currentVal = el.isContentEditable ? (el.innerText || "") : (el.value || "");
+        const cleared = currentVal.trim() === "";
+        const fieldSel = sel || getUniqueSelector(el) || (el.id ? `#${el.id}` : "");
+        return {
+          ok: cleared,
+          verified: cleared,
+          selector: fieldSel,
+          previousValue: prevVal,
+          undoRecord: {
+            id: `undo_${Date.now().toString(36)}`,
+            selector: fieldSel,
+            fieldLabel: el.name || el.id || el.placeholder || "field",
+            previousValue: prevVal,
+            newValue: "",
+            capturedAt: new Date().toISOString(),
+          },
+          action: "clear_field",
+          message: cleared ? `Cleared "${el.name || el.id || el.placeholder || "field"}" cleanly.` : "Field did not clear completely.",
+        };
+      }
+
+      if (act === "drag_and_drop") {
+        const src = sel ? queryDeepSelector(sel) : null;
+        const dstSel = opts?.targetSelector || val;
+        const dst = dstSel ? queryDeepSelector(dstSel) : null;
+        if (!src || !dst) {
+          return {
+            ok: false,
+            action: "drag_and_drop",
+            message: !src ? `Source element "${sel}" not found.` : `Drop target "${dstSel}" not found.`,
+          };
+        }
+        const beforeRect = src.getBoundingClientRect();
+        const dt = typeof DataTransfer !== "undefined" ? new DataTransfer() : undefined;
+        src.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer: dt }));
+        dst.dispatchEvent(new DragEvent("dragenter", { bubbles: true, cancelable: true, dataTransfer: dt }));
+        dst.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));
+        dst.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
+        src.dispatchEvent(new DragEvent("dragend", { bubbles: true, cancelable: true, dataTransfer: dt }));
+        await new Promise((res) => setTimeout(res, 100));
+        const afterRect = src.getBoundingClientRect();
+        const moved = Math.abs(afterRect.top - beforeRect.top) > 2 || Math.abs(afterRect.left - beforeRect.left) > 2 || dst.contains(src);
+        return {
+          ok: true,
+          verified: moved,
+          action: "drag_and_drop",
+          message: moved ? "Dragged and dropped element; position change verified." : "Dispatched drag-and-drop sequence onto target.",
+        };
+      }
+
+      if (act === "scroll_to_element" || act === "scroll_container") {
+        const target = act === "scroll_to_element" ? (sel ? queryDeepSelector(sel) : null) : null;
+        const container = opts?.containerSelector ? queryDeepSelector(opts.containerSelector) : (act === "scroll_container" && sel ? queryDeepSelector(sel) : null);
+        if (act === "scroll_to_element" && !target) {
+          return { ok: false, action: act, message: `Element "${sel || opts?.targetText || "target"}" not found.` };
+        }
+        if (act === "scroll_container" && !container) {
+          return { ok: false, action: act, message: `Scrollable container "${opts?.containerSelector || sel}" not found.` };
+        }
+        if (target) {
+          target.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+          await new Promise((r) => setTimeout(r, 180));
+          const r = target.getBoundingClientRect();
+          const inViewport = r.bottom > 0 && r.top < (window.innerHeight || 800);
+          return { ok: true, verified: inViewport, inViewport, action: act, message: inViewport ? "Scrolled target element into viewport." : "Scrolled toward element." };
+        }
+        const prevY = container.scrollTop;
+        const prevX = container.scrollLeft;
+        const dir = String(val || opts?.direction || "down").toLowerCase();
+        const delta = typeof opts?.amount === "number" ? opts.amount : 360;
+        if (dir === "top") container.scrollTop = 0;
+        else if (dir === "bottom") container.scrollTop = container.scrollHeight;
+        else if (dir === "left") container.scrollLeft -= delta;
+        else if (dir === "right") container.scrollLeft += delta;
+        else if (dir === "up") container.scrollTop -= delta;
+        else container.scrollTop += delta;
+        await new Promise((r) => setTimeout(r, 100));
+        return {
+          ok: true,
+          verified: container.scrollTop !== prevY || container.scrollLeft !== prevX,
+          scrollTop: Math.round(container.scrollTop),
+          scrollLeft: Math.round(container.scrollLeft),
+          action: act,
+          message: `Scrolled container ${dir}.`,
+        };
+      }
+
+      if (act === "scroll_until_text") {
+        const needle = normalize(String(val || opts?.text || "")).toLowerCase();
+        if (!needle) return { ok: false, action: act, message: "No text specified for scroll_until_text." };
+        const maxScrolls = Math.min(20, Math.max(1, Number(opts?.maxScrolls) || 10));
+        const scroller = opts?.containerSelector ? queryDeepSelector(opts.containerSelector) : null;
+        for (let i = 0; i <= maxScrolls; i++) {
+          const hit = queryAllDeep("h1,h2,h3,h4,h5,h6,button,a,p,span,td,li,div,label")
+            .filter(isVisible)
+            .find((el) => normalize(el.innerText || "").toLowerCase().includes(needle));
+          if (hit) {
+            hit.scrollIntoView?.({ behavior: "smooth", block: "center" });
+            return {
+              ok: true,
+              verified: true,
+              found: true,
+              iterations: i,
+              action: act,
+              message: `Found "${needle}" after ${i} scroll step(s).`,
+            };
+          }
+          if (i === maxScrolls) break;
+          if (scroller) scroller.scrollBy({ top: Math.max(250, scroller.clientHeight * 0.8), behavior: "smooth" });
+          else window.scrollBy({ top: Math.max(350, (window.innerHeight || 720) * 0.8), behavior: "smooth" });
+          await new Promise((r) => setTimeout(r, 240));
+        }
+        return { ok: false, verified: false, found: false, iterations: maxScrolls, action: act, message: `Scrolled ${maxScrolls} times but could not find "${needle}".` };
+      }
+
+      if (act === "infinite_scroll") {
+        const maxIter = Math.min(20, Math.max(1, Number(opts?.maxIterations) || 8));
+        const targetTextLower = String(opts?.targetText || val || "").trim().toLowerCase();
+        const maxItems = Number(opts?.maxItems) || 100;
+        const seen = new Set();
+        const items = [];
+        let lastHeight = 0;
+        let stalled = 0;
+        let endOfFeed = false;
+        let iters = 0;
+
+        for (let i = 0; i < maxIter; i++) {
+          iters = i + 1;
+          const cards = queryAllDeep('[data-testid*="item"], [data-testid*="product"], [class*="card"], article, tr, li').filter(isVisible);
+          let newlyAdded = 0;
+          for (const c of cards) {
+            const t = normalize(c.innerText || "").slice(0, 140);
+            if (!t || t.length < 3) continue;
+            const k = t.toLowerCase();
+            if (!seen.has(k)) {
+              seen.add(k);
+              items.push(t);
+              newlyAdded++;
+            }
+          }
+          const h = document.documentElement?.scrollHeight || document.body?.scrollHeight || 0;
+          if (newlyAdded === 0 && h <= lastHeight + 8) stalled++;
+          else stalled = 0;
+          lastHeight = Math.max(lastHeight, h);
+          if (targetTextLower && items.some((it) => it.toLowerCase().includes(targetTextLower))) break;
+          if (items.length >= maxItems) break;
+          if (stalled >= 2) {
+            endOfFeed = true;
+            break;
+          }
+          window.scrollBy({ top: Math.max(500, (window.innerHeight || 720) * 0.85), behavior: "smooth" });
+          await new Promise((r) => setTimeout(r, 320));
+        }
+        return {
+          ok: true,
+          verified: true,
+          action: act,
+          iterations: iters,
+          uniqueItemsCount: items.length,
+          endOfFeed,
+          extractedData: items.slice(0, maxItems),
+          message: `Collected ${items.length} unique item(s) across ${iters} scroll step(s)${endOfFeed ? " (end of feed reached)" : ""}.`,
+        };
+      }
+
+      if (act === "paginate") {
+        const targetPage = opts?.targetPage || val || "next";
+        const controlsPool = queryAllDeep('a, button, [role="button"], [role="link"]').filter(isVisible);
+        let btn = null;
+        if (targetPage === "next") {
+          btn = document.querySelector('a[rel="next"], button[aria-label*="next" i], .pagination .next') ||
+            controlsPool.find((c) => /^next\b/i.test(normalize(c.innerText || c.getAttribute?.("aria-label") || "")));
+        } else if (targetPage === "prev" || targetPage === "previous") {
+          btn = document.querySelector('a[rel="prev"], button[aria-label*="prev" i], .pagination .prev') ||
+            controlsPool.find((c) => /^prev/i.test(normalize(c.innerText || c.getAttribute?.("aria-label") || "")));
+        } else if (targetPage === "last") {
+          btn = controlsPool.find((c) => /\blast\b/i.test(normalize(c.innerText || c.getAttribute?.("aria-label") || ""))) ||
+            controlsPool.filter((c) => /^\d+$/.test(normalize(c.innerText || ""))).sort((a, b) => Number(b.innerText) - Number(a.innerText))[0];
+        } else {
+          const pStr = String(targetPage).trim();
+          btn = controlsPool.find((c) => normalize(c.innerText || "") === pStr || normalize(c.getAttribute?.("aria-label") || "").toLowerCase() === `page ${pStr}`);
+        }
+        if (!btn) return { ok: false, action: act, message: `Pagination control "${targetPage}" not found.` };
+        if (btn.disabled || btn.getAttribute?.("aria-disabled") === "true") {
+          return { ok: false, action: act, message: `Pagination control "${targetPage}" is disabled.` };
+        }
+        const urlBefore = location.href;
+        btn.scrollIntoView?.({ behavior: "smooth", block: "center" });
+        dispatchRealClick(btn);
+        await new Promise((r) => setTimeout(r, 200));
+        return {
+          ok: true,
+          verified: true,
+          urlChanged: location.href !== urlBefore,
+          action: act,
+          message: `Navigated to pagination "${targetPage}".`,
+        };
+      }
+
+      if (
+        act === "select_custom_dropdown" ||
+        act === "select_combobox_option" ||
+        act === "interact_with_listbox" ||
+        act === "interact_with_autocomplete"
+      ) {
+        const dropdownPool = '[role="combobox"], [role="listbox"], .ant-select, .MuiSelect-select, [class*="react-select"], select';
+        const trigger = sel
+          ? queryDeepSelector(sel)
+          : opts?.targetField
+            ? resolvePhase2El(null, opts.targetField, dropdownPool)
+            : queryAllDeep(dropdownPool).filter(isVisible)[0];
+        if (!trigger) return { ok: false, action: act, message: `Dropdown/combobox "${sel || opts?.targetField || "target"}" not found.` };
+        const desired = String(val || opts?.value || "").trim();
+        if (!desired) return { ok: false, action: act, message: "No option value specified." };
+        const desiredLower = desired.toLowerCase();
+        const prevSelected = normalize(trigger.getAttribute?.("data-selected-value") || trigger.value || trigger.innerText || "");
+
+        trigger.scrollIntoView?.({ behavior: "smooth", block: "center" });
+        trigger.focus?.();
+        if (act === "interact_with_autocomplete" || trigger.tagName === "INPUT") {
+          const proto = window.HTMLInputElement?.prototype;
+          const nativeSet = proto ? Object.getOwnPropertyDescriptor(proto, "value")?.set : null;
+          if (nativeSet) nativeSet.call(trigger, desired);
+          else trigger.value = desired;
+          trigger.dispatchEvent(new Event("input", { bubbles: true }));
+          await new Promise((r) => setTimeout(r, 180));
+        } else {
+          dispatchRealClick(trigger);
+          await new Promise((r) => setTimeout(r, 150));
+        }
+
+        const optPool = queryAllDeep('[role="option"], [role="menuitem"], .ant-select-item-option, .MuiMenuItem-root, [class*="-option"], li').filter(isVisible);
+        const matchOpt =
+          optPool.find((o) => normalize(o.innerText || o.textContent || "").toLowerCase() === desiredLower) ||
+          optPool.find((o) => normalize(o.innerText || o.textContent || "").toLowerCase().includes(desiredLower));
+
+        if (!matchOpt) {
+          return {
+            ok: false,
+            verified: false,
+            action: act,
+            message: `Option "${desired}" was not found inside opened dropdown menu.`,
+          };
+        }
+        const selectedText = normalize(matchOpt.innerText || matchOpt.textContent || desired);
+        dispatchRealClick(matchOpt);
+        matchOpt.setAttribute?.("aria-selected", "true");
+        trigger.setAttribute?.("data-selected-value", selectedText);
+        const triggerSel = sel || getUniqueSelector(trigger) || "";
+        return {
+          ok: true,
+          verified: true,
+          selectedText,
+          selector: triggerSel,
+          undoRecord: triggerSel
+            ? {
+                id: `undo_${Date.now().toString(36)}`,
+                selector: triggerSel,
+                fieldLabel: opts?.targetField || trigger.getAttribute?.("aria-label") || trigger.name || "dropdown",
+                previousValue: prevSelected,
+                newValue: selectedText,
+                capturedAt: new Date().toISOString(),
+              }
+            : undefined,
+          action: act,
+          message: `Selected "${selectedText}" cleanly.`,
+        };
+      }
+
+      if (act === "extract_table") {
+        const tbl = (sel ? queryDeepSelector(sel) : null) || queryAllDeep('table, [role="grid"]').filter(isVisible)[0];
+        if (!tbl) return { ok: false, action: act, message: "No visible table or ARIA grid found on this page." };
+        const headerEls = [...tbl.querySelectorAll('thead th, thead td, [role="columnheader"]')];
+        const headers = headerEls.map((h) => normalize(h.innerText || ""));
+        const rowEls = [...tbl.querySelectorAll('tbody tr, [role="row"]')].slice(0, Number(opts?.maxRows) || 100);
+        const rows = [];
+        for (const rEl of rowEls) {
+          const cells = [...rEl.querySelectorAll('td, th, [role="gridcell"], [role="cell"]')].map((c) => normalize(c.innerText || ""));
+          if (cells.length === 0 || (headers.length && cells.join("|") === headers.join("|"))) continue;
+          if (SENSITIVE.test(cells.join(" "))) continue;
+          if (headers.length) {
+            const obj = {};
+            headers.forEach((h, i) => {
+              obj[h || `col_${i + 1}`] = cells[i] || "";
+            });
+            rows.push(obj);
+          } else {
+            rows.push({ values: cells });
+          }
+        }
+        return {
+          ok: true,
+          verified: true,
+          action: act,
+          headers,
+          rowCount: rows.length,
+          extractedData: rows,
+          message: `Extracted ${rows.length} table row(s).`,
+        };
+      }
+
+      if (act === "validate_form_errors") {
+        const rootForm = (sel ? queryDeepSelector(sel) : null) || document;
+        const fields = [...rootForm.querySelectorAll('input, textarea, select, [role="combobox"]')].filter(isVisible);
+        const errs = [];
+        for (const f of fields) {
+          const lbl = f.name || f.id || f.getAttribute?.("aria-label") || f.placeholder || "field";
+          const valStr = normalize(f.value || f.innerText || "");
+          if ((f.required || f.getAttribute?.("aria-required") === "true") && !valStr) {
+            errs.push({ field: lbl, kind: "required", message: `${lbl} is required.` });
+          } else if (f.getAttribute?.("aria-invalid") === "true" || (typeof f.checkValidity === "function" && !f.checkValidity())) {
+            errs.push({ field: lbl, kind: "invalid", message: f.validationMessage || `${lbl} has invalid value.` });
+          }
+        }
+        const disabledSubmits = queryAllDeep('button[type="submit"], input[type="submit"]')
+          .filter((b) => isVisible(b) && (b.disabled || b.getAttribute?.("aria-disabled") === "true"))
+          .map((b) => normalize(b.innerText || b.value || "Submit"));
+        return {
+          ok: true,
+          verified: true,
+          valid: errs.length === 0 && disabledSubmits.length === 0,
+          errorCount: errs.length,
+          errors: errs,
+          disabledSubmits,
+          action: act,
+          message: errs.length === 0 ? "Form validation passed cleanly." : `Detected ${errs.length} form validation error(s).`,
+        };
+      }
+
+      if (act === "undo_reversible_action") {
+        const rec = opts?.undoRecord;
+        if (!rec && opts?.scope !== "navigation") {
+          return { ok: false, action: act, message: "No undo record available to revert." };
+        }
+        if (opts?.scope === "navigation") {
+          window.history.back();
+          return { ok: true, verified: true, action: act, message: "Navigated back in browser history." };
+        }
+        const el = rec?.selector ? queryDeepSelector(rec.selector) : null;
+        if (!el) return { ok: false, action: act, message: `Field "${rec?.selector || "target"}" no longer exists for undo.` };
+        if (el.isContentEditable) el.innerText = rec.previousValue || "";
+        else el.value = rec.previousValue || "";
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        return {
+          ok: true,
+          verified: true,
+          restoredValue: rec.previousValue || "",
+          action: act,
+          message: `Restored "${rec.fieldLabel || "field"}" back to previous value.`,
+        };
+      }
+
+      if (act === "coordinate_action") {
+        const coord = opts?.coordinate;
+        if (!coord || typeof coord.x !== "number" || typeof coord.y !== "number") {
+          return { ok: false, action: act, message: "Missing coordinate target." };
+        }
+        const curVw = window.visualViewport?.width || window.innerWidth || 1280;
+        const curVh = window.visualViewport?.height || window.innerHeight || 720;
+        const curSx = window.scrollX || 0;
+        const curSy = window.scrollY || 0;
+        const curZoom = window.visualViewport?.scale || 1;
+        if (
+          Date.now() - (coord.capturedAt || 0) > (coord.maxAgeMs || 8000) ||
+          Math.abs(curSx - (coord.scrollX || 0)) > 24 ||
+          Math.abs(curSy - (coord.scrollY || 0)) > 24 ||
+          Math.abs(curVw - (coord.viewportWidth || curVw)) > 12 ||
+          Math.abs(curZoom - (coord.zoomScale || 1)) > 0.05
+        ) {
+          return { ok: false, stale: true, action: act, message: "Visual coordinate is stale after viewport/scroll/zoom change. Re-capture required." };
+        }
+        const hit = document.elementFromPoint(coord.x, coord.y);
+        if (!hit || hit.closest?.("#ai-buddy-arm-overlay")) {
+          return { ok: false, action: act, message: "No interactive page element found at visual coordinate." };
+        }
+        dispatchRealClick(hit);
+        return {
+          ok: true,
+          verified: true,
+          action: act,
+          message: `Clicked visual target "${normalize(hit.innerText || hit.tagName).slice(0, 40)}".`,
+        };
+      }
+
       return { ok: false, message: `Unknown browser action: ${act}` };
   };
 
@@ -6586,6 +7338,9 @@ async function navigateHistory(direction = "back") {
   }
 }
 
+const swTabLocks = new Map();
+const swBuddyOpenedTabs = new Set();
+
 async function getAllTabs() {
   const tabs = await chrome.tabs.query({ currentWindow: true });
   return {
@@ -6595,14 +7350,77 @@ async function getAllTabs() {
       title: t.title || "Untitled",
       url: t.url || "",
       active: Boolean(t.active),
+      pinned: Boolean(t.pinned),
+      openedByBuddy: swBuddyOpenedTabs.has(t.id),
     })),
   };
 }
 
 async function switchTab(tabId) {
   if (!tabId) return { ok: false, message: "No tab ID provided." };
+  const targetTab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!targetTab) return { ok: false, message: `Tab ${tabId} no longer exists.` };
   await chrome.tabs.update(tabId, { active: true });
-  return { ok: true, tabId };
+  return { ok: true, tabId, url: targetTab.url || "", title: targetTab.title || "" };
+}
+
+async function openBrowserTab(url, active = true) {
+  if (!url || RESTRICTED.test(url) || !/^https?:\/\//i.test(String(url))) {
+    return { ok: false, message: "Cannot open restricted or non-http URL in a new tab." };
+  }
+  const created = await chrome.tabs.create({ url, active: Boolean(active) });
+  if (created?.id) {
+    swBuddyOpenedTabs.add(created.id);
+    swTabLocks.set(created.id, "buddy_tab");
+  }
+  return {
+    ok: Boolean(created?.id),
+    tabId: created?.id,
+    url: created?.pendingUrl || created?.url || url,
+    message: `Opened new tab for ${url}.`,
+  };
+}
+
+async function closeBrowserTabSafely({ tabId, url, allowCloseUserTab = false } = {}) {
+  const all = await chrome.tabs.query({ currentWindow: true });
+  if (all.length <= 1) {
+    return { ok: false, message: "Refused to close the last remaining browser tab." };
+  }
+  let target = tabId ? all.find((t) => t.id === tabId) : null;
+  if (!target && url) {
+    target = all.find((t) => (t.url || "").includes(url));
+  }
+  if (!target) {
+    return { ok: false, message: "Target tab not found to close." };
+  }
+  if (target.pinned || RESTRICTED.test(target.url || "") || (target.url || "").startsWith(chrome.runtime.getURL(""))) {
+    return { ok: false, message: "Safety block: cannot close pinned, restricted, or extension tabs." };
+  }
+  if (!swBuddyOpenedTabs.has(target.id) && !allowCloseUserTab) {
+    return {
+      ok: false,
+      requiresApproval: true,
+      message: `Tab "${target.title || target.url}" was opened by user; explicit confirmation required before closing.`,
+    };
+  }
+  await chrome.tabs.remove(target.id);
+  swBuddyOpenedTabs.delete(target.id);
+  swTabLocks.delete(target.id);
+  return { ok: true, closedTabId: target.id, message: `Closed tab ${target.id} safely.` };
+}
+
+async function readTabSnapshot(tabId) {
+  const target = tabId ? await chrome.tabs.get(tabId).catch(() => null) : await activeTab();
+  if (!target?.id || !target.url || RESTRICTED.test(target.url)) {
+    return { ok: false, message: "Target tab is unavailable or restricted." };
+  }
+  const run = await runTabScript({
+    target: { tabId: target.id },
+    files: ["snapshot.js"],
+    label: `readTabSnapshot:${target.id}`,
+  });
+  const snap = run.results?.[0]?.result || null;
+  return snap ? { ok: true, tabId: target.id, snapshot: snap } : { ok: false, message: "Could not read snapshot from tab." };
 }
 
 async function keyboardAction(key = "Enter", selector, options = {}) {
@@ -6857,6 +7675,10 @@ async function downloadFileFromUrl(url, filenameHint) {
           : `Download started${lifecycle.filename ? `: ${lifecycle.filename}` : ""}.`,
     };
   } catch (err) {
+    reportSwRuntimeError("downloads", err, {
+      currentOperation: "downloadFileFromUrl",
+      pageUrl: url,
+    });
     return {
       ok: false,
       message: `Download failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -7117,10 +7939,25 @@ async function executePlanStepInTab(step, options = {}) {
     };
   }
 
-  // 3. Tab operations
+  // 3. Tab operations (open, close with safety guard, switch, read multi-tab)
   if (step.action === "switch_tab") {
     const res = await switchTab(step.tabId);
-    return { ok: res.ok, verified: res.ok, result: `Switched to tab ${step.tabId}` };
+    return { ok: res.ok, verified: res.ok, result: res.ok ? `Switched to tab ${step.tabId}` : undefined, error: res.ok ? undefined : res.message };
+  }
+  if (step.action === "open_tab") {
+    const res = await openBrowserTab(step.url || step.value, true);
+    return { ok: res.ok, verified: res.ok, result: res.ok ? res.message : undefined, error: res.ok ? undefined : res.message, extractedData: { tabId: res.tabId, url: res.url } };
+  }
+  if (step.action === "close_tab") {
+    const res = await closeBrowserTabSafely({
+      tabId: step.tabId,
+      url: step.url || step.value,
+      allowCloseUserTab: Boolean(options?.userApproved),
+    });
+    if (res.requiresApproval) {
+      return { ok: false, awaitingApproval: true, message: res.message };
+    }
+    return { ok: res.ok, verified: res.ok, result: res.ok ? res.message : undefined, error: res.ok ? undefined : res.message };
   }
 
   // 4. Keyboard actions
@@ -7250,7 +8087,7 @@ async function executePlanStepInTab(step, options = {}) {
     };
   }
 
-  // 6. Click, Select, Scroll, Check (pass alternateTargets for resilient locator fallback)
+  // 6. Click, Select, Scroll, Check & Phase 2 actions (with closed-loop alternate recovery & Self-Healing classification)
   const sanitizedSelector = step.selector
     ? String(step.selector)
         .split(",")
@@ -7259,17 +8096,53 @@ async function executePlanStepInTab(step, options = {}) {
         .join(", ") || undefined
     : undefined;
 
-  const actRes = await executeAction(step.action, sanitizedSelector, step.value, {
+  const execOpts = {
     text: step.textTarget,
+    targetField: step.targetField,
+    targetSelector: step.targetSelector,
+    containerSelector: step.containerSelector,
+    targetPage: step.targetPage,
+    maxScrolls: step.maxScrolls,
+    maxIterations: step.maxIterations,
+    targetText: step.targetText,
+    undoRecord: step.undoRecord,
+    scope: step.scope,
+    coordinate: step.coordinate,
     alternateTargets: Array.isArray(step.alternateTargets) ? step.alternateTargets : undefined,
     ...options,
-  });
+  };
+
+  let actRes = await executeAction(step.action, sanitizedSelector, step.value, execOpts);
+
+  // Closed-loop recoverable retry: if target not found on first try and alternateTargets/text exists, settle DOM and retry once
+  if (!actRes?.ok && !actRes?.stale && Array.isArray(step.alternateTargets) && step.alternateTargets.length > 0) {
+    await waitForPageSettle(1200).catch(() => {});
+    actRes = await executeAction(step.action, undefined, step.alternateTargets[0], {
+      ...execOpts,
+      text: step.alternateTargets[0],
+      clickMethod: "alternate",
+    });
+  }
+
+  // Classify failures cleanly for Self-Healing diagnostics: only log extension bugs, not normal website element absence
+  if (!actRes?.ok && actRes?.message) {
+    const msg = String(actRes.message);
+    const isExtensionBug = /TypeError|ReferenceError|SyntaxError|Cannot read propert|runTabScript|executeScript/i.test(msg);
+    if (isExtensionBug) {
+      reportSwRuntimeError("browser_executor", msg, {
+        currentOperation: `executePlanStepInTab:${step.action}`,
+        pageUrl: step.url || "",
+      }).catch(() => {});
+    }
+  }
 
   return {
-    ok: actRes.ok,
-    verified: actRes.verified ?? actRes.ok,
-    result: actRes.message || `Executed ${step.action}`,
-    error: actRes.ok ? undefined : actRes.message,
+    ok: Boolean(actRes?.ok),
+    verified: actRes?.verified ?? Boolean(actRes?.ok),
+    result: actRes?.message || `Executed ${step.action}`,
+    extractedData: actRes?.extractedData,
+    undoRecord: actRes?.undoRecord,
+    error: actRes?.ok ? undefined : actRes?.message,
   };
 }
 

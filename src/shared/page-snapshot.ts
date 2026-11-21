@@ -37,6 +37,22 @@ export interface SnapshotElement {
   level?: number;
   sensitive?: boolean;
   errorMessage?: string;
+  title?: string;
+  ariaLabel?: string;
+  controlFramework?:
+    | "native"
+    | "react_select"
+    | "mui"
+    | "antd"
+    | "aria_combobox"
+    | "aria_listbox"
+    | "autocomplete"
+    | "prosemirror"
+    | "quill"
+    | "tinymce"
+    | "contenteditable"
+    | "custom";
+  isMulti?: boolean;
   rect?: {
     x: number;
     y: number;
@@ -62,6 +78,9 @@ export interface PaginationInfo {
   hasNextPage?: boolean;
   hasPrevPage?: boolean;
   pageIndicatorText?: string;
+  nextSelector?: string;
+  prevSelector?: string;
+  lastSelector?: string;
 }
 
 export interface ScrollableContainerInfo {
@@ -70,7 +89,42 @@ export interface ScrollableContainerInfo {
   ariaLabel?: string;
   scrollHeight: number;
   clientHeight: number;
+  scrollWidth?: number;
+  clientWidth?: number;
   canScrollDown: boolean;
+  canScrollRight?: boolean;
+}
+
+export interface ViewportTelemetry {
+  width: number;
+  height: number;
+  devicePixelRatio: number;
+  scrollX: number;
+  scrollY: number;
+  zoomScale: number;
+}
+
+export interface ModalOverlayInfo {
+  title?: string;
+  selector: string;
+  isBlocking: boolean;
+  textPreview?: string;
+}
+
+export interface CustomDropdownSnapshotInfo {
+  name: string;
+  selector: string;
+  framework:
+    "react_select" | "mui" | "antd" | "aria_combobox" | "aria_listbox" | "autocomplete" | "custom";
+  isMulti?: boolean;
+  currentValue?: string;
+}
+
+export interface RichTextEditorSnapshotInfo {
+  name: string;
+  selector: string;
+  editorType: "prosemirror" | "quill" | "tinymce" | "contenteditable";
+  textPreview?: string;
 }
 
 export interface PageSnapshot {
@@ -88,6 +142,12 @@ export interface PageSnapshot {
   pagination?: PaginationInfo;
   scrollableContainers?: ScrollableContainerInfo[];
   statusCounts?: Record<string, number>;
+  viewport?: ViewportTelemetry;
+  modals?: ModalOverlayInfo[];
+  loadingIndicators?: string[];
+  disabledSubmits?: string[];
+  customDropdowns?: CustomDropdownSnapshotInfo[];
+  richTextEditors?: RichTextEditorSnapshotInfo[];
 }
 
 export const MAX_TEXT_CHARS = 6000;

@@ -95,3 +95,127 @@ export function calculateCalloutCoordinates(
     cardRect: { left: cardLeft, top: cardTop },
   };
 }
+
+export interface ViewportSnapshotMetrics {
+  width: number;
+  height: number;
+  scrollX: number;
+  scrollY: number;
+  devicePixelRatio: number;
+  zoomScale: number;
+}
+
+export interface CoordinateTargetValidation {
+  valid: boolean;
+  reason?: string;
+  adjustedX?: number;
+  adjustedY?: number;
+}
+
+/**
+ * Validates that visual screenshot coordinates are still valid in the active viewport
+ * and accounts for scroll, zoomScale, devicePixelRatio, and staleness expiry.
+ */
+export function validateCoordinateTarget(
+  target: {
+    x: number;
+    y: number;
+    scrollX: number;
+    scrollY: number;
+    viewportWidth: number;
+    viewportHeight: number;
+    devicePixelRatio: number;
+    zoomScale: number;
+    capturedAt: number;
+    maxAgeMs?: number;
+  },
+  current: ViewportSnapshotMetrics,
+  nowMs = Date.now(),
+): CoordinateTargetValidation {
+  const maxAgeMs = target.maxAgeMs ?? 8000;
+  if (nowMs - target.capturedAt > maxAgeMs) {
+    return { valid: false, reason: "Coordinate snapshot expired due to timeout." };
+  }
+  if (
+    Math.abs(target.viewportWidth - current.width) > 12 ||
+    Math.abs(target.viewportHeight - current.height) > 12
+  ) {
+    return { valid: false, reason: "Viewport resized; captured coordinates are stale." };
+  }
+  if (
+    Math.abs(target.devicePixelRatio - current.devicePixelRatio) > 0.05 ||
+    Math.abs(target.zoomScale - current.zoomScale) > 0.05
+  ) {
+    return { valid: false, reason: "Zoom level or DPR changed; captured coordinates invalidated." };
+  }
+  if (
+    Math.abs(target.scrollX - current.scrollX) > 24 ||
+    Math.abs(target.scrollY - current.scrollY) > 24
+  ) {
+    return { valid: false, reason: "Page scrolled after screenshot; coordinates invalidated." };
+  }
+  const adjustedX = Math.round(target.x);
+  const adjustedY = Math.round(target.y);
+  if (adjustedX < 0 || adjustedY < 0 || adjustedX > current.width || adjustedY > current.height) {
+    return { valid: false, reason: "Target coordinate is outside current viewport." };
+  }
+  return { valid: true, adjustedX, adjustedY };
+}
+
+/**
+ * Converts screenshot pixel coordinates (often DPR-scaled) to CSS viewport coordinates.
+ */
+export function scaleScreenshotPointToViewport(
+  point: { x: number; y: number },
+  screenshotSize: { width: number; height: number },
+  viewport: { width: number; height: number },
+): { x: number; y: number } {
+  const scaleX = screenshotSize.width > 0 ? viewport.width / screenshotSize.width : 1;
+  const scaleY = screenshotSize.height > 0 ? viewport.height / screenshotSize.height : 1;
+  return {
+    x: Math.max(0, Math.min(viewport.width, Math.round(point.x * scaleX))),
+    y: Math.max(0, Math.min(viewport.height, Math.round(point.y * scaleY))),
+  };
+}
+
+/**
+ * Zoom-aware arm kinematics accounting for visualViewport scale changes.
+ */
+export function calculateZoomAwareArmKinematics(
+  targetRect: { left: number; top: number; width: number; height: number },
+  viewport: { width: number; height: number; zoomScale?: number },
+  buddyAnchorWidth = 72,
+): ArmKinematicsResult {
+  const zoom = viewport.zoomScale && viewport.zoomScale > 0 ? viewport.zoomScale : 1;
+  const effectiveViewport = {
+    width: viewport.width / zoom,
+    height: viewport.height / zoom,
+  };
+  return calculateArmKinematics(targetRect, effectiveViewport, buddyAnchorWidth);
+}
+
+/**
+ * Compares before vs after visual metadata (DPR-safe base64 lengths + URL + overlay status).
+ */
+export function compareVisualSnapshots(
+  before: { url: string; screenshotBase64?: string | null },
+  after: { url: string; screenshotBase64?: string | null },
+): { visualChanged: boolean; urlChanged: boolean; summary: string } {
+  const urlChanged = before.url !== after.url;
+  const bData = (before.screenshotBase64 || "").replace(/^data:image\/[^;]+;base64,/, "");
+  const aData = (after.screenshotBase64 || "").replace(/^data:image\/[^;]+;base64,/, "");
+  const hasBothImages = Boolean(bData && aData);
+  const visualChanged = urlChanged || (hasBothImages && bData !== aData);
+
+  return {
+    visualChanged,
+    urlChanged,
+    summary: urlChanged
+      ? `Visual state navigated from ${before.url} to ${after.url}.`
+      : visualChanged
+        ? "Visible screenshot pixels changed after action."
+        : hasBothImages
+          ? "No visual pixel change detected between before and after screenshots."
+          : "Screenshot comparison skipped (screenshot unavailable).",
+  };
+}

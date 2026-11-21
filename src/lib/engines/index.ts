@@ -9,4 +9,5 @@ export * from "./visual-interaction-engine";
 export * from "./memory-engine";
 export * from "./workflow-recipe-engine";
 export * from "./ai-buddy-brain";
+export * from "./unified-orchestrator";
 export * from "@/shared/task-checkpoint";

@@ -20,18 +20,35 @@ export type ActionType = "highlight" | "scroll" | "focus" | "fill_field" | "clic
 export type BrowserActionType =
   | "highlight"
   | "scroll"
+  | "scroll_to_element"
+  | "scroll_until_text"
+  | "scroll_container"
+  | "infinite_scroll"
+  | "paginate"
   | "focus"
+  | "focus_element"
+  | "clear_field"
+  | "hover_element"
+  | "double_click"
+  | "right_click"
+  | "drag_and_drop"
   | "input"
   | "fill_field"
   | "click"
   | "click_submit"
   | "click_delete"
   | "select"
+  | "select_custom_dropdown"
+  | "select_combobox_option"
+  | "interact_with_listbox"
+  | "interact_with_autocomplete"
   | "check"
   | "uncheck"
   | "keyboard"
   | "extract"
   | "extract_table"
+  | "validate_form_errors"
+  | "undo_reversible_action"
   | "locate"
   | "multi_step"
   | "wait_for"
@@ -41,6 +58,111 @@ export type BrowserActionType =
   | "navigate"
   | "purchase"
   | "send_message";
+
+export interface ViewportCoordinateTarget {
+  x: number;
+  y: number;
+  scrollX: number;
+  scrollY: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  devicePixelRatio: number;
+  zoomScale: number;
+  capturedAt: number;
+  maxAgeMs?: number;
+  source?: "dom_rect" | "visual_fallback";
+}
+
+export interface UndoableFieldRecord {
+  id: string;
+  selector: string;
+  fieldLabel?: string;
+  previousValue: string;
+  newValue: string;
+  previousChecked?: boolean;
+  wasSelect?: boolean;
+  wasRichText?: boolean;
+  capturedAt: string;
+}
+
+export interface BeforeAfterActionVerification {
+  preUrl: string;
+  postUrl: string;
+  preScrollY: number;
+  postScrollY: number;
+  urlChanged: boolean;
+  domChanged: boolean;
+  valueMatched: boolean;
+  verifiedBy:
+    | "url_change"
+    | "value_match"
+    | "dom_mutation"
+    | "scroll_delta"
+    | "data_extracted"
+    | "visual_delta"
+    | "unverified";
+  unexpectedOverlayDetected?: boolean;
+}
+
+export function isCoordinateTargetStale(
+  coord: ViewportCoordinateTarget,
+  currentViewport: {
+    scrollX: number;
+    scrollY: number;
+    width: number;
+    height: number;
+    devicePixelRatio: number;
+    zoomScale: number;
+  },
+  nowMs = Date.now(),
+): { stale: boolean; reason?: string } {
+  const maxAgeMs = coord.maxAgeMs ?? 8000;
+  if (nowMs - coord.capturedAt > maxAgeMs) {
+    return {
+      stale: true,
+      reason: `Coordinate target expired after ${nowMs - coord.capturedAt}ms.`,
+    };
+  }
+  if (
+    Math.abs(coord.scrollX - currentViewport.scrollX) > 24 ||
+    Math.abs(coord.scrollY - currentViewport.scrollY) > 24
+  ) {
+    return {
+      stale: true,
+      reason: "Page scrolled since coordinate was captured; re-capture before interacting.",
+    };
+  }
+  if (
+    Math.abs(coord.viewportWidth - currentViewport.width) > 12 ||
+    Math.abs(coord.viewportHeight - currentViewport.height) > 12
+  ) {
+    return {
+      stale: true,
+      reason: "Viewport resized since coordinate was captured.",
+    };
+  }
+  if (
+    Math.abs(coord.devicePixelRatio - currentViewport.devicePixelRatio) > 0.05 ||
+    Math.abs(coord.zoomScale - currentViewport.zoomScale) > 0.05
+  ) {
+    return {
+      stale: true,
+      reason: "Browser zoom or devicePixelRatio changed since coordinate capture.",
+    };
+  }
+  if (
+    coord.x < 0 ||
+    coord.y < 0 ||
+    coord.x > currentViewport.width ||
+    coord.y > currentViewport.height
+  ) {
+    return {
+      stale: true,
+      reason: "Coordinate target falls outside visible viewport bounds.",
+    };
+  }
+  return { stale: false };
+}
 
 export interface ActionTarget {
   ref: string;
@@ -90,7 +212,7 @@ export interface MultiActionStep {
     preActionUrl?: string;
     postActionUrl?: string;
     settledInMs?: number;
-    verifiedBy?: "url_change" | "value_match" | "dom_mutation" | "data_extracted";
+    verifiedBy?: "url_change" | "value_match" | "dom_mutation" | "data_extracted" | "scroll_delta";
   };
 }
 
@@ -188,7 +310,7 @@ export function verifyTargetElement(
 
 /**
  * Dynamically re-resolves the target selector for a step against a live PageSnapshot.
- * Prevents stale selector failures when page DOM mutates between steps.
+ * Multi-strategy scoring: direct selector -> Shadow DOM chain -> exact name/label -> placeholder/aria -> substring -> role.
  */
 export function resolveLiveStepTarget(
   step: MultiActionStep,
@@ -196,8 +318,9 @@ export function resolveLiveStepTarget(
 ): {
   selector: string;
   matched: boolean;
-  strategy: "direct" | "semantic" | "text" | "role" | "fallback";
+  strategy: "direct" | "semantic" | "text" | "role" | "shadow_dom" | "fallback";
   confidence: number;
+  ambiguousCandidates?: Array<{ name: string; selector: string; role: string }>;
 } {
   if (!snapshot) {
     return {
@@ -229,8 +352,8 @@ export function resolveLiveStepTarget(
       return {
         selector: directMatch.selector,
         matched: true,
-        strategy: "direct",
-        confidence: 0.95,
+        strategy: directMatch.selector.includes(">>>") ? "shadow_dom" : "direct",
+        confidence: 0.96,
       };
     }
     const sanitized = cleanSelector(step.selector);
@@ -240,7 +363,7 @@ export function resolveLiveStepTarget(
         return {
           selector: sanitizedMatch.selector,
           matched: true,
-          strategy: "direct",
+          strategy: sanitizedMatch.selector.includes(">>>") ? "shadow_dom" : "direct",
           confidence: 0.9,
         };
       }
@@ -260,8 +383,11 @@ export function resolveLiveStepTarget(
       q
         .toLowerCase()
         .trim()
-        .replace(/^(click|open|press|select|go to|navigate to|fill|type|search|find|copy)\s+/i, "")
-        .replace(/\s+(button|link|tab|input|field|box)$/i, "")
+        .replace(
+          /^(click|hover|double click|right click|focus|clear|open|press|select|go to|navigate to|fill|type|search|find|copy|scroll to)\s+/i,
+          "",
+        )
+        .replace(/\s+(button|link|tab|input|field|box|dropdown|menu)$/i, "")
         .trim(),
     )
     .filter(Boolean);
@@ -277,35 +403,70 @@ export function resolveLiveStepTarget(
     };
   }
 
-  // 3. Exact accessible name or label match (iterates primary query then alternateTargets)
+  // 3. Exact accessible name, aria-label, or placeholder match (track ties for disambiguation)
   for (const cleanQuery of uniqueQueries) {
-    const exactNameMatch = allElements.find(
-      (el) => el.name && el.name.toLowerCase().trim() === cleanQuery,
-    );
-    if (exactNameMatch) {
+    const exactMatches = allElements.filter((el) => {
+      const n = (el.name || "").toLowerCase().trim();
+      const aria = (el.ariaLabel || "").toLowerCase().trim();
+      const ph = (el.placeholder || "").toLowerCase().trim();
+      return n === cleanQuery || aria === cleanQuery || ph === cleanQuery;
+    });
+    if (exactMatches.length > 0) {
+      const primary = exactMatches[0]!;
       return {
-        selector: exactNameMatch.selector,
+        selector: primary.selector,
         matched: true,
-        strategy: "semantic",
-        confidence: 0.9,
+        strategy: primary.selector.includes(">>>") ? "shadow_dom" : "semantic",
+        confidence: exactMatches.length === 1 ? 0.92 : 0.84,
+        ambiguousCandidates:
+          exactMatches.length > 1
+            ? exactMatches.slice(0, 4).map((m) => ({
+                name: m.name || m.placeholder || m.role,
+                selector: m.selector,
+                role: m.role,
+              }))
+            : undefined,
       };
     }
   }
 
-  // 4. Substring text or placeholder match on interactive elements
+  // 4. Weighted substring text, aria, title, or placeholder match
   for (const cleanQuery of uniqueQueries) {
-    const substringMatch = allElements.find((el) => {
-      const name = (el.name || "").toLowerCase();
-      const ph = ((el as { placeholder?: string }).placeholder || "").toLowerCase();
-      const sel = (el.selector || "").toLowerCase();
-      return name.includes(cleanQuery) || ph.includes(cleanQuery) || sel.includes(cleanQuery);
-    });
-    if (substringMatch) {
+    const candidates = allElements
+      .map((el) => {
+        const name = (el.name || "").toLowerCase();
+        const aria = (el.ariaLabel || "").toLowerCase();
+        const ph = (el.placeholder || "").toLowerCase();
+        const title = (el.title || "").toLowerCase();
+        const sel = (el.selector || "").toLowerCase();
+        let score = 0;
+        if (name.includes(cleanQuery)) score += 6;
+        if (aria.includes(cleanQuery)) score += 5;
+        if (ph.includes(cleanQuery)) score += 4;
+        if (title.includes(cleanQuery)) score += 3;
+        if (sel.includes(cleanQuery)) score += 2;
+        if (score > 0 && !el.disabled) score += 1;
+        return { el, score };
+      })
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    if (candidates.length > 0) {
+      const top = candidates[0]!;
+      const tied = candidates.filter((c) => c.score === top.score);
       return {
-        selector: substringMatch.selector,
+        selector: top.el.selector,
         matched: true,
-        strategy: "text",
-        confidence: 0.75,
+        strategy: top.el.selector.includes(">>>") ? "shadow_dom" : "text",
+        confidence: tied.length === 1 ? 0.78 : 0.68,
+        ambiguousCandidates:
+          tied.length > 1
+            ? tied.slice(0, 4).map((t) => ({
+                name: t.el.name || t.el.placeholder || t.el.role,
+                selector: t.el.selector,
+                role: t.el.role,
+              }))
+            : undefined,
       };
     }
   }
@@ -338,7 +499,7 @@ export function resolveLiveStepTarget(
 
 export function verifyActionResult(
   action: BrowserAction,
-  snapshot: unknown,
+  _snapshot: unknown,
 ): { verified: boolean; detail: string } {
   return {
     verified: true,
@@ -348,6 +509,43 @@ export function verifyActionResult(
 
 /** Actions considered high-impact that require user confirmation before execution */
 export const HIGH_IMPACT_ACTIONS: BrowserActionType[] = ["click", "fill_field"];
+
+export function mapBrowserActionToPermissionAction(action: BrowserActionType): BuddyAction {
+  switch (action) {
+    case "locate":
+    case "extract":
+    case "extract_table":
+    case "validate_form_errors":
+      return "read_page";
+    case "highlight":
+      return "highlight";
+    case "scroll":
+    case "scroll_to_element":
+    case "scroll_until_text":
+    case "scroll_container":
+    case "infinite_scroll":
+      return "scroll";
+    case "click_submit":
+    case "click_delete":
+    case "purchase":
+    case "send_message":
+      return "submit";
+    case "navigate":
+      return "navigate";
+    case "input":
+    case "fill_field":
+    case "clear_field":
+    case "select":
+    case "select_custom_dropdown":
+    case "select_combobox_option":
+    case "interact_with_listbox":
+    case "interact_with_autocomplete":
+    case "keyboard":
+      return "fill_field";
+    default:
+      return "click";
+  }
+}
 
 /**
  * Validates whether an action is safe to execute according to permissions,
@@ -367,8 +565,9 @@ export function validateBrowserAction(request: BrowserActionRequest): {
     };
   }
 
-  // 2. Permission ladder check
-  if (!can(request.userPermissionLevel, request.action as BuddyAction)) {
+  // 2. Permission ladder check (mapped strictly to canonical BuddyAction)
+  const buddyAction = mapBrowserActionToPermissionAction(request.action);
+  if (!can(request.userPermissionLevel, buddyAction)) {
     return {
       allowed: false,
       requiresConsent: false,

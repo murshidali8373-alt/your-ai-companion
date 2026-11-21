@@ -409,8 +409,14 @@
     const nextBtn = document.querySelector(
       'a[rel="next"], [aria-label*="next" i], button[aria-label*="next" i], .pagination .next, .next-page, a:not([disabled]):has(> [aria-label*="next" i])',
     );
+    const prevBtn = document.querySelector(
+      'a[rel="prev"], [aria-label*="prev" i], button[aria-label*="prev" i], .pagination .prev, .prev-page',
+    );
+    const lastBtn = document.querySelector(
+      '[aria-label*="last" i], .pagination .last, .last-page',
+    );
 
-    if (pagRoot || pagTextMatch || nextBtn) {
+    if (pagRoot || pagTextMatch || nextBtn || prevBtn) {
       pagination = {
         currentPage: pagTextMatch ? pagTextMatch[1] || pagTextMatch[3] : undefined,
         totalPages: pagTextMatch ? pagTextMatch[2] || pagTextMatch[5] : undefined,
@@ -419,6 +425,14 @@
           !nextBtn.hasAttribute("disabled") &&
           nextBtn.getAttribute("aria-disabled") !== "true",
         ),
+        hasPrevPage: Boolean(
+          prevBtn &&
+          !prevBtn.hasAttribute("disabled") &&
+          prevBtn.getAttribute("aria-disabled") !== "true",
+        ),
+        nextSelector: nextBtn ? cssPath(nextBtn) : undefined,
+        prevSelector: prevBtn ? cssPath(prevBtn) : undefined,
+        lastSelector: lastBtn ? cssPath(lastBtn) : undefined,
         pageIndicatorText: pagTextMatch
           ? pagTextMatch[0]
           : pagRoot
@@ -453,7 +467,10 @@
             ariaLabel: el.getAttribute("aria-label") || undefined,
             scrollHeight: Math.round(el.scrollHeight),
             clientHeight: Math.round(el.clientHeight),
+            scrollWidth: Math.round(el.scrollWidth),
+            clientWidth: Math.round(el.clientWidth),
             canScrollDown: el.scrollHeight > el.scrollTop + el.clientHeight + 10,
+            canScrollRight: el.scrollWidth > el.scrollLeft + el.clientWidth + 10,
           });
         }
       }
@@ -532,6 +549,85 @@
     // Non-fatal
   }
 
+  // --- VIEWPORT TELEMETRY & PHASE 2 UI INTELLIGENCE ---
+  const viewport = {
+    width: Math.round(window.visualViewport?.width || window.innerWidth || docEl.clientWidth || 1280),
+    height: Math.round(window.visualViewport?.height || window.innerHeight || docEl.clientHeight || 720),
+    devicePixelRatio: Number((window.devicePixelRatio || 1).toFixed(2)),
+    scrollX: Math.round(window.scrollX || docEl.scrollLeft || 0),
+    scrollY: Math.round(scrollTop),
+    zoomScale: Number((window.visualViewport?.scale || 1).toFixed(2)),
+  };
+
+  const modals = [];
+  try {
+    for (const m of queryAll('[role="dialog"], [aria-modal="true"], .modal.show, .modal-dialog').filter(visible).slice(0, 4)) {
+      const heading = m.querySelector("h1,h2,h3,h4,[role='heading'],.modal-title");
+      modals.push({
+        title: (heading?.innerText || m.getAttribute("aria-label") || "Dialog").trim().slice(0, 120),
+        selector: cssPath(m),
+        isBlocking: m.getAttribute("aria-modal") === "true" || /modal|dialog/i.test(m.className || ""),
+        textPreview: (m.innerText || "").trim().replace(/\s+/g, " ").slice(0, 160),
+      });
+    }
+  } catch {}
+
+  const loadingIndicators = [];
+  try {
+    for (const sp of queryAll('[aria-busy="true"], [role="progressbar"], .spinner, .loading, .skeleton').filter(visible).slice(0, 5)) {
+      loadingIndicators.push((sp.getAttribute("aria-label") || sp.innerText || sp.className || "loading").toString().trim().slice(0, 60));
+    }
+  } catch {}
+
+  const disabledSubmits = controls
+    .filter((c) => c.disabled && c.role === "button" && /submit|save|checkout|pay|continue|next/i.test(c.name || ""))
+    .map((c) => c.name || c.selector);
+
+  const customDropdowns = [];
+  try {
+    const ddEls = queryAll('[role="combobox"], [role="listbox"], .ant-select, .MuiSelect-select, [class*="react-select"]').filter(visible).slice(0, 12);
+    for (const dd of ddEls) {
+      const cls = String(dd.className || "");
+      const framework = cls.includes("ant-select")
+        ? "antd"
+        : cls.includes("Mui")
+          ? "mui"
+          : cls.includes("react-select")
+            ? "react_select"
+            : dd.getAttribute("role") === "listbox"
+              ? "aria_listbox"
+              : "aria_combobox";
+      customDropdowns.push({
+        name: (dd.getAttribute("aria-label") || dd.innerText || dd.id || "Dropdown").trim().slice(0, 80),
+        selector: cssPath(dd),
+        framework,
+        isMulti: dd.getAttribute("aria-multiselectable") === "true" || cls.includes("multiple"),
+        currentValue: (dd.getAttribute("data-selected-value") || dd.value || dd.innerText || "").trim().slice(0, 80),
+      });
+    }
+  } catch {}
+
+  const richTextEditors = [];
+  try {
+    const rteEls = queryAll('.ProseMirror, .ql-editor, .mce-content-body, [contenteditable="true"]').filter(visible).slice(0, 6);
+    for (const rte of rteEls) {
+      const cls = String(rte.className || "");
+      const editorType = cls.includes("ProseMirror")
+        ? "prosemirror"
+        : cls.includes("ql-editor")
+          ? "quill"
+          : cls.includes("mce-content-body")
+            ? "tinymce"
+            : "contenteditable";
+      richTextEditors.push({
+        name: (rte.getAttribute("aria-label") || rte.getAttribute("placeholder") || rte.id || "Editor").trim().slice(0, 80),
+        selector: cssPath(rte),
+        editorType,
+        textPreview: (rte.innerText || "").trim().slice(0, 120),
+      });
+    }
+  } catch {}
+
   return {
     url: location.href.slice(0, 2000),
     origin: location.origin,
@@ -549,5 +645,11 @@
     pagination,
     scrollableContainers,
     statusCounts,
+    viewport,
+    modals,
+    loadingIndicators,
+    disabledSubmits,
+    customDropdowns,
+    richTextEditors,
   };
 })();

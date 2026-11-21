@@ -1995,10 +1995,21 @@
             >
               🖥️ Open Dashboard
             </button>
+            <button
+              id="settingsSelfHealStatusBtn"
+              class="ghost"
+              style="padding: 4px 8px; font-size: 10px"
+            >
+              🩺 Self-Heal Status
+            </button>
           </div>
           <span
             id="settingsStorageFeedback"
             style="font-size: 10px; color: var(--accent-cyan); display: none; margin-top: 4px"
+          ></span>
+          <span
+            id="settingsSelfHealFeedback"
+            style="font-size: 10px; color: var(--text-muted); display: none; margin-top: 4px"
           ></span>
         </div>
       </div>
@@ -2115,6 +2126,65 @@
             style="padding: 4px 10px; font-size: 11px"
           >
             ❌ Skip Step
+          </button>
+        </div>
+      </div>
+
+      <!-- Self-Healing Granular Approval Card -->
+      <div id="selfHealCard" class="confirm-card" hidden>
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px">
+          <h4 style="font-size: 11px; color: #93c5fd">🩺 Self-Healing Repair & Verification</h4>
+          <span id="selfHealAttributionBadge" class="status-badge" style="font-size: 9px">triaged</span>
+        </div>
+        <p id="selfHealSummary" style="font-size: 11px; color: var(--text-muted); margin-top: 2px"></p>
+        <pre
+          id="selfHealPreview"
+          hidden
+          style="
+            margin: 6px 0 0;
+            font-size: 10px;
+            line-height: 1.35;
+            color: var(--text);
+            background: #0b0f19;
+            padding: 6px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            max-height: 120px;
+            overflow: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          "
+        ></pre>
+        <div style="display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap">
+          <button id="selfHealDiagnoseBtn" class="ghost" style="padding: 3px 7px; font-size: 10px">
+            Diagnose Only
+          </button>
+          <button id="selfHealShowCodeBtn" class="ghost" style="padding: 3px 7px; font-size: 10px">
+            Show Affected Code
+          </button>
+          <button id="selfHealPrepareBtn" class="ghost" style="padding: 3px 7px; font-size: 10px">
+            Prepare Repair
+          </button>
+          <button
+            id="selfHealApplyBtn"
+            style="
+              padding: 3px 8px;
+              font-size: 10px;
+              background: var(--accent);
+              color: white;
+              border: none;
+              border-radius: var(--radius-sm);
+              font-weight: 600;
+            "
+          >
+            Apply &amp; Test
+          </button>
+          <button id="selfHealPrBtn" class="ghost" style="padding: 3px 7px; font-size: 10px">
+            Create GitHub PR
+          </button>
+          <button id="selfHealCancelBtn" class="ghost" style="padding: 3px 7px; font-size: 10px">
+            Cancel
           </button>
         </div>
       </div>

@@ -95,6 +95,8 @@ const bodySchema = z.object({
       recentFields: z.array(z.string().max(80)).max(15).optional(),
     })
     .optional(),
+  sessionContext: z.record(z.unknown()).nullable().optional(),
+  activeTabId: z.number().int().nullable().optional(),
 });
 
 export const Route = createFileRoute("/api/public/extension/ask")({
@@ -132,6 +134,8 @@ export const Route = createFileRoute("/api/public/extension/ask")({
               screenshotBase64: parsed.screenshotBase64,
               uploadedDocumentSummary: parsed.uploadedDocumentSummary,
               actionContext: parsed.actionContext,
+              sessionContext: (parsed.sessionContext ?? null) as never,
+              activeTabId: parsed.activeTabId ?? null,
             });
             return extensionJsonResponse(request, result);
           } else {
@@ -151,6 +155,8 @@ export const Route = createFileRoute("/api/public/extension/ask")({
               screenshotBase64: parsed.screenshotBase64,
               uploadedDocumentSummary: parsed.uploadedDocumentSummary,
               actionContext: parsed.actionContext,
+              sessionContext: (parsed.sessionContext ?? null) as never,
+              activeTabId: parsed.activeTabId ?? null,
             });
             return extensionJsonResponse(request, { ...result, guest: true });
           }
