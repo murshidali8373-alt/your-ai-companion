@@ -23,7 +23,7 @@
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["activeTab", "tabs", "scripting", "storage", "sidePanel"],
+  "permissions": ["activeTab", "tabs", "scripting", "storage", "sidePanel", "downloads"],
   "host_permissions": ["<all_urls>"],
   "content_scripts": [
     {

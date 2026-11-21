@@ -382,7 +382,12 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     conversationBuffer = [];
     chrome.storage.local
       .remove(["session", "conversationBuffer"])
-      .then(() => safeReply({ ok: true }))
+      .then(() =>
+        chrome.storage.local
+          .remove(["savedCheckpoint", "ai_buddy_active_plan"])
+          .catch(() => {})
+          .finally(() => safeReply({ ok: true })),
+      )
       .catch((err) => safeReply({ ok: false, error: String(err?.message || err) }));
     return true;
   }
@@ -499,6 +504,24 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       .get("savedCheckpoint")
       .then((data) => safeReply({ ok: true, checkpoint: data.savedCheckpoint || null }))
       .catch((err) => safeReply({ ok: false, error: String(err?.message || err) }));
+    return true;
+  }
+  if (msg.type === "GET_HEALTH") {
+    getExtensionHealthReport().then(safeReply, (e) =>
+      safeReply({ ok: false, backendReachable: false, error: String(e?.message || e) }),
+    );
+    return true;
+  }
+  if (msg.type === "DOWNLOAD_FILE") {
+    downloadFileFromUrl(msg.url, msg.filenameHint).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
+    );
+    return true;
+  }
+  if (msg.type === "GET_DOWNLOAD_STATUS") {
+    getDownloadStatusById(msg.downloadId).then(safeReply, (e) =>
+      safeReply({ ok: false, error: String(e?.message || e) }),
+    );
     return true;
   }
   if (msg.type === "GET_SNAPSHOT" || msg.type === "GET_PAGE_SNAPSHOT") {
@@ -869,6 +892,7 @@ async function generateAutonomousCompanionReply({
   customBuddyId,
   userApiKey,
   preferredProvider,
+  preferredModel = null,
   history = [],
   actionContext = null,
   serverProviderWarning = null,
@@ -880,7 +904,9 @@ async function generateAutonomousCompanionReply({
   const baseProviderWarning = buildMissingProviderWarning(
     preferredProvider,
     isHindiLang,
-    userApiKey ? "Google Gemini" : "Local Grounded Companion",
+    userApiKey && (!preferredProvider || preferredProvider === "auto" || preferredProvider === "gemini")
+      ? "Google Gemini"
+      : "Local Grounded Companion",
   );
 
   const sanitizePromptStr = (raw) =>
@@ -892,11 +918,18 @@ async function generateAutonomousCompanionReply({
         (_m, key) => `${key}=[redacted]`,
       );
 
-  // 1. Direct Google Gemini API call if user provided API key
+  // 1. Direct Google Gemini API call ONLY when provider is Auto or Gemini (never override explicit non-Gemini providers)
+  const canUseDirectGemini =
+    Boolean(userApiKey) &&
+    (!preferredProvider || preferredProvider === "auto" || preferredProvider === "gemini");
   let directProviderError = null;
-  if (userApiKey) {
+  if (canUseDirectGemini) {
     try {
-      const geminiModels = ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
+      const geminiModels =
+        preferredModel && preferredModel !== "auto" && String(preferredModel).startsWith("gemini-")
+          ? [String(preferredModel)]
+          : ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
+      const isGeneralChat = intent === "general";
       const interpretExtra =
         intent === "interpret_command"
           ? `\nCOMMAND INTERPRETATION MODE:
@@ -906,18 +939,24 @@ Interpret colloquial/short Hinglish ("hnn kr do", "isme daal do", "bss ye wala",
 - If the user wants to type/fill but did NOT provide text ("kch likh do", "ye fill karo", "isme daal do"), set actionType="ask_clarification", needsClarification=true, clarificationQuestion="Kya likhna hai? Text bata do." (or "Kya fill karna hai?"), and highlight the candidate field!
 - Separate: "web_search" (search website on web), "open_website" (open portal by name), "search_submit" (type into page search box & search), "type" (fill input ONLY without submitting), "explain_page" (only when user explicitly asked to explain page).`
           : "";
-      const systemInstruction = `You are ${activeBuddy.name}, an expert AI browser companion. Personality: ${activeBuddy.personality}. Language: ${activeBuddy.defaultLanguage || "hinglish"}.
+      const systemInstruction = isGeneralChat
+        ? `You are ${activeBuddy.name}, an intelligent, warm conversational AI assistant. Personality: ${activeBuddy.personality}. Language: ${activeBuddy.defaultLanguage || "hinglish"}.
+The user asked a general knowledge, writing, coding, brainstorming, or conversational question UNRELATED to any open webpage.
+Answer directly, accurately, and naturally like a helpful AI assistant. Do NOT mention or explain any open webpage.
+Return strictly valid JSON:
+{"answer": string, "highlight": null, "emotion": "neutral"|"thinking"|"happy"|"curious", "calloutTitle": null, "calloutDescription": null, "actionType": null, "targetText": null, "targetField": null, "targetValue": null, "fields": null, "scrollDirection": null, "scrollTarget": null, "needsClarification": false, "clarificationQuestion": null, "steps": null}`
+        : `You are ${activeBuddy.name}, an expert AI browser companion. Personality: ${activeBuddy.personality}. Language: ${activeBuddy.defaultLanguage || "hinglish"}.
 You observe the user's active webpage (elements have refs like "e1", "f1") and plan real browser actions or answer clearly.
 RULES:
 - NEVER click when the user only asks where something is ("kahan hai", "point", "show"); use actionType "point" and set "highlight".
-- For real actions (click, open_link, type, fill, select, check, uncheck, scroll, form_fill, search_submit, web_search, open_website, ask_clarification, explain_page, multi_step), populate exact JSON fields so the Side Panel executes them.
+- For real actions (click, open_link, type, fill, select, check, uncheck, scroll, form_fill, search_submit, web_search, open_website, download, ask_clarification, explain_page, multi_step), populate exact JSON fields so the Side Panel executes them.
 - NEVER invent missing personal info (names, Aadhaar, PAN, GSTIN, prices, order IDs).${interpretExtra}
 Return strictly valid JSON with keys:
-{"answer": string, "highlight": string|null, "emotion": "neutral"|"thinking"|"happy"|"concerned"|"curious"|"celebrate", "calloutTitle": string|null, "calloutDescription": string|null, "actionType": "point"|"click"|"open_link"|"type"|"fill"|"select"|"check"|"uncheck"|"scroll"|"form_fill"|"search_submit"|"web_search"|"open_website"|"explain_page"|"ask_clarification"|"multi_step"|"inspect"|null, "targetText": string|null, "targetField": string|null, "targetValue": string|null, "fields": object|null, "scrollDirection": "up"|"down"|"left"|"right"|"top"|"bottom"|null, "scrollTarget": string|null, "needsClarification": boolean, "clarificationQuestion": string|null, "steps": [{"title": string, "action": "click"|"type"|"select"|"scroll"|"point"|"fill_from_document", "textTarget": string|null, "value": string|null, "selector": string|null, "isConsequential": boolean}]|null}`;
+{"answer": string, "highlight": string|null, "emotion": "neutral"|"thinking"|"happy"|"concerned"|"curious"|"celebrate", "calloutTitle": string|null, "calloutDescription": string|null, "actionType": "point"|"click"|"open_link"|"type"|"fill"|"select"|"check"|"uncheck"|"scroll"|"form_fill"|"search_submit"|"web_search"|"open_website"|"download"|"explain_page"|"ask_clarification"|"multi_step"|"inspect"|null, "targetText": string|null, "targetField": string|null, "targetValue": string|null, "fields": object|null, "scrollDirection": "up"|"down"|"left"|"right"|"top"|"bottom"|null, "scrollTarget": string|null, "needsClarification": boolean, "clarificationQuestion": string|null, "steps": [{"title": string, "action": "navigate"|"open_website"|"click"|"type"|"fill_field"|"select"|"scroll"|"point"|"fill_from_document"|"download"|"verify_page", "textTarget": string|null, "value": string|null, "url": string|null, "selector": string|null, "isConsequential": boolean}]|null}`;
 
       let promptText = "";
       const refMap = new Map();
-      if (snapshot) {
+      if (!isGeneralChat && snapshot) {
         promptText += `ACTIVE WEBPAGE CONTEXT:\nURL: ${snapshot.url}\nTitle: ${snapshot.title}\n`;
         const allItems = [
           ...(snapshot.alerts || []),
@@ -952,7 +991,7 @@ Return strictly valid JSON with keys:
           promptText += `Page Content: ${sanitizePromptStr(snapshot.text).slice(0, 2500)}\n`;
         }
       }
-      if (actionContext && typeof actionContext === "object") {
+      if (!isGeneralChat && actionContext && typeof actionContext === "object") {
         const acParts = [];
         if (actionContext.lastTargetField) acParts.push(`lastTargetField="${actionContext.lastTargetField}"`);
         if (actionContext.lastActionType) acParts.push(`lastActionType="${actionContext.lastActionType}"`);
@@ -968,7 +1007,7 @@ Return strictly valid JSON with keys:
       promptText += `\nUSER QUESTION: ${sanitizePromptStr(question)}`;
 
       const parts = [];
-      if (screenshotBase64) {
+      if (!isGeneralChat && screenshotBase64) {
         const cleanShot = String(screenshotBase64).replace(/^data:image\/[^;]+;base64,/, "");
         parts.push({ inlineData: { mimeType: "image/jpeg", data: cleanShot } });
       }
@@ -1166,7 +1205,38 @@ Return strictly valid JSON with keys:
     ...(effectiveFailure ? { providerFailure: effectiveFailure } : {}),
   };
 
-  // 2. Local Grounded Companion Engine (Always active, zero external network required)
+  // STRICT HONEST ERROR GATE:
+  // Never replace general-knowledge AI questions or explicitly selected providers with local DOM fallback!
+  const isStrictNonAutoProvider = Boolean(preferredProvider && preferredProvider !== "auto");
+  if (intent === "general" || isStrictNonAutoProvider) {
+    const honestMsg =
+      effectiveFailure?.message ||
+      effectiveLocalWarning?.message ||
+      (isHindiLang
+        ? "AI model abhi available nahi hai. Kripya server connection ya Settings → AI Model Hub check karein."
+        : "The selected AI provider is currently unavailable. Please check your connection or API key in Settings → AI Model Hub.");
+    return {
+      taskId: null,
+      reply: {
+        answer: honestMsg,
+        highlight: null,
+        confidence: "low",
+        needs: "ai_provider",
+        emotion: "concerned",
+      },
+      highlightSelector: null,
+      buddyName: activeBuddy.name,
+      permission: "explain",
+      guest: true,
+      activeProvider: "error",
+      aiFallbackUsed: false,
+      providerWarning: effectiveLocalWarning,
+      ...(effectiveFailure ? { providerFailure: effectiveFailure } : {}),
+    };
+  }
+
+  // 2. Local Grounded Companion Engine (Only for page-grounded commands in Auto mode when AI is unreachable)
+  const qNorm = qLower.replace(/\bkrdo\b|\bkr\s+do\b/gi, "kar do").replace(/\bkro\b/gi, "karo");
   // Greetings
   if (
     /^(?:hi+|hello+|hey+|namaste|pranam|hola|kya haal|ram ram|good\s+(?:morning|afternoon|evening)|kaise ho)[.!?\s]*$/i.test(
@@ -1347,18 +1417,33 @@ Return strictly valid JSON with keys:
     };
   }
 
-  // Form filling / writing commands (NEVER explain webpage when user asked to fill/write without value)
+  // Form filling / writing commands (extract concrete value-first/verb-first Hinglish values BEFORE asking!)
   const fillWithMatch = question.match(/\bfill\s+(.+?)\s+with\s+["']?([^"'\n]+?)["']?(?:\s+without\s+submitting)?[.!?]*$/i);
+  const concreteLocalFillMatch =
+    !fillWithMatch &&
+    (question.match(/^\s*["']?([^"'\n]+?)["']?\s+(?:ye|yeh|isko|isme|yahan)?\s*(?:fill|bhar|bharo|likh|likho|daal|daalo|type|enter)\s*(?:kar\s*do|karo|kr\s*do|krdo|kro|kijiye)?[.!?]*$/i) ||
+      question.match(/^\s*(?:fill|bhar|bharo|likh|likho|daal|daalo|type|enter)\s*(?:kar\s*do|karo|kr\s*do|krdo|kro)?\s+["']?([^"'\n]+?)["']?[.!?]*$/i));
+  const cleanedConcreteVal = concreteLocalFillMatch?.[1]
+    ? concreteLocalFillMatch[1]
+        .replace(/\b(?:ye|yeh|isko|isme|yahan|form|field|box|input|me|mein|main|par|pe|wala|wali|wale)\b/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+    : "";
+  const hasConcreteLocalVal =
+    Boolean(cleanedConcreteVal) &&
+    !/^(?:kch|kuch|something|it|this|that|form|field|details?)$/i.test(cleanedConcreteVal);
+
   const isBareFillOrWrite =
     !fillWithMatch &&
-    /\b(?:fill|bhar|bharo|likh|likho|lkh|lkho|daal|daalo|dalo|type|enter)\b/i.test(qLower) &&
-    (/\b(?:kch|kuch|something|ye|yeh|isme|isko|it|this)\b/i.test(qLower) || !/\b(?:with|as|:|=)\b/i.test(qLower));
+    !hasConcreteLocalVal &&
+    /\b(?:fill|bhar|bharo|likh|likho|lkh|lkho|daal|daalo|dalo|type|enter)\b/i.test(qNorm) &&
+    (/\b(?:kch|kuch|something|ye|yeh|isme|isko|it|this)\b/i.test(qNorm) || !/\b(?:with|as|:|=)\b/i.test(qNorm));
 
   if (isBareFillOrWrite) {
     const isHindi = activeBuddy.defaultLanguage !== "english";
     const matchedField = findBestMatchingElement(snapshot, question) || snapshot?.forms?.[0] || null;
     const askText = isHindi
-      ? /\b(?:likh|likho|type)\b/i.test(qLower)
+      ? /\b(?:likh|likho|type)\b/i.test(qNorm)
         ? "Kya likhna hai? Text bata do."
         : "Kya fill karna hai?"
       : "What should I write or fill here? Please share the value.";
@@ -1387,14 +1472,15 @@ Return strictly valid JSON with keys:
 
   const isFormFillAction =
     Boolean(fillWithMatch) ||
+    hasConcreteLocalVal ||
     /(?:form\s+(?:fill|bhar|bharo)|fill\s+(?:the\s+|this\s+)?form|auto\s*fill|fill\s+(?:all\s+)?(?:inputs|fields)|fill\s+kar|likh\s+do|daal\s+do|type\s+kar)/i.test(
-      qLower,
+      qNorm,
     );
 
   if (isFormFillAction) {
     const isHindi = activeBuddy.defaultLanguage !== "english";
     const targetField = fillWithMatch?.[1]?.trim() || null;
-    const targetValue = fillWithMatch?.[2]?.trim() || null;
+    const targetValue = fillWithMatch?.[2]?.trim() || (hasConcreteLocalVal ? cleanedConcreteVal : null);
     const matchedField = targetField ? findBestMatchingElement(snapshot, targetField) : snapshot?.forms?.[0];
     const answer =
       targetField && targetValue
@@ -2234,7 +2320,7 @@ async function ask(
     "customBaseUrl",
     "selectedProvider",
   ]);
-  const effectivePreferredProvider = requestedPreferredProvider || selectedProvider || "gemini";
+  const effectivePreferredProvider = requestedPreferredProvider || selectedProvider || "auto";
 
   let apiBase = await resolveExtensionApiBase(session, lastBase);
 
@@ -2243,28 +2329,30 @@ async function ask(
   let snapshotError = null;
   let screenshotBase64 = null;
 
-  const snapRes = await getSnapshotForActiveTab();
-  if (snapRes.ok) {
-    snapshot = snapRes.snapshot;
-  } else {
-    snapshotError = snapRes.error;
-  }
+  if (intent !== "general") {
+    const snapRes = await getSnapshotForActiveTab();
+    if (snapRes.ok) {
+      snapshot = snapRes.snapshot;
+    } else {
+      snapshotError = snapRes.error;
+    }
 
-  // Visual fallback: capture visible tab screenshot if DOM access failed, yielded sparse content, or user asks visually
-  const isDomSparse =
-    !snapshot ||
-    ((snapshot.controls?.length || 0) === 0 &&
-      (snapshot.forms?.length || 0) === 0 &&
-      (snapshot.text || "").trim().length < 80);
-  const asksVisually =
-    /\b(screen|screenshot|image|photo|layout|color|look|dikha|dekho|captcha)\b/i.test(question);
-  if (
-    (isDomSparse || intent === "visual_inspect" || asksVisually) &&
-    tab?.id &&
-    tab.url &&
-    !RESTRICTED.test(tab.url)
-  ) {
-    screenshotBase64 = await captureTabScreenshot(tab.windowId);
+    // Visual fallback: capture visible tab screenshot if DOM access failed, yielded sparse content, or user asks visually
+    const isDomSparse =
+      !snapshot ||
+      ((snapshot.controls?.length || 0) === 0 &&
+        (snapshot.forms?.length || 0) === 0 &&
+        (snapshot.text || "").trim().length < 80);
+    const asksVisually =
+      /\b(screen|screenshot|image|photo|layout|color|look|dikha|dekho|captcha)\b/i.test(question);
+    if (
+      (isDomSparse || intent === "visual_inspect" || asksVisually) &&
+      tab?.id &&
+      tab.url &&
+      !RESTRICTED.test(tab.url)
+    ) {
+      screenshotBase64 = await captureTabScreenshot(tab.windowId);
+    }
   }
 
   const headers = { "content-type": "application/json" };
@@ -2394,14 +2482,23 @@ async function ask(
       }
     }
 
+    const isServerStrictError = body?.activeProvider === "error";
+    const canTryLocalDirectGemini =
+      Boolean(userApiKey) &&
+      (!effectivePreferredProvider ||
+        effectivePreferredProvider === "auto" ||
+        effectivePreferredProvider === "gemini");
+
     const hasServerAiError =
       !body?.reply?.answer ||
-      body?.aiFallbackUsed === true ||
-      body?.activeProvider === "local_grounded" ||
-      body?.reply?.answer?.includes("No AI provider is configured on the server") ||
-      body?.reply?.answer?.includes("Add GEMINI_API_KEY") ||
-      body?.error === "server_error" ||
-      body?.error === "auth";
+      (isServerStrictError && canTryLocalDirectGemini) ||
+      (!isServerStrictError &&
+        (body?.aiFallbackUsed === true ||
+          body?.activeProvider === "local_grounded" ||
+          body?.reply?.answer?.includes("No AI provider is configured on the server") ||
+          body?.reply?.answer?.includes("Add GEMINI_API_KEY") ||
+          body?.error === "server_error" ||
+          body?.error === "auth"));
 
     if (isHtmlAuthRedirect || hasServerAiError) {
       const serverFailureDetail =
@@ -2411,7 +2508,15 @@ async function ask(
               kind: body?.error || "server_error",
               status: "server_error",
               provider: "backend",
-              message: body?.message || `Backend HTTP ${res.status}`,
+              message:
+                body?.providerFailure?.message ||
+                body?.message ||
+                (typeof body?.error === "string" &&
+                body.error !== "server_error" &&
+                body.error !== "auth"
+                  ? body.error
+                  : null) ||
+                `Backend HTTP ${res.status}`,
             }
           : isHtmlAuthRedirect
             ? {
@@ -2430,6 +2535,7 @@ async function ask(
         customBuddyId,
         userApiKey,
         preferredProvider: effectivePreferredProvider,
+        preferredModel,
         history: formattedHistory,
         actionContext: effectiveActionContext,
         serverProviderWarning: body?.providerWarning || null,
@@ -2469,6 +2575,7 @@ async function ask(
         customBuddyId,
         userApiKey,
         preferredProvider: effectivePreferredProvider,
+        preferredModel,
         history: formattedHistory,
         actionContext: effectiveActionContext,
         serverProviderWarning: body?.providerWarning || null,
@@ -2525,6 +2632,7 @@ async function ask(
         customBuddyId,
         userApiKey,
         preferredProvider: effectivePreferredProvider,
+        preferredModel,
         history: formattedHistory,
         actionContext: effectiveActionContext,
         serverProviderFailure: {
@@ -3394,6 +3502,21 @@ async function smartFillForm(fields, options = {}) {
 
         // 2. Current / highlighted / active / semantic value inference (with ambiguity check!)
         if (key === "__CURRENT__" || key === "__PRIMARY__") {
+          // Strong semantic inference from value format (10-digit phone, email) beats stale highlight fallback
+          const rawValStrEarly = String(entryVal || "").trim();
+          if (rawValStrEarly) {
+            let earlyInferredKey = null;
+            if (/^(\+?\d{1,3}[\s-]?)?[6-9]\d{9}$/.test(rawValStrEarly.replace(/\s+/g, ""))) {
+              earlyInferredKey = "phone";
+            } else if (/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(rawValStrEarly)) {
+              earlyInferredKey = "email";
+            }
+            if (earlyInferredKey) {
+              const inferredRes = findCandidateForKey(earlyInferredKey, null, rawValStrEarly);
+              if (inferredRes?.el) return inferredRes;
+              if (inferredRes?.ambiguous) return inferredRes;
+            }
+          }
           if (opts?.fallbackSelector) {
             const hlEl = resolveEditableTarget(queryDeepSelector(opts.fallbackSelector));
             if (hlEl && validateInteractability(hlEl).ok) return { el: hlEl };
@@ -3405,7 +3528,12 @@ async function smartFillForm(fields, options = {}) {
             rawActive !== document.documentElement
               ? resolveEditableTarget(rawActive)
               : null;
-          if (active && active !== document.body && validateInteractability(active).ok) return { el: active };
+          if (active && active !== document.body && validateInteractability(active).ok) {
+            const activeCur = isContentEditableEl(active) ? active.innerText : active.value;
+            if (opts?.overwrite || !String(activeCur || "").replace(/[\u200B\s]/g, "")) {
+              return { el: active };
+            }
+          }
           const rawVisible = elements.filter(
             (el) => validateInteractability(el).ok && !claimedElements.has(el),
           );
@@ -3427,22 +3555,6 @@ async function smartFillForm(fields, options = {}) {
               : visibleInputs.filter(isTextInputEl);
           const candidatePool = textInputs.length > 0 ? textInputs : visibleInputs;
           if (candidatePool.length === 1) return { el: candidatePool[0] };
-
-          // Try semantic inference from value format (mobile number, email, URL)
-          const rawValStr = String(entryVal || "").trim();
-          if (candidatePool.length > 1 && rawValStr) {
-            let inferredKey = null;
-            if (/^(\+?\d{1,3}[\s-]?)?[6-9]\d{9}$/.test(rawValStr.replace(/\s+/g, ""))) {
-              inferredKey = "phone";
-            } else if (/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(rawValStr)) {
-              inferredKey = "email";
-            }
-            if (inferredKey) {
-              const inferredRes = findCandidateForKey(inferredKey, null, rawValStr);
-              if (inferredRes?.el) return inferredRes;
-              if (inferredRes?.ambiguous) return inferredRes;
-            }
-          }
 
           if (candidatePool.length > 1 && opts?.fromChatCommand) {
             const emptyInputs = candidatePool.filter((el) => {
@@ -3606,7 +3718,7 @@ async function smartFillForm(fields, options = {}) {
       // Build ordered fill entries from either array (explicitPairs) or object (fieldsToFill)
       const entries = Array.isArray(opts?.explicitPairs)
         ? opts.explicitPairs.map((p) => ({
-            key: p.target || p.key || "__CURRENT__",
+            key: p.target || p.fieldHint || p.key || "__CURRENT__",
             val: p.value,
             overwrite: p.overwrite ?? opts?.overwrite,
             selector: p.selector,
@@ -3963,6 +4075,31 @@ async function smartFillForm(fields, options = {}) {
               : "••••••"
             : strVal;
 
+          // Inspect HTML5 / ARIA / adjacent DOM validation feedback after blur
+          let validationError = "";
+          try {
+            if (typeof candidate.checkValidity === "function" && !candidate.checkValidity()) {
+              validationError = candidate.validationMessage || "Invalid field format.";
+            } else if (candidate.getAttribute?.("aria-invalid") === "true") {
+              validationError = candidate.validationMessage || "Field marked aria-invalid.";
+            } else {
+              const container = candidate.closest?.("div, label, td, li, fieldset") || candidate.parentElement;
+              const adjErr = container?.querySelector?.(
+                '.error, .error-message, .invalid-feedback, [role="alert"]',
+              );
+              if (adjErr && isVisible(adjErr)) {
+                const errTxt = normalize(adjErr.innerText || adjErr.textContent || "");
+                if (errTxt && errTxt.length < 180) {
+                  validationError = errTxt;
+                }
+              }
+            }
+          } catch {}
+
+          if (verified && validationError) {
+            verified = false;
+          }
+
           if (verified) {
             results.filled.push({
               key,
@@ -3977,9 +4114,12 @@ async function smartFillForm(fields, options = {}) {
               key,
               field: fieldLabel,
               selector: getUniqueSelector(candidate),
-              error: actualReadback
-                ? `Field rejected or altered value (got "${check.isSensitive ? "••••••" : String(actualReadback).slice(0, 60)}")`
-                : `Field "${fieldLabel}" rejected or cleared the value`,
+              validationError: validationError || undefined,
+              error: validationError
+                ? `Field "${fieldLabel}" validation reported: ${validationError}`
+                : actualReadback
+                  ? `Field rejected or altered value (got "${check.isSensitive ? "••••••" : String(actualReadback).slice(0, 60)}")`
+                  : `Field "${fieldLabel}" rejected or cleared the value`,
             });
           }
         } catch (err) {
@@ -5363,10 +5503,49 @@ async function executeAction(action, selector, value, options = {}) {
         const dialogSelector = 'dialog[open], [role="dialog"], [role="alertdialog"], .modal.show, .modal-open';
         const dialogsBefore = queryAllDeep(dialogSelector).filter(isVisible).length;
 
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+        await new Promise((r) => setTimeout(r, 60));
+
+        // Obstruction check via elementFromPoint at center coordinates
+        let clickTargetEl = el;
+        let obstructionWarning = null;
+        try {
+          const rect = clickTargetEl.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            const cx = Math.round(rect.left + rect.width / 2);
+            const cy = Math.round(rect.top + rect.height / 2);
+            const topHit = document.elementFromPoint(cx, cy);
+            const isSameOrRelated =
+              topHit &&
+              (topHit === clickTargetEl ||
+                clickTargetEl.contains?.(topHit) ||
+                topHit.contains?.(clickTargetEl));
+            if (topHit && !isSameOrRelated) {
+              // Retry centering scroll or pick unobstructed clickable descendant
+              clickTargetEl.scrollIntoView({ behavior: "auto", block: "nearest", inline: "nearest" });
+              await new Promise((r) => setTimeout(r, 50));
+              const retryRect = clickTargetEl.getBoundingClientRect();
+              const topHit2 = document.elementFromPoint(
+                Math.round(retryRect.left + retryRect.width / 2),
+                Math.round(retryRect.top + retryRect.height / 2),
+              );
+              const stillBlocked =
+                topHit2 &&
+                topHit2 !== clickTargetEl &&
+                !clickTargetEl.contains?.(topHit2) &&
+                !topHit2.contains?.(clickTargetEl);
+              if (stillBlocked) {
+                const blockerDesc = normalize(
+                  topHit2.getAttribute?.("aria-label") || topHit2.className || topHit2.tagName,
+                ).slice(0, 40);
+                obstructionWarning = `Target appears partially covered by "${blockerDesc}".`;
+              }
+            }
+          }
+        } catch {}
 
         let formSubmittedByClick = false;
-        const targetForm = el.form || el.closest?.("form");
+        const targetForm = clickTargetEl.form || clickTargetEl.closest?.("form");
         const onFormSubmit = () => {
           formSubmittedByClick = true;
         };
@@ -5374,7 +5553,30 @@ async function executeAction(action, selector, value, options = {}) {
           targetForm.addEventListener("submit", onFormSubmit, { once: true });
         }
 
-        dispatchRealClick(el);
+        if (opts?.clickMethod === "alternate") {
+          const r = clickTargetEl.getBoundingClientRect();
+          const cx = Math.round(r.left + Math.max(1, r.width / 2));
+          const cy = Math.round(r.top + Math.max(1, r.height / 2));
+          const evOpts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0 };
+          clickTargetEl.focus?.();
+          try {
+            clickTargetEl.dispatchEvent(new PointerEvent("pointerover", { ...evOpts, pointerType: "mouse", isPrimary: true }));
+            clickTargetEl.dispatchEvent(new PointerEvent("pointerdown", { ...evOpts, buttons: 1, pointerType: "mouse", isPrimary: true }));
+          } catch {}
+          clickTargetEl.dispatchEvent(new MouseEvent("mousedown", { ...evOpts, buttons: 1 }));
+          try {
+            clickTargetEl.dispatchEvent(new PointerEvent("pointerup", { ...evOpts, buttons: 0, pointerType: "mouse", isPrimary: true }));
+          } catch {}
+          clickTargetEl.dispatchEvent(new MouseEvent("mouseup", { ...evOpts, buttons: 0 }));
+          clickTargetEl.dispatchEvent(new MouseEvent("click", evOpts));
+          clickTargetEl.click?.();
+          const clickableAncestor = clickTargetEl.closest?.('button, a, [role="button"]');
+          if (clickableAncestor && clickableAncestor !== clickTargetEl) {
+            clickableAncestor.click?.();
+          }
+        } else {
+          dispatchRealClick(clickTargetEl);
+        }
 
         if (targetForm && (act === "submit" || act === "click_submit")) {
           targetForm.removeEventListener("submit", onFormSubmit);
@@ -5398,7 +5600,7 @@ async function executeAction(action, selector, value, options = {}) {
         });
 
         const clickedText = normalize(
-          el.innerText || el.value || el.getAttribute?.("aria-label") || el.tagName,
+          clickTargetEl.innerText || clickTargetEl.value || clickTargetEl.getAttribute?.("aria-label") || clickTargetEl.tagName,
         ).slice(0, 60);
 
         let stateChange = "clicked";
@@ -5409,13 +5611,13 @@ async function executeAction(action, selector, value, options = {}) {
           if (dialogsAfter > dialogsBefore) {
             stateChange = "modal_opened";
           } else if (
-            el.checked !== checkedBefore ||
-            el.getAttribute?.("aria-checked") !== ariaCheckedBefore
+            clickTargetEl.checked !== checkedBefore ||
+            clickTargetEl.getAttribute?.("aria-checked") !== ariaCheckedBefore
           ) {
             stateChange = "toggled";
           } else if (
-            el.getAttribute?.("aria-selected") !== ariaSelectedBefore ||
-            el.getAttribute?.("aria-expanded") !== ariaExpandedBefore
+            clickTargetEl.getAttribute?.("aria-selected") !== ariaSelectedBefore ||
+            clickTargetEl.getAttribute?.("aria-expanded") !== ariaExpandedBefore
           ) {
             stateChange = "selected";
           }
@@ -5424,7 +5626,7 @@ async function executeAction(action, selector, value, options = {}) {
         // Capture visible status, alert, error, or confirmation feedback shown by the page
         const feedbackEls = queryAllDeep(
           '[role="alert"], [role="status"], [aria-live], .alert, .error, .error-message, .form-error, .invalid-feedback, .success, .toast, .notice',
-        ).filter((node) => isVisible(node) && !node.contains(el));
+        ).filter((node) => isVisible(node) && !node.contains(clickTargetEl));
         const pageFeedback = [];
         let hasErrorFeedback = false;
         for (const fb of feedbackEls) {
@@ -5444,9 +5646,9 @@ async function executeAction(action, selector, value, options = {}) {
         }
 
         const isNowChecked =
-          typeof el.checked === "boolean"
-            ? el.checked
-            : el.getAttribute?.("aria-checked") === "true";
+          typeof clickTargetEl.checked === "boolean"
+            ? clickTargetEl.checked
+            : clickTargetEl.getAttribute?.("aria-checked") === "true";
 
         let outcomeMsg = `Successfully clicked "${clickedText}".`;
         if (stateChange === "navigated") {
@@ -5458,6 +5660,9 @@ async function executeAction(action, selector, value, options = {}) {
         } else if (stateChange === "selected") {
           outcomeMsg += " Selection updated.";
         }
+        if (obstructionWarning && stateChange === "clicked") {
+          outcomeMsg += ` (${obstructionWarning})`;
+        }
         if (pageFeedback.length > 0) {
           outcomeMsg += ` Page reported: "${pageFeedback[0]}"`;
         }
@@ -5465,13 +5670,14 @@ async function executeAction(action, selector, value, options = {}) {
         return {
           ok: true,
           action: "click",
-          tag: el.tagName.toLowerCase(),
+          tag: clickTargetEl.tagName.toLowerCase(),
           text: clickedText,
           stateChange,
           urlBefore,
           urlAfter: window.location.href,
           pageFeedback: pageFeedback.length > 0 ? pageFeedback : undefined,
           hasErrorFeedback,
+          obstructionWarning: obstructionWarning || undefined,
           message: outcomeMsg,
         };
       }
@@ -6024,6 +6230,7 @@ async function executeAction(action, selector, value, options = {}) {
   };
 
   const tabUrlBefore = tab.url;
+  const actionStartedAt = Date.now();
   const execRun = await runTabScript({
     target: { tabId: tab.id },
     func: executeFrameFunc,
@@ -6035,6 +6242,7 @@ async function executeAction(action, selector, value, options = {}) {
     ok: false,
     message: execRun.error || "Action failed to execute.",
   };
+  let finalResult = mainResult;
   if (!mainResult.ok) {
     // Full-page navigation may destroy the top frame execution context slightly before tab.url updates
     if (
@@ -6046,7 +6254,7 @@ async function executeAction(action, selector, value, options = {}) {
       for (let i = 0; i < 8; i++) {
         const updatedTab = await chrome.tabs.get(tab.id).catch(() => null);
         if (updatedTab?.url && updatedTab.url !== tabUrlBefore) {
-          return {
+          finalResult = {
             ok: true,
             action: String(action || "").toLowerCase(),
             stateChange: "navigated",
@@ -6055,21 +6263,36 @@ async function executeAction(action, selector, value, options = {}) {
             newUrl: updatedTab.url,
             message: `Navigated to ${updatedTab.url}.`,
           };
+          break;
         }
         await new Promise((r) => setTimeout(r, 45));
       }
     }
-    const subRun = await runTabScript({
-      target: { tabId: tab.id, allFrames: true },
-      func: executeFrameFunc,
-      args: [action, selector, value, { ...(options || {}), skipTopFrame: true }],
-      label: `executeAction:${action}:allFrames`,
-    });
-    const subHit = (subRun.results || []).find((r) => r.frameId !== 0 && r.result?.ok);
-    if (subHit?.result) return subHit.result;
+    if (!finalResult.ok) {
+      const subRun = await runTabScript({
+        target: { tabId: tab.id, allFrames: true },
+        func: executeFrameFunc,
+        args: [action, selector, value, { ...(options || {}), skipTopFrame: true }],
+        label: `executeAction:${action}:allFrames`,
+      });
+      const subHit = (subRun.results || []).find((r) => r.frameId !== 0 && r.result?.ok);
+      if (subHit?.result) finalResult = subHit.result;
+    }
   }
 
-  return mainResult;
+  if (
+    finalResult?.ok &&
+    (options?.trackDownload || /download/i.test(`${options?.text || ""} ${finalResult?.text || ""}`))
+  ) {
+    const dlInfo = await waitForTriggeredDownload(actionStartedAt, 2000).catch(() => null);
+    if (dlInfo?.found) {
+      finalResult.downloadTriggered = true;
+      finalResult.download = dlInfo;
+      finalResult.message = `${finalResult.message} Download ${dlInfo.state === "complete" ? "completed" : "started"}${dlInfo.filename ? `: ${dlInfo.filename}` : ""}.`;
+    }
+  }
+
+  return finalResult;
 }
 
 /**
@@ -6248,10 +6471,8 @@ async function navigateTab(url, tabId) {
     return { ok: true, tabId: newTab.id, url: newTab.url, navigated: true };
   }
 
-  await chrome.tabs.update(targetTabId, { url });
-
-  // Wait for status complete with timeout tracking
-  const completed = await new Promise((resolve) => {
+  // Register completion listener before tabs.update so fast/cached loads are never missed
+  const waitForLoad = new Promise((resolve) => {
     let settled = false;
     const listener = (id, changeInfo) => {
       if (id === targetTabId && changeInfo.status === "complete") {
@@ -6264,8 +6485,11 @@ async function navigateTab(url, tabId) {
     setTimeout(() => {
       chrome.tabs.onUpdated?.removeListener?.(listener);
       resolve(settled);
-    }, 5000);
+    }, 10000);
   });
+
+  await chrome.tabs.update(targetTabId, { url });
+  const completed = await waitForLoad;
 
   const updatedTab = await chrome.tabs.get(targetTabId).catch(() => null);
   const finalUrl = updatedTab?.url || url;
@@ -6504,6 +6728,238 @@ async function waitForCondition(selector, text, timeoutMs = 4000) {
   };
 }
 
+const SAFE_PORTAL_URL_MAP = {
+  google: "https://www.google.com/",
+  youtube: "https://www.youtube.com/",
+  gmail: "https://mail.google.com/",
+  drive: "https://drive.google.com/",
+  docs: "https://docs.google.com/",
+  sheets: "https://docs.google.com/spreadsheets",
+  "google sheets": "https://docs.google.com/spreadsheets",
+  calendar: "https://calendar.google.com/",
+  meesho: "https://supplier.meesho.com/",
+  "meesho supplier": "https://supplier.meesho.com/",
+  "meesho supplier panel": "https://supplier.meesho.com/",
+  "flipkart seller": "https://seller.flipkart.com/",
+  "flipkart seller hub": "https://seller.flipkart.com/",
+  "flipkart dashboard": "https://seller.flipkart.com/",
+  "amazon seller": "https://sellercentral.amazon.in/",
+  "seller central": "https://sellercentral.amazon.in/",
+  amazon: "https://www.amazon.in/",
+  flipkart: "https://www.flipkart.com/",
+  chatgpt: "https://chatgpt.com/",
+  github: "https://github.com/",
+  whatsapp: "https://web.whatsapp.com/",
+  gst: "https://www.gst.gov.in/",
+  "gst portal": "https://www.gst.gov.in/",
+  aadhaar: "https://uidai.gov.in/",
+  "aadhaar website": "https://uidai.gov.in/",
+  uidai: "https://uidai.gov.in/",
+  incometax: "https://www.incometax.gov.in/",
+};
+
+function isAllowedDownloadUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== "string") return false;
+  try {
+    const parsed = new URL(rawUrl);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" || parsed.protocol === "blob:";
+  } catch {
+    return false;
+  }
+}
+
+function sanitizeFilenameHint(hint) {
+  if (!hint || typeof hint !== "string") return undefined;
+  const cleaned = hint
+    .replace(/[\\:*?"<>|]/g, "_")
+    .replace(/\.\.+/g, ".")
+    .replace(/^\/+|\/+$/g, "")
+    .trim();
+  return cleaned || undefined;
+}
+
+async function waitForDownloadLifecycle(downloadId, timeoutMs = 4500) {
+  if (!chrome.downloads?.search) {
+    return { downloadId, state: "in_progress" };
+  }
+  const initial = await chrome.downloads.search({ id: downloadId }).catch(() => []);
+  const firstItem = initial?.[0];
+  if (firstItem && (firstItem.state === "complete" || firstItem.state === "interrupted")) {
+    return {
+      downloadId,
+      state: firstItem.state,
+      filename: firstItem.filename || undefined,
+      error: firstItem.error || undefined,
+    };
+  }
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = async (fallbackState = "in_progress", errMsg) => {
+      if (done) return;
+      done = true;
+      chrome.downloads?.onChanged?.removeListener?.(onChanged);
+      const found = await chrome.downloads.search({ id: downloadId }).catch(() => []);
+      const item = found?.[0];
+      resolve({
+        downloadId,
+        state: item?.state || fallbackState,
+        filename: item?.filename || undefined,
+        error: item?.error || errMsg || undefined,
+      });
+    };
+    const onChanged = (delta) => {
+      if (delta.id !== downloadId) return;
+      if (delta.state?.current === "complete" || delta.state?.current === "interrupted") {
+        finish(delta.state.current, delta.error?.current);
+      }
+    };
+    chrome.downloads?.onChanged?.addListener?.(onChanged);
+    setTimeout(() => finish("in_progress"), timeoutMs);
+  });
+}
+
+async function downloadFileFromUrl(url, filenameHint) {
+  if (!isAllowedDownloadUrl(url)) {
+    return {
+      ok: false,
+      message: "Blocked download URL: only http, https, or blob URLs are permitted.",
+    };
+  }
+  if (!chrome.downloads?.download) {
+    return {
+      ok: false,
+      message: "Chrome Downloads API is not available in this context.",
+    };
+  }
+  try {
+    const safeHint = sanitizeFilenameHint(filenameHint);
+    const dlOpts = { url, saveAs: false };
+    if (safeHint) dlOpts.filename = safeHint;
+    const downloadId = await chrome.downloads.download(dlOpts);
+    const lifecycle = await waitForDownloadLifecycle(downloadId, 4000);
+    if (lifecycle.state === "interrupted") {
+      return {
+        ok: false,
+        downloadId,
+        state: "interrupted",
+        filename: lifecycle.filename,
+        message: `Download interrupted${lifecycle.error ? `: ${lifecycle.error}` : ""}.`,
+      };
+    }
+    return {
+      ok: true,
+      downloadId,
+      state: lifecycle.state,
+      filename: lifecycle.filename || safeHint,
+      message:
+        lifecycle.state === "complete"
+          ? `Download completed${lifecycle.filename ? `: ${lifecycle.filename}` : ""}.`
+          : `Download started${lifecycle.filename ? `: ${lifecycle.filename}` : ""}.`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      message: `Download failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+async function getDownloadStatusById(downloadId) {
+  if (!chrome.downloads?.search || typeof downloadId !== "number") {
+    return { ok: false, message: "Invalid download ID or Downloads API unavailable." };
+  }
+  const items = await chrome.downloads.search({ id: downloadId }).catch(() => []);
+  const item = items?.[0];
+  if (!item) {
+    return { ok: false, message: `No download found for ID ${downloadId}.` };
+  }
+  return {
+    ok: true,
+    downloadId: item.id,
+    state: item.state,
+    filename: item.filename || undefined,
+    bytesReceived: item.bytesReceived,
+    totalBytes: item.totalBytes,
+    error: item.error || undefined,
+  };
+}
+
+async function waitForTriggeredDownload(startedAtMs, timeoutMs = 2500) {
+  if (!chrome.downloads?.search) return { found: false };
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const recent = await chrome.downloads
+      .search({ startedAfter: new Date(Math.max(0, startedAtMs - 500)).toISOString(), limit: 5 })
+      .catch(() => []);
+    if (Array.isArray(recent) && recent.length > 0) {
+      const latest = recent[0];
+      const lifecycle = await waitForDownloadLifecycle(latest.id, 1500);
+      return {
+        found: true,
+        downloadId: latest.id,
+        state: lifecycle.state,
+        filename: lifecycle.filename || latest.filename,
+        error: lifecycle.error,
+      };
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return { found: false };
+}
+
+async function getExtensionHealthReport() {
+  const { session, lastBase, userApiKey, selectedProvider } = await chrome.storage.local.get([
+    "session",
+    "lastBase",
+    "userApiKey",
+    "selectedProvider",
+  ]);
+  const apiBase = await resolveExtensionApiBase(session, lastBase);
+  const authValid = Boolean(session && session.accessToken && !session.isGuest);
+  let backendReachable = false;
+  let configuredProviders = {};
+  let serverAiConfigured = false;
+  let healthErr = null;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2500);
+    const res = await fetch(`${apiBase}/api/public/extension/health`, {
+      method: "GET",
+      signal: ctrl.signal,
+    }).finally(() => clearTimeout(timer));
+    if (res.ok) {
+      const data = await res.json().catch(() => null);
+      if (data?.ok) {
+        backendReachable = true;
+        configuredProviders = data.providers || data.configuredProviders || {};
+        serverAiConfigured =
+          Boolean(data.aiConfigured) ||
+          Object.values(configuredProviders).some((p) => p === true || p?.configured === true);
+      }
+    } else {
+      healthErr = `HTTP ${res.status}`;
+    }
+  } catch (err) {
+    healthErr = err instanceof Error ? err.message : String(err);
+  }
+  const hasDirectKey = Boolean(userApiKey && String(userApiKey).trim());
+  const aiConfigured = serverAiConfigured || hasDirectKey;
+  const aiOperational = (backendReachable && serverAiConfigured) || hasDirectKey;
+  return {
+    ok: true,
+    apiBase,
+    backendReachable,
+    authValid,
+    isGuest: !authValid,
+    selectedProvider: selectedProvider || "auto",
+    aiConfigured,
+    aiOperational,
+    hasDirectKey,
+    configuredProviders,
+    detail: healthErr || undefined,
+  };
+}
+
 /**
  * Executes a single step of a multi-action plan on the active tab.
  */
@@ -6513,7 +6969,7 @@ async function executePlanStepInTab(step, options = {}) {
   // Consequential action check
   const SENSITIVE_CONSEQUENTIAL = /purchase|click_delete|click_submit|send_message/;
   if (
-    SENSITIVE_CONSEQUENTIAL.test(step.action) &&
+    (SENSITIVE_CONSEQUENTIAL.test(step.action) || step.isConsequential) &&
     step.requiresApproval &&
     !options?.userApproved
   ) {
@@ -6524,16 +6980,23 @@ async function executePlanStepInTab(step, options = {}) {
     };
   }
 
-  // 1. Navigation
-  if (step.action === "navigate") {
-    const navUrl = step.value || step.tabUrl;
+  // 1. Navigation & Curated Portal Launch
+  if (step.action === "navigate" || step.action === "open_website") {
+    let navUrl = step.url || step.value || step.tabUrl;
+    if (!navUrl || !/^https?:\/\//i.test(String(navUrl))) {
+      const portalKey = String(step.textTarget || step.value || step.title || "")
+        .toLowerCase()
+        .replace(/^(?:open|go\s+to|launch|visit)\s+/i, "")
+        .trim();
+      navUrl = SAFE_PORTAL_URL_MAP[portalKey] || undefined;
+    }
     if (step.skipIfUrlPattern) {
       const cur = await activeTab().catch(() => null);
       if (cur?.url && new RegExp(step.skipIfUrlPattern, "i").test(cur.url)) {
         return { ok: true, verified: true, result: `Already on target page (${cur.url}).` };
       }
     }
-    if (navUrl && !RESTRICTED.test(navUrl)) {
+    if (navUrl && !RESTRICTED.test(navUrl) && /^https?:\/\//i.test(String(navUrl))) {
       const res = await navigateTab(navUrl);
       return {
         ok: res.ok,
@@ -6542,7 +7005,59 @@ async function executePlanStepInTab(step, options = {}) {
         error: res.ok ? undefined : res.message || `Failed to navigate to ${navUrl}`,
       };
     }
+    if (step.action === "open_website") {
+      return {
+        ok: false,
+        verified: false,
+        error: `Could not resolve a safe https URL for "${step.textTarget || step.value || step.title}".`,
+      };
+    }
     return { ok: true, verified: true, result: "Current page is ready." };
+  }
+
+  // 1b. File Download (direct URL or download-button click + chrome.downloads tracking)
+  if (step.action === "download") {
+    const directUrl = step.url || (typeof step.value === "string" && /^https?:|^blob:/i.test(step.value) ? step.value : null);
+    if (directUrl) {
+      const dlRes = await downloadFileFromUrl(directUrl, step.filenameHint);
+      return {
+        ok: dlRes.ok,
+        verified: dlRes.ok,
+        result: dlRes.ok ? dlRes.message : undefined,
+        error: dlRes.ok ? undefined : dlRes.message,
+      };
+    }
+    const actRes = await executeAction("click", step.selector, step.textTarget || step.value || "download", {
+      text: step.textTarget || step.value || "download",
+      alternateTargets: Array.isArray(step.alternateTargets) ? step.alternateTargets : undefined,
+      trackDownload: true,
+      ...options,
+    });
+    return {
+      ok: Boolean(actRes.ok),
+      verified: Boolean(actRes.ok && (actRes.downloadTriggered || actRes.stateChange)),
+      result: actRes.message || "Triggered download action.",
+      error: actRes.ok ? undefined : actRes.message,
+    };
+  }
+
+  // 1c. Verify Page (URL / expected text)
+  if (step.action === "verify_page") {
+    const expectText = step.expectedText || step.textTarget || (typeof step.value === "string" && !/^https?:/i.test(step.value) ? step.value : undefined);
+    if (step.url) {
+      const cur = await activeTab().catch(() => null);
+      if (cur?.url && cur.url.toLowerCase().includes(String(step.url).toLowerCase())) {
+        return { ok: true, verified: true, result: `Verified page URL (${cur.url}).` };
+      }
+    }
+    const waitRes = await waitForCondition(step.selector, expectText, step.waitMs || 3500);
+    const matched = Boolean(waitRes.ok && waitRes.found !== false);
+    return {
+      ok: matched,
+      verified: matched,
+      result: matched ? `Verified page state${expectText ? ` ("${expectText}")` : ""}.` : undefined,
+      error: matched ? undefined : waitRes.message || "Expected page content not detected.",
+    };
   }
 
   // 2. Data extraction

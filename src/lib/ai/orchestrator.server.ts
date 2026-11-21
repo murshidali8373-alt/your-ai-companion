@@ -153,7 +153,7 @@ async function callOnce(
   model: ModelEntry,
   system: string,
   user: string,
-  options?: { userApiKey?: string; customBaseUrl?: string },
+  options?: { userApiKey?: string; customBaseUrl?: string; allowModelFailover?: boolean },
 ): Promise<string> {
   try {
     let text = "";
@@ -183,6 +183,7 @@ async function callOnce(
         userPrompt: user,
         userApiKey: options?.userApiKey,
         customBaseUrl: options?.customBaseUrl,
+        allowModelFailover: options?.allowModelFailover,
       });
     }
 
@@ -226,13 +227,17 @@ export async function generate(input: {
     model: ModelEntry,
     system: string,
     user: string,
-    options?: { userApiKey?: string; customBaseUrl?: string },
+    options?: { userApiKey?: string; customBaseUrl?: string; allowModelFailover?: boolean },
   ) => Promise<string>;
   userApiKey?: string;
   customBaseUrl?: string;
   userProvider?: string;
+  allowProviderFallback?: boolean;
+  allowModelFailover?: boolean;
 }): Promise<ModelCallResult> {
   const candidates = input.candidates ?? route(input.routing);
+  const allowProviderFallback = input.allowProviderFallback !== false;
+  const allowModelFailover = input.allowModelFailover !== false;
   const call = input.call ?? callOnce;
   // Exclude providers with no server key (unless the caller supplied their own key for it).
   const { isProviderConfigured } = await import("./provider-keys.server");
@@ -241,8 +246,20 @@ export async function generate(input: {
     : undefined;
   const usable = (list: ModelEntry[]) =>
     input.call ? list : list.filter((m) => isProviderConfigured(m.provider, userKeyProvider));
-  const pool = usable(candidates).length ? usable(candidates) : usable(MODELS);
+  const usableCandidates = usable(candidates);
+  const pool = usableCandidates.length
+    ? usableCandidates
+    : allowProviderFallback
+      ? usable(MODELS)
+      : [];
   if (!pool.length) {
+    if (!allowProviderFallback) {
+      const requested = input.userProvider || candidates[0]?.provider || "selected provider";
+      throw new AiError("auth", `Selected AI provider (${requested}) is not configured.`, {
+        provider: requested,
+        resolution: "Add the provider API key in Settings → AI Model Hub or switch to Auto.",
+      });
+    }
     throw new AiError("auth", "No AI provider is configured on the server.", {
       resolution: "Add GEMINI_API_KEY (or GOOGLE_API_KEY) in Project Settings → Secrets.",
     });
@@ -263,12 +280,20 @@ export async function generate(input: {
       continue;
     }
 
+    if (!allowProviderFallback && primaryProvider && model.provider !== primaryProvider) {
+      continue;
+    }
+
     attempts += 1;
     try {
       const isTargetProvider = !primaryProvider || model.provider === primaryProvider;
       const callOptions = isTargetProvider
-        ? { userApiKey: input.userApiKey, customBaseUrl: input.customBaseUrl }
-        : undefined;
+        ? {
+            userApiKey: input.userApiKey,
+            customBaseUrl: input.customBaseUrl,
+            allowModelFailover,
+          }
+        : { allowModelFailover };
 
       const text = await call(model, input.system, input.user, callOptions);
       return {
@@ -296,6 +321,12 @@ export async function generate(input: {
       // Avoid retrying subsequent models on the exact same provider if credentials failed
       if (aiError.kind === "auth" || aiError.kind === "credits") {
         failedProviders.add(model.provider);
+      }
+
+      if (!allowModelFailover) {
+        (aiError as Error & { executionTrace?: ExecutionTraceStep[] }).executionTrace =
+          executionTrace;
+        throw aiError;
       }
 
       if (!isFallbackWorthy(aiError)) throw aiError;

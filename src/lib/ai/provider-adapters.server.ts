@@ -22,6 +22,7 @@ export interface ProviderCallOptions {
   userApiKey?: string;
   customBaseUrl?: string;
   signal?: AbortSignal;
+  allowModelFailover?: boolean;
 }
 
 export interface ProviderVerificationResult {
@@ -67,25 +68,23 @@ export async function callGemini(model: ModelEntry, opts: ProviderCallOptions): 
     },
   });
 
-  // Map deprecated or generic default IDs to verified active multimodal runtime first
+  // Map deprecated or legacy default IDs to verified active multimodal runtime
   let targetModelId = model.providerModelId || model.id;
   if (
     targetModelId.includes("2.5-flash") ||
     targetModelId.includes("1.5-flash") ||
     targetModelId.includes("2.0-flash") ||
     targetModelId.includes("3.5-flash") ||
-    targetModelId === "gemini-3.8-flash"
+    (opts.allowModelFailover !== false && targetModelId === "gemini-3.8-flash")
   ) {
     targetModelId = "gemini-4-hydrogen";
   }
 
-  // Model trial sequence: target model first, then verified active fallbacks
-  const candidateModels = [
-    targetModelId,
-    "gemini-4-hydrogen",
-    "gemini-3.8-flash",
-    "gemini-3.1-flash-lite",
-  ];
+  // Model trial sequence: strict single model when allowModelFailover === false; otherwise verified active fallbacks
+  const candidateModels =
+    opts.allowModelFailover === false
+      ? [targetModelId]
+      : [targetModelId, "gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
   const trialModels = candidateModels.filter((m, idx, arr) => arr.indexOf(m) === idx);
 
   let lastErr: unknown;
@@ -423,8 +422,14 @@ export async function dispatchModelCall(
     case "github":
       return callGitHubModels(model, opts);
     default:
-      // Fallback to Gemini if supported
-      return callGemini(model, opts);
+      throw new AiError(
+        "provider_error",
+        `Provider "${model.provider}" is not configured or supported on this server yet.`,
+        {
+          provider: model.provider,
+          resolution: `Select a configured provider in Settings → AI Model Hub or choose Auto.`,
+        },
+      );
   }
 }
 

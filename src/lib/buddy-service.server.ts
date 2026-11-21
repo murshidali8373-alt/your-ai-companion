@@ -21,9 +21,17 @@ import {
 } from "./ai/prompt";
 import { getBuddyPreset } from "./ai/buddy-personas";
 import { recommendSpecialistBuddy, type BuddyModeRecommendation } from "./ai/mode-recommendations";
-import { PROVIDERS, type ProviderId } from "./ai/model-hub";
+import { MODEL_CATALOG, PROVIDERS, type ProviderId } from "./ai/model-hub";
 import { isProviderConfigured } from "./ai/provider-keys.server";
-import { MODELS, findModel, route, type ModelEntry, type TaskIntent } from "./ai/registry";
+import {
+  MODELS,
+  catalogToModelEntry,
+  findModel,
+  route,
+  type ModelEntry,
+  type TaskIntent,
+} from "./ai/registry";
+import { classifyUserRequest } from "./ai/request-classifier";
 import {
   buildPageContext,
   estimateTokens,
@@ -81,6 +89,8 @@ async function callGeminiWithScreenshot(params: {
   userText: string;
   screenshotBase64: string;
   userApiKey?: string | null;
+  preferredModel?: string | null;
+  strictModel?: boolean;
 }): Promise<{ text: string; model: string } | null> {
   const { getGeminiKey } = await import("./ai/provider-keys.server");
   const { normalizeProviderError } = await import("./ai/errors");
@@ -93,7 +103,13 @@ async function callGeminiWithScreenshot(params: {
     httpOptions: { headers: { "User-Agent": "aistudio-build" } },
   });
   const cleanData = params.screenshotBase64.replace(/^data:image\/[^;]+;base64,/, "");
-  const models = ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
+  const defaultModels = ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
+  const models =
+    params.strictModel && params.preferredModel && params.preferredModel !== "auto"
+      ? [params.preferredModel]
+      : params.preferredModel && params.preferredModel !== "auto"
+        ? [params.preferredModel, ...defaultModels.filter((m) => m !== params.preferredModel)]
+        : defaultModels;
   let lastError: unknown = null;
   for (const model of models) {
     try {
@@ -376,7 +392,7 @@ function matchSnapshotElementForFallback(
   return bestScore > 0 ? best : null;
 }
 
-function buildGroundedSnapshotFallback(params: {
+export function buildGroundedSnapshotFallback(params: {
   question: string;
   snapshot: PageSnapshot | null;
   buddyName: string;
@@ -388,6 +404,7 @@ function buildGroundedSnapshotFallback(params: {
   calloutTitle?: string | null;
   calloutDescription?: string | null;
   actionType?: BuddyActionType | null;
+  targetValue?: string | null;
   targetRect?: SnapshotElement["rect"] | null;
 } {
   const { question, snapshot, buddyName, language, aiError } = params;
@@ -530,17 +547,40 @@ function buildGroundedSnapshotFallback(params: {
       };
     }
 
-    // Detect fill / write / enter requests without a clear value -> NEVER explain the page; ask what to fill!
-    if (/\b(?:fill|bhar|bharo|likh|likho|lkh|lkho|daal|daalo|dalo|type|enter)\b/i.test(qLower)) {
+    // Detect fill / write / enter requests: extract concrete value-first/verb-first Hinglish values before asking!
+    const qNormFill = qLower
+      .replace(/\bkrdo\b|\bkr\s+do\b/gi, "kar do")
+      .replace(/\bkro\b/gi, "karo");
+    if (/\b(?:fill|bhar|bharo|likh|likho|lkh|lkho|daal|daalo|dalo|type|enter)\b/i.test(qNormFill)) {
+      const concreteValMatch =
+        question.match(
+          /^\s*["']?([^"'\n]+?)["']?\s+(?:ye|yeh|isko|isme|yahan)?\s*(?:fill|bhar|bharo|likh|likho|daal|daalo|type|enter)\s*(?:kar\s*do|karo|kr\s*do|krdo|kro|kijiye)?[.!?]*$/i,
+        ) ||
+        question.match(
+          /^\s*(?:fill|bhar|bharo|likh|likho|daal|daalo|type|enter)\s*(?:kar\s*do|karo|kr\s*do|krdo|kro)?\s+["']?([^"'\n]+?)["']?[.!?]*$/i,
+        );
+      const rawCandidate = concreteValMatch?.[1]
+        ? concreteValMatch[1]
+            .replace(
+              /\b(?:ye|yeh|isko|isme|yahan|form|field|box|input|me|mein|main|par|pe|wala|wali|wale)\b/gi,
+              " ",
+            )
+            .replace(/\s+/g, " ")
+            .trim()
+        : "";
+      const hasConcreteValue =
+        Boolean(rawCandidate) &&
+        !/^(?:kch|kuch|something|it|this|that|form|field|details?)$/i.test(rawCandidate);
       const hasContentHint =
-        /\b(?:kch|kuch|something|ye|yeh|isme|isko|it|this)\b/i.test(qLower) &&
-        !/\b(?:with|mein|me|main|in|into)\s+["']?[^"'\s]{2,}["']?\s*$/i.test(qLower);
+        !hasConcreteValue &&
+        /\b(?:kch|kuch|something|ye|yeh|isme|isko|it|this)\b/i.test(qNormFill) &&
+        !/\b(?:with|mein|me|main|in|into)\s+["']?[^"'\s]{2,}["']?\s*$/i.test(qNormFill);
       const matchEl =
         matchSnapshotElementForFallback(snapshot, question) || snapshot.forms?.[0] || null;
-      if (hasContentHint || !/\b(?:with|as|:|=)\b/i.test(qLower)) {
+      if (!hasConcreteValue && (hasContentHint || !/\b(?:with|as|:|=)\b/i.test(qNormFill))) {
         const askText = isEnglish
           ? "What should I write or fill here? Please share the text."
-          : /\b(?:likh|likho|type)\b/i.test(qLower)
+          : /\b(?:likh|likho|type)\b/i.test(qNormFill)
             ? "Kya likhna hai? Text bata do."
             : "Kya fill karna hai?";
         return {
@@ -580,6 +620,7 @@ function buildGroundedSnapshotFallback(params: {
           calloutTitle: label.slice(0, 50),
           calloutDescription: "Form field target",
           actionType: "type",
+          targetValue: hasConcreteValue ? rawCandidate : undefined,
           targetRect: matchEl.rect ?? null,
         };
       }
@@ -650,10 +691,12 @@ export function resolveProviderRouting(params: {
   userApiKey?: string | null;
   defaultCandidates: ModelEntry[];
   language?: string | null;
+  strictSelection?: boolean;
 }): {
   candidates: ModelEntry[];
   effectiveProvider: string;
   providerWarning: AskOutput["providerWarning"];
+  strictSelection: boolean;
 } {
   const targetModel =
     params.preferredModel && params.preferredModel !== "auto"
@@ -665,6 +708,7 @@ export function resolveProviderRouting(params: {
       ? params.preferredProvider.trim().toLowerCase()
       : undefined;
 
+  const strict = Boolean(params.strictSelection);
   const requestedProvider = explicitProvider || targetModel?.provider || "gemini";
   const provConfig = PROVIDERS[requestedProvider as ProviderId];
 
@@ -677,12 +721,78 @@ export function resolveProviderRouting(params: {
     : undefined;
 
   const isRequestedConfigured = isProviderConfigured(requestedProvider, keyProvider);
+  const catalogEntries = MODEL_CATALOG.map(catalogToModelEntry);
+  const allKnownModels = [
+    ...MODELS,
+    ...catalogEntries.filter((c) => !MODELS.some((m) => m.id === c.id)),
+  ];
+
   const geminiModels = [
     ...params.defaultCandidates.filter((m) => m.provider === "gemini"),
-    ...MODELS.filter(
+    ...allKnownModels.filter(
       (m) => m.provider === "gemini" && !params.defaultCandidates.some((d) => d.id === m.id),
     ),
   ];
+
+  if (strict) {
+    if (!isRequestedConfigured) {
+      const provName = provConfig?.name || requestedProvider;
+      const isLocal = Boolean(provConfig?.supportsLocal);
+      const missingKey =
+        provConfig?.envKeyName || (requestedProvider === "ollama" ? "OLLAMA_BASE_URL" : undefined);
+      const isEnglish = params.language === "english";
+      const missingLabel = isLocal
+        ? isEnglish
+          ? "local Ollama server connection (OLLAMA_BASE_URL)"
+          : "local Ollama server (OLLAMA_BASE_URL)"
+        : missingKey || `${provName} API key`;
+      const message = isEnglish
+        ? `${provName} is not configured (missing ${missingLabel}). Strict provider mode is active — add the key in Settings → AI Model Hub or switch Provider to Auto.`
+        : `${provName} configured nahi hai (${missingLabel} missing hai). Strict mode active hai — Settings → AI Model Hub mein key add karein ya Provider ko Auto par switch karein.`;
+
+      const strictModels = targetModel
+        ? [targetModel]
+        : allKnownModels.filter((m) => m.provider === requestedProvider);
+
+      return {
+        candidates: strictModels,
+        effectiveProvider: requestedProvider,
+        strictSelection: true,
+        providerWarning: {
+          requestedProvider,
+          requestedProviderName: provName,
+          status: isLocal ? "not_connected" : "missing_api",
+          missingKey,
+          fallbackUsed: "None (Strict selection)",
+          message,
+        },
+      };
+    }
+
+    if (targetModel) {
+      return {
+        candidates: [targetModel],
+        effectiveProvider: requestedProvider,
+        strictSelection: true,
+        providerWarning: null,
+      };
+    }
+
+    const strictProviderCandidates = [
+      ...params.defaultCandidates.filter((m) => m.provider === requestedProvider),
+      ...allKnownModels.filter(
+        (m) =>
+          m.provider === requestedProvider && !params.defaultCandidates.some((d) => d.id === m.id),
+      ),
+    ];
+
+    return {
+      candidates: strictProviderCandidates,
+      effectiveProvider: requestedProvider,
+      strictSelection: true,
+      providerWarning: null,
+    };
+  }
 
   if (requestedProvider !== "gemini" && !isRequestedConfigured) {
     const provName = provConfig?.name || requestedProvider;
@@ -708,6 +818,7 @@ export function resolveProviderRouting(params: {
     return {
       candidates: fallbackCandidates,
       effectiveProvider: "gemini",
+      strictSelection: false,
       providerWarning: {
         requestedProvider,
         requestedProviderName: provName,
@@ -724,7 +835,7 @@ export function resolveProviderRouting(params: {
     const providerCandidates = [
       ...(targetModel && targetModel.provider === explicitProvider ? [targetModel] : []),
       ...params.defaultCandidates.filter((m) => m.provider === explicitProvider),
-      ...MODELS.filter(
+      ...allKnownModels.filter(
         (m) =>
           m.provider === explicitProvider && !params.defaultCandidates.some((d) => d.id === m.id),
       ),
@@ -747,6 +858,7 @@ export function resolveProviderRouting(params: {
   return {
     candidates,
     effectiveProvider: requestedProvider,
+    strictSelection: false,
     providerWarning: null,
   };
 }
@@ -996,13 +1108,26 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
     void err;
   }
 
+  const requestClass = classifyUserRequest(question, {
+    snapshot: input.snapshot,
+    history: input.history,
+    intentHint: input.intent,
+    hasPendingSlot: Boolean(input.actionContext?.pendingSlotType),
+  });
+  const isGeneralChat = requestClass.category === "general_chat" || input.intent === "general";
+
   const safeForms = input.snapshot?.forms?.map((f) =>
     f.sensitive ? { ...f, value: undefined } : f,
   );
-  const safeSnapshot = input.snapshot
-    ? { ...input.snapshot, forms: safeForms ?? input.snapshot.forms }
-    : null;
-  const pageContext = safeSnapshot ? buildPageContext(safeSnapshot) : "No page context available.";
+  const safeSnapshot =
+    !isGeneralChat && input.snapshot
+      ? { ...input.snapshot, forms: safeForms ?? input.snapshot.forms }
+      : null;
+  const pageContext = isGeneralChat
+    ? "General conversation mode (no active webpage context attached)."
+    : safeSnapshot
+      ? buildPageContext(safeSnapshot)
+      : "No page context available.";
   const system = buildSystemPrompt({
     persona: {
       name: persona.name,
@@ -1019,25 +1144,28 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
     privacyMode,
     providerDisclosure: "Google Gemini",
     interpretMode: input.intent === "interpret_command",
+    chatMode: isGeneralChat ? "general" : "page",
   });
   const docSummaryBlock = input.uploadedDocumentSummary
     ? `\n\nUPLOADED DOCUMENT IN SESSION:\nFile: ${input.uploadedDocumentSummary.fileName} (Type: ${input.uploadedDocumentSummary.documentType})\nAvailable extracted fields: ${input.uploadedDocumentSummary.availableFields.join(", ") || "none"}`
     : "";
   const ctxParts: string[] = [];
-  if (input.actionContext?.lastTargetField) {
-    ctxParts.push(`lastTargetField="${input.actionContext.lastTargetField}"`);
-  }
-  if (input.actionContext?.lastActionType) {
-    ctxParts.push(`lastActionType="${input.actionContext.lastActionType}"`);
-  }
-  if (input.actionContext?.pendingSlotType) {
-    ctxParts.push(`pendingSlotType="${input.actionContext.pendingSlotType}"`);
-  }
-  if (input.actionContext?.activeElementLabel) {
-    ctxParts.push(`focusedElement="${input.actionContext.activeElementLabel}"`);
-  }
-  if (input.actionContext?.recentFields?.length) {
-    ctxParts.push(`recentFields=[${input.actionContext.recentFields.join(", ")}]`);
+  if (!isGeneralChat) {
+    if (input.actionContext?.lastTargetField) {
+      ctxParts.push(`lastTargetField="${input.actionContext.lastTargetField}"`);
+    }
+    if (input.actionContext?.lastActionType) {
+      ctxParts.push(`lastActionType="${input.actionContext.lastActionType}"`);
+    }
+    if (input.actionContext?.pendingSlotType) {
+      ctxParts.push(`pendingSlotType="${input.actionContext.pendingSlotType}"`);
+    }
+    if (input.actionContext?.activeElementLabel) {
+      ctxParts.push(`focusedElement="${input.actionContext.activeElementLabel}"`);
+    }
+    if (input.actionContext?.recentFields?.length) {
+      ctxParts.push(`recentFields=[${input.actionContext.recentFields.join(", ")}]`);
+    }
   }
   const actionContextBlock = ctxParts.length
     ? `\n\nCURRENT ACTION CONTEXT:\n${ctxParts.join(" | ")}`
@@ -1054,9 +1182,15 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
     language: persona.language,
   });
 
+  const hasExplicitProvider = Boolean(
+    input.preferredProvider && input.preferredProvider !== "auto",
+  );
+  const hasExplicitModel = Boolean(input.preferredModel && input.preferredModel !== "auto");
+  const strictSelection = hasExplicitProvider || hasExplicitModel;
+
   const routingParams = {
-    intent: input.intent,
-    needsVision: Boolean(input.screenshotBase64),
+    intent: isGeneralChat ? ("general" as TaskIntent) : input.intent,
+    needsVision: !isGeneralChat && Boolean(input.screenshotBase64),
     contextTokens: estimateTokens(system + user) + 1200,
     latencySensitive: input.intent === "locate_element",
     costSensitive: false,
@@ -1068,12 +1202,15 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
     userApiKey: input.userApiKey,
     defaultCandidates,
     language: persona.language,
+    strictSelection,
   });
 
   try {
     const candidates = routingDecision.candidates;
     const useGeminiScreenshot =
-      Boolean(input.screenshotBase64) && routingDecision.effectiveProvider === "gemini";
+      !isGeneralChat &&
+      Boolean(input.screenshotBase64) &&
+      routingDecision.effectiveProvider === "gemini";
 
     const visionResult =
       useGeminiScreenshot && input.screenshotBase64
@@ -1082,6 +1219,8 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
             userText: user,
             screenshotBase64: input.screenshotBase64,
             userApiKey: input.userApiKey,
+            preferredModel: input.preferredModel,
+            strictModel: hasExplicitModel,
           })
         : null;
 
@@ -1108,6 +1247,8 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
           userApiKey: geminiDirectKey,
           customBaseUrl: input.customBaseUrl ?? undefined,
           userProvider: routingDecision.effectiveProvider,
+          allowProviderFallback: !strictSelection,
+          allowModelFailover: !hasExplicitModel,
         });
     const reply = parseBuddyReply(result.text);
 
@@ -1225,20 +1366,46 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
         .update({ status: "failed", error: `${aiError.kind}: ${aiError.userMessage}` })
         .eq("id", taskId);
     }
-    const fallback = buildGroundedSnapshotFallback({
-      question,
-      snapshot: input.snapshot,
-      buddyName: persona.name,
-      language: persona.language,
-      aiError,
-    });
-
     const failureDetails = buildProviderFailureDetails({
       aiError,
       effectiveProvider: routingDecision.effectiveProvider,
       preferredProvider: input.preferredProvider,
       language: persona.language,
       existingWarning: routingDecision.providerWarning,
+    });
+
+    if (isGeneralChat || strictSelection) {
+      const honestError = failureDetails.providerFailure.resolution
+        ? `${failureDetails.providerFailure.message} ${failureDetails.providerFailure.resolution}`
+        : failureDetails.providerFailure.message;
+      return {
+        taskId,
+        reply: {
+          answer: honestError,
+          highlight: null,
+          confidence: "low",
+          needs: null,
+          emotion: "concerned",
+        },
+        highlightSelector: null,
+        buddyName: persona.name,
+        permission,
+        activeProvider: "error",
+        fellBack: false,
+        aiFallbackUsed: true,
+        blocked: aiError.kind === "credits" || aiError.kind === "blocked",
+        providerWarning: failureDetails.providerWarning,
+        providerFailure: failureDetails.providerFailure,
+        recommendedMode,
+      };
+    }
+
+    const fallback = buildGroundedSnapshotFallback({
+      question,
+      snapshot: input.snapshot,
+      buddyName: persona.name,
+      language: persona.language,
+      aiError,
     });
 
     return {
@@ -1334,13 +1501,26 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
     }
   }
 
+  const requestClass = classifyUserRequest(question, {
+    snapshot: input.snapshot,
+    history: input.history,
+    intentHint: input.intent,
+    hasPendingSlot: Boolean(input.actionContext?.pendingSlotType),
+  });
+  const isGeneralChat = requestClass.category === "general_chat" || input.intent === "general";
+
   const safeForms = input.snapshot?.forms?.map((f) =>
     f.sensitive ? { ...f, value: undefined } : f,
   );
-  const safeSnapshot = input.snapshot
-    ? { ...input.snapshot, forms: safeForms ?? input.snapshot.forms }
-    : null;
-  const pageContext = safeSnapshot ? buildPageContext(safeSnapshot) : "No page context available.";
+  const safeSnapshot =
+    !isGeneralChat && input.snapshot
+      ? { ...input.snapshot, forms: safeForms ?? input.snapshot.forms }
+      : null;
+  const pageContext = isGeneralChat
+    ? "General conversation mode (no active webpage context attached)."
+    : safeSnapshot
+      ? buildPageContext(safeSnapshot)
+      : "No page context available.";
   const system = buildSystemPrompt({
     persona: {
       name: persona.name,
@@ -1357,25 +1537,28 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
     privacyMode: true,
     providerDisclosure: "Google Gemini",
     interpretMode: input.intent === "interpret_command",
+    chatMode: isGeneralChat ? "general" : "page",
   });
   const docSummaryBlock = input.uploadedDocumentSummary
     ? `\n\nUPLOADED DOCUMENT IN SESSION:\nFile: ${input.uploadedDocumentSummary.fileName} (Type: ${input.uploadedDocumentSummary.documentType})\nAvailable extracted fields: ${input.uploadedDocumentSummary.availableFields.join(", ") || "none"}`
     : "";
   const ctxParts: string[] = [];
-  if (input.actionContext?.lastTargetField) {
-    ctxParts.push(`lastTargetField="${input.actionContext.lastTargetField}"`);
-  }
-  if (input.actionContext?.lastActionType) {
-    ctxParts.push(`lastActionType="${input.actionContext.lastActionType}"`);
-  }
-  if (input.actionContext?.pendingSlotType) {
-    ctxParts.push(`pendingSlotType="${input.actionContext.pendingSlotType}"`);
-  }
-  if (input.actionContext?.activeElementLabel) {
-    ctxParts.push(`focusedElement="${input.actionContext.activeElementLabel}"`);
-  }
-  if (input.actionContext?.recentFields?.length) {
-    ctxParts.push(`recentFields=[${input.actionContext.recentFields.join(", ")}]`);
+  if (!isGeneralChat) {
+    if (input.actionContext?.lastTargetField) {
+      ctxParts.push(`lastTargetField="${input.actionContext.lastTargetField}"`);
+    }
+    if (input.actionContext?.lastActionType) {
+      ctxParts.push(`lastActionType="${input.actionContext.lastActionType}"`);
+    }
+    if (input.actionContext?.pendingSlotType) {
+      ctxParts.push(`pendingSlotType="${input.actionContext.pendingSlotType}"`);
+    }
+    if (input.actionContext?.activeElementLabel) {
+      ctxParts.push(`focusedElement="${input.actionContext.activeElementLabel}"`);
+    }
+    if (input.actionContext?.recentFields?.length) {
+      ctxParts.push(`recentFields=[${input.actionContext.recentFields.join(", ")}]`);
+    }
   }
   const actionContextBlock = ctxParts.length
     ? `\n\nCURRENT ACTION CONTEXT:\n${ctxParts.join(" | ")}`
@@ -1391,9 +1574,15 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
     language: persona.default_language,
   });
 
+  const hasExplicitProvider = Boolean(
+    input.preferredProvider && input.preferredProvider !== "auto",
+  );
+  const hasExplicitModel = Boolean(input.preferredModel && input.preferredModel !== "auto");
+  const strictSelection = hasExplicitProvider || hasExplicitModel;
+
   const routingParams = {
-    intent: input.intent,
-    needsVision: Boolean(input.screenshotBase64),
+    intent: isGeneralChat ? ("general" as TaskIntent) : input.intent,
+    needsVision: !isGeneralChat && Boolean(input.screenshotBase64),
     contextTokens: estimateTokens(system + user) + 1200,
     latencySensitive: input.intent === "locate_element",
     costSensitive: false,
@@ -1405,12 +1594,15 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
     userApiKey: input.userApiKey,
     defaultCandidates,
     language: persona.default_language,
+    strictSelection,
   });
 
   try {
     const candidates = routingDecision.candidates;
     const useGeminiScreenshot =
-      Boolean(input.screenshotBase64) && routingDecision.effectiveProvider === "gemini";
+      !isGeneralChat &&
+      Boolean(input.screenshotBase64) &&
+      routingDecision.effectiveProvider === "gemini";
 
     const visionResult =
       useGeminiScreenshot && input.screenshotBase64
@@ -1419,6 +1611,8 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
             userText: user,
             screenshotBase64: input.screenshotBase64,
             userApiKey: input.userApiKey,
+            preferredModel: input.preferredModel,
+            strictModel: hasExplicitModel,
           })
         : null;
 
@@ -1445,6 +1639,8 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
           userApiKey: geminiDirectKey,
           customBaseUrl: input.customBaseUrl ?? undefined,
           userProvider: routingDecision.effectiveProvider,
+          allowProviderFallback: !strictSelection,
+          allowModelFailover: !hasExplicitModel,
         });
 
     const reply = parseBuddyReply(result.text);
@@ -1520,20 +1716,46 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
         : new AiError("outage", "Something went wrong on my side. Try once more.", {
             cause: error,
           });
-    const fallback = buildGroundedSnapshotFallback({
-      question,
-      snapshot: input.snapshot,
-      buddyName: persona.name,
-      language: persona.default_language,
-      aiError,
-    });
-
     const failureDetails = buildProviderFailureDetails({
       aiError,
       effectiveProvider: routingDecision.effectiveProvider,
       preferredProvider: input.preferredProvider,
       language: persona.default_language,
       existingWarning: routingDecision.providerWarning,
+    });
+
+    if (isGeneralChat || strictSelection) {
+      const honestError = failureDetails.providerFailure.resolution
+        ? `${failureDetails.providerFailure.message} ${failureDetails.providerFailure.resolution}`
+        : failureDetails.providerFailure.message;
+      return {
+        taskId: null,
+        reply: {
+          answer: honestError,
+          highlight: null,
+          confidence: "low",
+          needs: null,
+          emotion: "concerned",
+        },
+        highlightSelector: null,
+        buddyName: persona.name,
+        permission,
+        activeProvider: "error",
+        fellBack: false,
+        aiFallbackUsed: true,
+        blocked: aiError.kind === "credits" || aiError.kind === "blocked",
+        providerWarning: failureDetails.providerWarning,
+        providerFailure: failureDetails.providerFailure,
+        recommendedMode,
+      };
+    }
+
+    const fallback = buildGroundedSnapshotFallback({
+      question,
+      snapshot: input.snapshot,
+      buddyName: persona.name,
+      language: persona.default_language,
+      aiError,
     });
 
     return {

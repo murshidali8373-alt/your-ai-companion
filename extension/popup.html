@@ -82,9 +82,13 @@
           Side panel ↗
         </button>
       </header>
+      <div id="healthLine" class="muted" style="font-size: 11px">Checking backend &amp; AI…</div>
       <div id="signedOut" hidden>
-        <p>Connect your account to start.</p>
-        <button id="connect">Connect account</button>
+        <p style="margin: 0 0 8px">Connect your account or continue in Guest Mode.</p>
+        <div class="row">
+          <button id="connect">Connect account</button>
+          <button id="useGuest" class="ghost">Use Guest Mode</button>
+        </div>
       </div>
       <div id="signedIn" hidden>
         <div class="row">
@@ -95,9 +99,11 @@
             Next step
           </button>
         </div>
-        <textarea id="q" placeholder="Ask about this page… e.g. Where do I enter GSTIN?"></textarea>
+        <textarea id="q" placeholder="Ask anything or type a page task…"></textarea>
         <div class="row">
-          <button id="send">Ask Buddy</button><button class="ghost" id="signout">Sign out</button>
+          <button id="send">Ask Buddy</button>
+          <button class="ghost" id="upgradeConnect" hidden>Connect account</button>
+          <button class="ghost" id="signout">Sign out</button>
         </div>
         <div id="status" class="muted"></div>
         <div id="answer" class="answer" hidden></div>

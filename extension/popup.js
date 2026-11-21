@@ -14,11 +14,53 @@ function normalizeBaseUrl(rawUrl) {
   return DEFAULT_BASE;
 }
 
+async function refreshHealthLine() {
+  const el = $("healthLine");
+  if (!el) return;
+  try {
+    const h = await sendPopupRuntimeMessage({ type: "GET_HEALTH" });
+    if (!h) {
+      el.textContent = "Extension worker offline";
+      return;
+    }
+    const backendPart = h.backendReachable ? "Backend: Online" : "Backend: Offline";
+    const aiPart = h.aiOperational ? "AI: Ready" : h.aiConfigured ? "AI: Limited" : "AI: Missing Key";
+    const authPart = h.authValid ? "Signed In" : "Guest";
+    el.textContent = `${backendPart} · ${aiPart} · ${authPart}`;
+  } catch {
+    el.textContent = "Backend: Unreachable";
+  }
+}
+
 async function render() {
-  const { session } = await chrome.storage.local.get("session");
-  $("signedOut").hidden = Boolean(session);
-  $("signedIn").hidden = !session;
-  if (session) $("who").textContent = `Signed in as ${session.email || "you"}`;
+  const { session, lastBase } = await chrome.storage.local.get(["session", "lastBase"]);
+  const isConnected = Boolean(session);
+  const isGuest = Boolean(session?.isGuest || !session?.accessToken);
+  $("signedOut").hidden = isConnected;
+  $("signedIn").hidden = !isConnected;
+  if ($("upgradeConnect")) $("upgradeConnect").hidden = !(isConnected && isGuest);
+  if (session) {
+    $("who").textContent = session.isGuest
+      ? "Guest Mode (local session)"
+      : `Signed in as ${session.email || "you"}`;
+  }
+  refreshHealthLine();
+  void lastBase;
+}
+
+if ($("useGuest")) {
+  $("useGuest").onclick = async () => {
+    const { lastBase } = await chrome.storage.local.get("lastBase");
+    const resolvedBase = normalizeBaseUrl(lastBase);
+    await chrome.storage.local.set({
+      lastBase: resolvedBase,
+      session: { email: "Guest User", isGuest: true, apiBase: resolvedBase },
+    });
+    render();
+  };
+}
+if ($("upgradeConnect")) {
+  $("upgradeConnect").onclick = () => $("connect")?.click();
 }
 
 $("connect").onclick = async () => {
@@ -145,8 +187,11 @@ async function send(question, intent) {
     $("answer").textContent = res?.reply?.answer || "No answer came back.";
     $("answer").hidden = false;
     const notes = [];
-    if (!res?.pageReadable)
-      notes.push("I could not read this page (browser-protected), so I answered generally.");
+    if (res?.activeProvider === "error") {
+      notes.push(res?.providerFailure?.message || "Selected AI provider unavailable.");
+    } else if (!res?.pageReadable && res?.intent !== "general") {
+      notes.push("Answered generally without active page access.");
+    }
     if (res?.highlightSelector) notes.push("I outlined the element on the page.");
     $("status").textContent = notes.join(" ");
   } catch {

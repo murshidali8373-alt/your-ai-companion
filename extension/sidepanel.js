@@ -434,12 +434,13 @@ let currentRenderMode = "3d"; // "3d" (WebGL GLB) | "rigged" (2D vector fallback
 let buddy3dViewer = null;
 let webglFallbackActive = false;
 let lastEmotionChangedAt = 0;
-let selectedProvider = "gemini";
+let selectedProvider = "auto";
 let cachedProviderStatuses = {};
 const warnedMissingProviders = new Set();
 const recommendedModesShown = new Set();
 
 const DEFAULT_PROVIDER_META = {
+  auto: { id: "auto", name: "Auto (Smart Routing)", status: "connected", statusLabel: "Auto", supportsLocal: false },
   gemini: { id: "gemini", name: "Google Gemini", status: "missing_api", statusLabel: "Unverified", missingKeyName: "GEMINI_API_KEY", supportsLocal: false },
   groq: { id: "groq", name: "GroqCloud", status: "missing_api", statusLabel: "Missing API", missingKeyName: "GROQ_API_KEY", supportsLocal: false },
   openrouter: { id: "openrouter", name: "OpenRouter", status: "missing_api", statusLabel: "Missing API", missingKeyName: "OPENROUTER_API_KEY", supportsLocal: false },
@@ -460,6 +461,7 @@ let pendingAction = null;
 let pendingDisambiguation = null;
 let pendingSlot = null;
 let activeFormSession = null;
+let lastExecutionAttempt = null;
 let pendingAutoListenAfterSpeech = false;
 let pendingAutoMicRequest = null;
 const sessionTaskContext = {
@@ -1841,6 +1843,50 @@ async function pointArmAtElement(coords = null) {
 
 let hasBootHydrated = false;
 
+function getActiveScopeKey(session) {
+  if (!session || session.isGuest) return "guest";
+  const raw = session.userId || session.email;
+  if (!raw || String(raw).toLowerCase() === "guest user") return "guest";
+  return String(raw)
+    .toLowerCase()
+    .replace(/[^a-z0-9._@-]/g, "_");
+}
+
+async function getScopedProfile(sessionOverride) {
+  try {
+    const { session, userProfile = {}, scopedUserProfiles = {} } = await chrome.storage.local.get([
+      "session",
+      "userProfile",
+      "scopedUserProfiles",
+    ]);
+    const scope = getActiveScopeKey(sessionOverride !== undefined ? sessionOverride : session);
+    if (scope === "guest") return userProfile || {};
+    return scopedUserProfiles?.[scope] || {};
+  } catch {
+    return {};
+  }
+}
+
+async function setScopedProfile(nextProfile, sessionOverride) {
+  try {
+    const { session, scopedUserProfiles = {} } = await chrome.storage.local.get([
+      "session",
+      "scopedUserProfiles",
+    ]);
+    const scope = getActiveScopeKey(sessionOverride !== undefined ? sessionOverride : session);
+    if (scope === "guest") {
+      await chrome.storage.local.set({ userProfile: nextProfile || {} });
+    } else {
+      await chrome.storage.local.set({
+        scopedUserProfiles: {
+          ...scopedUserProfiles,
+          [scope]: nextProfile || {},
+        },
+      });
+    }
+  } catch {}
+}
+
 async function getPermissionSettings() {
   try {
     const { permissionLevel, requireConsent } = await chrome.storage.local.get([
@@ -1944,7 +1990,7 @@ async function render() {
   if (savedSlug) selectedBuddySlug = savedSlug;
   if (savedCustomId) selectedCustomBuddyId = savedCustomId;
   if (savedMode) currentRenderMode = savedMode;
-  if (savedProvider) selectedProvider = savedProvider;
+  selectedProvider = savedProvider || "auto";
   if (typeof savedMuted === "boolean") {
     isMuted = savedMuted;
     if ($("muteToggle")) $("muteToggle").checked = isMuted;
@@ -1953,6 +1999,7 @@ async function render() {
     }
   }
   if ($("providerSelector")) $("providerSelector").value = selectedProvider;
+  if ($("modelSelector")) $("modelSelector").value = preferredModel || "auto";
   updateProviderNoticeUI(selectedProvider);
 
   if (!hasBootHydrated) {
@@ -1968,18 +2015,34 @@ async function render() {
     }
   }
 
-  const isAuth = Boolean(session);
-  if ($("signoutBtn")) $("signoutBtn").hidden = !isAuth;
+  const isAuth = Boolean(session && !session.isGuest);
+  if ($("signoutBtn")) $("signoutBtn").hidden = !session;
   if ($("connectBtn")) $("connectBtn").hidden = isAuth;
 
   if ($("userAccount")) {
-    $("userAccount").textContent = session
+    $("userAccount").textContent = isAuth
       ? `Connected: ${session.email || "User"}`
       : "Guest Mode (All 16 Buddies active)";
   }
   if (session?.apiBase) {
     chrome.storage.local.set({ lastBase: session.apiBase }).catch(() => {});
   }
+
+  // Hydrate locally cached custom buddies first so Custom Buddy persists offline
+  try {
+    const { localCustomBuddies = [] } = await chrome.storage.local.get("localCustomBuddies");
+    if (Array.isArray(localCustomBuddies) && localCustomBuddies.length > 0) {
+      allBuddies = [
+        ...BUDDIES_REGISTRY.filter((b) => !b.isCustom),
+        ...localCustomBuddies.map((c) => ({
+          ...c,
+          image: normalizeExtensionAssetUrl(c.image || "./assets/buddy-ecommerce-3d.webp"),
+          outfitColors: c.outfitColors || ["#0d9488", "#0f766e"],
+          isCustom: true,
+        })),
+      ];
+    }
+  } catch {}
 
   // Sync latest custom buddies from backend if available
   const apiBase = await getResolvedBackendBase();
@@ -1989,9 +2052,9 @@ async function render() {
     .then((r) => (r.ok ? r.json() : null))
     .then((data) => {
       if (data?.ok && Array.isArray(data.buddies) && data.buddies.length > 0) {
-        // Merge without breaking registry
         const customItems = data.buddies.filter((b) => b.isCustom);
         if (customItems.length > 0) {
+          chrome.storage.local.set({ localCustomBuddies: customItems }).catch(() => {});
           allBuddies = [
             ...BUDDIES_REGISTRY.filter((b) => !b.isCustom),
             ...customItems.map((c) => ({
@@ -2019,13 +2082,17 @@ async function render() {
   updateGreetingContext();
   startRotatingPlaceholders();
   loadModelHubStatus();
-  if ($("headerModelLabel") && preferredModel && preferredModel !== "auto") {
-    const matchedOpt = Array.from($("modelSelector")?.options || []).find(
-      (o) => o.value === preferredModel,
-    );
-    $("headerModelLabel").textContent = matchedOpt
-      ? matchedOpt.text.split(" (")[0]
-      : preferredModel;
+  if ($("headerModelLabel")) {
+    if (preferredModel && preferredModel !== "auto") {
+      const matchedOpt = Array.from($("modelSelector")?.options || []).find(
+        (o) => o.value === preferredModel,
+      );
+      $("headerModelLabel").textContent = matchedOpt
+        ? matchedOpt.text.split(" (")[0]
+        : preferredModel;
+    } else {
+      $("headerModelLabel").textContent = "Auto Model";
+    }
   }
 }
 
@@ -2539,6 +2606,7 @@ function extractFillDetails(text) {
   const overwrite = /\b(?:change|update|replace|overwrite|badal|badlo|modify)\b/i.test(cleaned);
   const fields = {};
   const explicitPairs = [];
+  let hasPositionalOrKnownAssign = false;
 
   if (
     /\b(?:analyze|analyse|explain|why\s+(?:they|it|this)|occurred|step-by-step|instructions\s+to\s+fix|samjhao|kyun\s+(?:hua|aaya|aa\s+rha|aa\s+raha))\b/i.test(
@@ -2723,21 +2791,30 @@ function extractFillDetails(text) {
     }
 
     // Pattern A: "<field> (wale)? (box|field|input)? mein/me/main/per/par/pr/in/into <value> (fill|type|likh|daal|bhar|kr do)?"
-    match = hasFillVerbOrAssign ? clause.match(patternARegex) : null;
-    if (match && !/\b(?:give|tell|show|help|ask|explain|send|let|teach|guide|write)\s+me\b/i.test(clause)) {
+    match = clause.match(patternARegex);
+    if (
+      match &&
+      !/\b(?:give|tell|show|help|ask|explain|send|let|teach|guide|write)\s+me\b/i.test(clause) &&
+      !/\b(?:click|press|dabao|scroll|point|highlight|find|kholo|open)\b/i.test(clause)
+    ) {
       const rawTarget = match[1]
         .trim()
         .replace(/^(?:fill|type|enter|write|put|set)\s+/i, "")
         .trim();
       const rawVal = cleanEdgeQuotes(match[2]);
-      if (!isNonValuePlaceholder(rawVal)) {
+      const normT = normalizeFillTarget(rawTarget);
+      const isPositionalOrKnown =
+        Boolean(resolvePositionalFieldTarget(rawTarget)) ||
+        knownFieldExactRe.test(normT) ||
+        /\b(?:field|box|input|textbox|textarea)\b/i.test(rawTarget);
+      if ((hasFillVerbOrAssign || isPositionalOrKnown) && !isNonValuePlaceholder(rawVal)) {
         if (/^(?:is|ye|yeh|isko|isme|is\s*box|this|this\s*box|this\s*field|yahan|yaha|yha)$/i.test(rawTarget)) {
           explicitPairs.push({ target: "__CURRENT__", value: rawVal, overwrite });
           continue;
         }
-        const normT = normalizeFillTarget(rawTarget);
         if (normT && rawVal) {
           fields[normT] = rawVal;
+          if (isPositionalOrKnown) hasPositionalOrKnownAssign = true;
           explicitPairs.push({ target: normT, value: rawVal, overwrite });
           continue;
         }
@@ -2815,22 +2892,22 @@ function extractFillDetails(text) {
     }
 
     // Pattern F: Value-first fill without naming a field (e.g. "1234 FILL KR DO", "9560798373 YE FILL KR DO",
-    // "9560798373 isme fill kr do", "hello world likh do", "fill 1234", "type hello world")
+    // "9560798373 isme fill kr do", "hello world likh do", "fill 1234", "fill kar do 9560798373")
     if (
       clauses.length === 1 &&
       hasFillVerbOrAssign &&
-      !/\b(?:click|press|dabao|scroll|point|highlight|find|kholo|open)\b/i.test(clause)
+      !/\b(?:click|press|dabao|scroll|point|highlight|find|kholo|open|ki\s+jagah|instead\s+of)\b/i.test(clause)
     ) {
       const bareVerbEndRe =
         /^(?:["']([^"']+)["']|(.+?))\s+(?:(?:ye|yeh|isko|isme|yahan|yaha|yha|ye\s+wal[aei]|is\s+(?:box|field|input)(?:\s+(?:mein|me|main|ko))?)\s+)?(?:(?:fill|type|likh|likho|lkh|lkho|daal|daalo|dalo|bhar|bharo|enter)\s*(?:(?:kar|kr)\s*do|krdo|(?:kar|kr)\s*de|(?:kar|kr)o|karein|do|de)?)[.!?\s]*$/i;
       const bareVerbStartRe =
-        /^(?:fill|type|likho|lkho|likh\s+do|enter|daalo|dalo|daal\s+do|bharo)\s+(?:(?:in|into|inside)\s+(?:this(?:\s+box|\s+field)?|it|here)\s+)?(?:["']([^"']+)["']|(.+?))[.!?\s]*$/i;
+        /^(?:fill|type|likho|lkho|likh\s+do|enter|daalo|dalo|daal\s+do|bharo)\s+(?:(?:(?:kar|kr)\s*(?:do|de|o)|krdo|do|de)\s+)?(?:(?:in|into|inside)\s+(?:this(?:\s+box|\s+field)?|it|here)\s+)?(?:["']([^"']+)["']|(.+?))[.!?\s]*$/i;
       const fMatch = clause.match(bareVerbEndRe) || clause.match(bareVerbStartRe);
       if (fMatch) {
         const rawCandidate = (fMatch[1] || fMatch[2] || "").trim();
         const candidateClean = rawCandidate
-          .replace(/^(?:isme|isko|is\s*box\s*(?:mein|me|main)?|is\s*field\s*(?:mein|me|main)?|ye|yeh|yahan|yaha|yha|ab|please)\s+/i, "")
-          .replace(/\s+(?:ko|ka|ke|ki|mein|me|main|par|pe|pr|in|into|se|ye|yeh|isko|isme)$/i, "")
+          .replace(/^(?:(?:ye|yeh|is)\s+wal[aei]|isme|isko|is\s*box\s*(?:mein|me|main)?|is\s*field\s*(?:mein|me|main)?|ye|yeh|yahan|yaha|yha|ab|please)\s+/i, "")
+          .replace(/\s+(?:ko|ka|ke|ki|mein|me|main|par|pe|pr|in|into|se|ye|yeh|isko|isme|ye\s+wal[aei])$/i, "")
           .trim();
         const candNormTarget = normalizeFillTarget(candidateClean);
         const looksLikeQuestion =
@@ -2855,6 +2932,39 @@ function extractFillDetails(text) {
         ) {
           explicitPairs.push({ target: "__CURRENT__", value: candidateClean, overwrite });
           continue;
+        }
+      }
+    }
+  }
+
+  // Comma-safe Pattern F fallback when user types e.g. "hello, world type kar do"
+  if (
+    explicitPairs.length === 0 &&
+    clauses.length > 1 &&
+    hasFillVerbOrAssign &&
+    !/\b(?:click|press|dabao|scroll|point|highlight|find|kholo|open)\b/i.test(cleaned)
+  ) {
+    const multiFieldAliasRe = new RegExp(`\\b${KNOWN_FIELD_ALIASES}\\b`, "gi");
+    const aliasHits = cleaned.match(multiFieldAliasRe) || [];
+    if (aliasHits.length < 2) {
+      const bareVerbEndWholeRe =
+        /^(?:["']([^"']+)["']|(.+?))\s+(?:(?:ye|yeh|isko|isme|yahan|yaha|yha|ye\s+wal[aei]|is\s+(?:box|field|input)(?:\s+(?:mein|me|main|ko))?)\s+)?(?:(?:fill|type|likh|likho|lkh|lkho|daal|daalo|dalo|bhar|bharo|enter)\s*(?:(?:kar|kr)\s*do|krdo|(?:kar|kr)\s*de|(?:kar|kr)o|karein|do|de)?)[.!?\s]*$/i;
+      const bareVerbStartWholeRe =
+        /^(?:fill|type|likho|lkho|likh\s+do|enter|daalo|dalo|daal\s+do|bharo)\s+(?:(?:(?:kar|kr)\s*(?:do|de|o)|krdo|do|de)\s+)?(?:(?:in|into|inside)\s+(?:this(?:\s+box|\s+field)?|it|here)\s+)?(?:["']([^"']+)["']|(.+?))[.!?\s]*$/i;
+      const wholeMatch = cleaned.match(bareVerbEndWholeRe) || cleaned.match(bareVerbStartWholeRe);
+      if (wholeMatch) {
+        const rawWhole = (wholeMatch[1] || wholeMatch[2] || "").trim();
+        const wholeClean = rawWhole
+          .replace(/^(?:(?:ye|yeh|is)\s+wal[aei]|isme|isko|is\s*box\s*(?:mein|me|main)?|is\s*field\s*(?:mein|me|main)?|ye|yeh|yahan|yaha|yha|ab|please)\s+/i, "")
+          .replace(/\s+(?:ko|ka|ke|ki|mein|me|main|par|pe|pr|in|into|se|ye|yeh|isko|isme|ye\s+wal[aei])$/i, "")
+          .trim();
+        if (
+          wholeClean &&
+          !isNonValuePlaceholder(rawWhole) &&
+          !isNonValuePlaceholder(wholeClean) &&
+          !/[?]$/.test(cleaned.trim())
+        ) {
+          explicitPairs.push({ target: "__CURRENT__", value: wholeClean, overwrite });
         }
       }
     }
@@ -2892,6 +3002,7 @@ function extractFillDetails(text) {
     explicitPairs: explicitPairs.length > 0 ? explicitPairs : null,
     overwrite,
     explicitUserProvided: explicitPairs.length > 0,
+    hasPositionalOrKnownAssign,
     hasExplicitNoSubmit,
   };
 }
@@ -3022,6 +3133,27 @@ function parseActionIntent(text) {
           explicitUserProvided: true,
           fromFormSession: Boolean(ctx.activeFormSession?.active),
           noSubmitPrompt: Boolean(ctx.pendingSlot.noSubmitPrompt),
+        };
+      }
+    }
+
+    // Structured field+value turn during an active form-filling session ("First field mein Murshad", "Last field mein Ali")
+    if (ctx.activeFormSession?.active || ctx.pendingSlot?.type === "fill_value") {
+      const sessionFill = extractFillDetails(stripped);
+      if (
+        sessionFill.explicitPairs?.length &&
+        (sessionFill.hasPositionalOrKnownAssign ||
+          /\b(?:fill|type|likh|likho|daal|daalo|bhar|bharo|enter|set)\b|[:=]/i.test(normStripped))
+      ) {
+        return {
+          type: "FORM_FILL",
+          fields: sessionFill.fields,
+          explicitPairs: sessionFill.explicitPairs,
+          overwrite: Boolean(sessionFill.overwrite || true),
+          explicitUserProvided: true,
+          fromChatCommand: true,
+          fromFormSession: true,
+          noSubmitPrompt: Boolean(ctx.pendingSlot?.noSubmitPrompt || sessionFill.hasExplicitNoSubmit),
         };
       }
     }
@@ -3337,16 +3469,46 @@ function parseActionIntent(text) {
       return { type: "SEARCH_NEED_QUERY", engine: "google" };
     }
 
+    // Retry last failed/unresponsive click with alternate click method
+    if (
+      ctx?.lastExecutionAttempt &&
+      /^(?:(?:doosre|dusre|alternate|other)\s+(?:method|tareeke|way)\s+(?:se\s+)?(?:try|click)\s*(?:karo|kar\s+do)?|(?:phir\s+se|dobara|again)\s+(?:click|try)\s*(?:karo|kar\s+do)?|try\s+alternate\s+click)[.!?\s]*$/i.test(
+        lower,
+      )
+    ) {
+      return { type: "RETRY_LAST_CLICK", attempt: ctx.lastExecutionAttempt };
+    }
+
     const openWebsiteMatch =
-      normStripped.match(/^(?:open|visit|go\s+to)\s+(?:the\s+)?(.+?\b(?:website|site|portal)\b.*?)[.!?\s]*$/i) ||
-      normStripped.match(/^(.+?\b(?:website|site|portal)\b)\s+(?:open\s*(?:karo|kar\s+do)?|kholo|khol\s+do|dikhao)[.!?\s]*$/i) ||
-      normStripped.match(/^(?:(?:open|visit)\s+)?(google|youtube|amazon|flipkart|uidai|aadhaar|digilocker|irctc)\s*(?:kholo|khol\s+do|open\s*(?:karo|kar\s+do)?)?[.!?\s]*$/i);
+      normStripped.match(/^(?:open|visit|go\s+to)\s+(?:the\s+)?(.+?\b(?:website|site|portal|dashboard|hub|panel)\b.*?)[.!?\s]*$/i) ||
+      normStripped.match(/^(.+?\b(?:website|site|portal|dashboard|hub|panel)\b)\s+(?:open\s*(?:karo|kar\s+do)?|kholo|khol\s+do|dikhao)[.!?\s]*$/i) ||
+      normStripped.match(/^(?:(?:open|visit|go\s+to)\s+)?(google(?:\s+(?:sheets|docs|drive))?|youtube|amazon(?:\s+seller)?|flipkart(?:\s+seller(?:\s+hub)?)?|meesho(?:\s+(?:seller|supplier(?:\s+panel)?))?|uidai|myaadhaar|aadhaar|digilocker|irctc|gst(?:\s+portal)?|income\s*tax|parivahan|github|wikipedia)\s*(?:kholo|khol\s+do|open\s*(?:karo|kar\s+do)?)?[.!?\s]*$/i);
+    const hasPortalName = /\b(?:google(?:\s+(?:sheets|docs|drive))?|youtube|amazon|flipkart|meesho|seller|uidai|myaadhaar|aadhaar|aadhar|digilocker|irctc|gst|income\s*tax|efiling|itr|parivahan|github|wikipedia)\b/i.test(lower);
+    const isLocalUiTarget = /\b(?:tab|button|link|menu|drawer|modal|popup)\b/i.test(lower);
     if (
       openWebsiteMatch?.[1] &&
-      !/\b(?:tab|button|link|menu|drawer|modal|popup|dashboard)\b/i.test(lower)
+      !isLocalUiTarget &&
+      (!/\bdashboard\b/i.test(lower) || hasPortalName)
     ) {
       return { type: "OPEN_WEBSITE", query: openWebsiteMatch[1].trim() };
     }
+  }
+
+  // 3b-3. FILE DOWNLOAD ("download kar do", "invoice download karo", "https://...pdf download karo")
+  const directDownloadUrlMatch = stripped.match(/(https?:\/\/[^\s"'<>]+)/i);
+  if (/\b(?:download|save\s+file|export\s+(?:pdf|csv|xlsx|report))\b/i.test(lower)) {
+    if (directDownloadUrlMatch?.[1]) {
+      return { type: "DOWNLOAD", url: directDownloadUrlMatch[1] };
+    }
+    const dlClean = stripped
+      .replace(/^(?:download|save|export)\s+(?:the\s+|this\s+)?/i, "")
+      .replace(/\s+(?:download|save|export)\s*(?:karo|kro|(?:kar|kr)\s*do|karein|file)?[.!?\s]*$/i, "")
+      .replace(/\s+(?:file|pdf|document|doc|report|label|invoice)$/i, (m) => m)
+      .trim();
+    return {
+      type: "DOWNLOAD",
+      target: dlClean && !/^(?:this|it|ye|yeh|file)$/i.test(dlClean) ? dlClean : "download",
+    };
   }
 
   // 3c. IN-PAGE EXPLICIT SEARCH ("122 search karo is page par", "is page par pension search kr do")
@@ -3423,7 +3585,7 @@ function parseActionIntent(text) {
     /\b(?:fill|type|likh|likho|daal|daalo|bhar|bharo|enter)\b/i.test(lower) &&
     !/\b(?:click|press|dabao|scroll|point|highlight|find|kholo)\b/i.test(lower);
 
-  if (fillDetails.explicitPairs && hasSingleFillVerb) {
+  if (fillDetails.explicitPairs && (hasSingleFillVerb || fillDetails.hasPositionalOrKnownAssign)) {
     const targets = fillDetails.explicitPairs.map((p) => String(p.target || "").toLowerCase());
     const noSubmitPrompt =
       Boolean(fillDetails.hasExplicitNoSubmit) ||
@@ -3731,12 +3893,43 @@ function parseActionIntent(text) {
 function resolveWebsiteDestination(query, forceSearchOnly = false) {
   const q = String(query || "").trim();
   const clean = q
-    .replace(/\b(?:official|ki|ka|ke|website|site|portal|web|page)\b/gi, " ")
+    .replace(/\b(?:official|ki|ka|ke|website|site|portal|web|page|dashboard|hub)\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
   const lower = clean.toLowerCase();
   if (!forceSearchOnly) {
+    if (/\bflipkart\b/i.test(q) && /\b(?:seller|dashboard|hub|merchant)\b/i.test(q)) {
+      return { url: "https://seller.flipkart.com", isSearch: false, label: "Flipkart Seller Hub" };
+    }
+    if (/\bamazon\b/i.test(q) && /\b(?:seller|dashboard|central|merchant)\b/i.test(q)) {
+      return { url: "https://sellercentral.amazon.in", isSearch: false, label: "Amazon Seller Central" };
+    }
+    if (/^amazon$/i.test(lower)) {
+      return {
+        ambiguous: true,
+        label: "Amazon",
+        options: [
+          { label: "Amazon India Shopping (amazon.in)", url: "https://www.amazon.in" },
+          { label: "Amazon Seller Central (sellercentral.amazon.in)", url: "https://sellercentral.amazon.in" },
+        ],
+      };
+    }
+    if (/^flipkart$/i.test(lower)) {
+      return {
+        ambiguous: true,
+        label: "Flipkart",
+        options: [
+          { label: "Flipkart Shopping (flipkart.com)", url: "https://www.flipkart.com" },
+          { label: "Flipkart Seller Hub (seller.flipkart.com)", url: "https://seller.flipkart.com" },
+        ],
+      };
+    }
     const KNOWN_PORTALS = [
+      { re: /\b(?:amazon\s*seller|seller\s*central)\b/i, url: "https://sellercentral.amazon.in" },
+      { re: /\b(?:flipkart\s*seller|seller\s*hub)\b/i, url: "https://seller.flipkart.com" },
+      { re: /\bgoogle\s*sheets?\b/i, url: "https://docs.google.com/spreadsheets" },
+      { re: /\bgoogle\s*docs?\b/i, url: "https://docs.google.com/document" },
+      { re: /\bgoogle\s*drive\b/i, url: "https://drive.google.com" },
       { re: /\b(?:aadhaar|aadhar|uidai)\b/i, url: "https://uidai.gov.in" },
       { re: /\bmyaadhaar\b/i, url: "https://myaadhaar.uidai.gov.in" },
       { re: /\b(?:gst|gst\s*portal)\b/i, url: "https://www.gst.gov.in" },
@@ -3772,6 +3965,8 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     "SELECT",
     "CHECK",
     "CLICK",
+    "RETRY_LAST_CLICK",
+    "DOWNLOAD",
     "FORM_FILL",
   ]);
   if (mutatingIntents.has(intent.type)) {
@@ -3827,6 +4022,9 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     const disAction = pendingDisambiguation.action || "click";
     const disTarget = pendingDisambiguation.target;
     pendingDisambiguation = null;
+    if (disAction === "open_url" && chosen.url) {
+      return executeNaturalBrowserAction({ type: "NAVIGATE", url: chosen.url, label: chosen.text }, trimmed);
+    }
     return executeNaturalBrowserAction(
       {
         type: "CLICK",
@@ -4062,10 +4260,60 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     return true;
   }
 
+  if (intent.type === "NAVIGATE") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    setRigEmotion("working", "Opening URL…");
+    $("statusText").textContent = `Opening ${intent.url}…`;
+    const res = await sendRuntimeMessage({ type: "NAVIGATE_TAB", url: intent.url });
+    if (res?.ok) {
+      setRigEmotion("happy", "Opened!");
+      lastHighlightSelector = null;
+      const msg = isHindi
+        ? `🌐 ${intent.label || intent.url} khol diya hai (${res.url || intent.url}).`
+        : `🌐 Opened ${intent.label || intent.url} (${res.url || intent.url}).`;
+      recordSessionAction(msg, "confirmed");
+      $("statusText").textContent = msg;
+      appendHistory("buddy", msg);
+      recordConversationTurn(trimmed, msg);
+      speakResponse(msg, "happy");
+    } else {
+      setRigEmotion("error", "Failed");
+      const failMsg = res?.message || `Could not open ${intent.url}.`;
+      recordSessionAction(failMsg, "failed");
+      $("statusText").textContent = failMsg;
+      appendHistory("buddy", `⚠️ ${failMsg}`);
+    }
+    return true;
+  }
+
   if (intent.type === "WEB_SEARCH" || intent.type === "OPEN_WEBSITE") {
     appendHistory("user", trimmed);
     $("promptInput").value = "";
     const dest = resolveWebsiteDestination(intent.query, intent.type === "WEB_SEARCH");
+    if (dest.ambiguous && Array.isArray(dest.options) && dest.options.length > 1) {
+      pendingDisambiguation = {
+        action: "open_url",
+        target: dest.label,
+        candidates: dest.options.map((opt, idx) => ({
+          index: idx + 1,
+          text: opt.label,
+          url: opt.url,
+          tag: "portal",
+        })),
+      };
+      const listText = pendingDisambiguation.candidates
+        .map((c) => `${c.index}. ${c.text}`)
+        .join("\n");
+      const askMsg = isHindi
+        ? `🤔 Aap "${dest.label}" ka kaunsa portal kholna chahte hain?\n${listText}\nNumber (1-${pendingDisambiguation.candidates.length}) batayein.`
+        : `🤔 Which "${dest.label}" portal would you like to open?\n${listText}\nReply with 1 or 2.`;
+      setRigEmotion("curious", "Which portal?");
+      $("statusText").textContent = `Clarify ${dest.label} destination`;
+      appendHistory("buddy", askMsg);
+      speakResponse(askMsg, "curious");
+      return true;
+    }
     setRigEmotion("working", intent.type === "WEB_SEARCH" ? "Searching web…" : "Opening site…");
     $("statusText").textContent = `Opening ${dest.url}…`;
     const res = await sendRuntimeMessage({ type: "NAVIGATE_TAB", url: dest.url });
@@ -4089,6 +4337,129 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     } else {
       setRigEmotion("error", "Failed");
       const failMsg = res?.message || `Could not open ${dest.url}.`;
+      recordSessionAction(failMsg, "failed");
+      $("statusText").textContent = failMsg;
+      appendHistory("buddy", `⚠️ ${failMsg}`);
+    }
+    return true;
+  }
+
+  if (intent.type === "DOWNLOAD") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    setRigEmotion("working", "Downloading…");
+    $("statusText").textContent = "Initiating & verifying download…";
+    if (intent.url) {
+      const dlRes = await sendRuntimeMessage({
+        type: "DOWNLOAD_FILE",
+        url: intent.url,
+        filenameHint: intent.filenameHint || undefined,
+      });
+      if (dlRes?.ok) {
+        setRigEmotion("success", "Downloaded!");
+        const msg = isHindi
+          ? `⬇️ Download ${dlRes.state === "complete" ? "complete" : "shuru"} ho gaya${dlRes.filename ? ` (${dlRes.filename})` : ""}.`
+          : `⬇️ Download ${dlRes.state === "complete" ? "completed" : "started"}${dlRes.filename ? ` (${dlRes.filename})` : ""}.`;
+        recordSessionAction(msg, "confirmed");
+        $("statusText").textContent = msg;
+        appendHistory("buddy", msg);
+        speakResponse(msg, "success");
+      } else {
+        setRigEmotion("error", "Failed");
+        const failMsg = dlRes?.message || "Could not start download for that URL.";
+        recordSessionAction(failMsg, "failed");
+        $("statusText").textContent = failMsg;
+        appendHistory("buddy", `⚠️ ${failMsg}`);
+      }
+      return true;
+    }
+
+    const clickDlRes = await sendRuntimeMessage({
+      type: "EXECUTE_ACTION",
+      action: "click",
+      selector: intent.selector || lastHighlightSelector || undefined,
+      value: intent.target || "download",
+      options: {
+        trackDownload: true,
+        fallbackSelector: lastHighlightSelector || undefined,
+      },
+    });
+    if (clickDlRes?.ambiguous && Array.isArray(clickDlRes.candidates) && clickDlRes.candidates.length > 1) {
+      pendingDisambiguation = {
+        action: "click",
+        target: intent.target || "download",
+        candidates: clickDlRes.candidates,
+      };
+      const listText = clickDlRes.candidates
+        .map((c) => `${c.index}. "${c.text}"${c.context ? ` — [${c.context}]` : ` (${c.tag})`}`)
+        .join("\n");
+      const askMsg = isHindi
+        ? `🤔 "${intent.target || "download"}" ke ${clickDlRes.candidates.length} options mile:\n${listText}\nKaunsa download karna hai?`
+        : `🤔 Found ${clickDlRes.candidates.length} download controls:\n${listText}\nWhich one should I download?`;
+      setRigEmotion("confused", "Which one?");
+      appendHistory("buddy", askMsg);
+      speakResponse(askMsg, "confused");
+      return true;
+    }
+    if (clickDlRes?.ok) {
+      const dlInfo = clickDlRes.download;
+      if (dlInfo?.ok || clickDlRes.downloadTriggered) {
+        setRigEmotion("success", "Downloaded!");
+        const msg = isHindi
+          ? `⬇️ Download ${dlInfo?.state === "complete" ? "complete" : "verify"} ho gaya${dlInfo?.filename ? ` (${dlInfo.filename})` : ""}!`
+          : `⬇️ Download ${dlInfo?.state === "complete" ? "completed" : "started"}${dlInfo?.filename ? ` (${dlInfo.filename})` : ""}!`;
+        recordSessionAction(msg, "confirmed");
+        $("statusText").textContent = msg;
+        appendHistory("buddy", msg);
+        speakResponse(msg, "success");
+      } else {
+        setRigEmotion("concerned", "Check Tab");
+        const msg = isHindi
+          ? `✅ "${clickDlRes.text || "Download"}" click kar diya hai, lekin Chrome downloads list mein abhi nayi file detect nahi hui.`
+          : `✅ Clicked "${clickDlRes.text || "Download"}", though no new file appeared in Chrome downloads yet.`;
+        recordSessionAction(msg, "unconfirmed");
+        $("statusText").textContent = msg;
+        appendHistory("buddy", msg);
+      }
+    } else {
+      setRigEmotion("error", "Not found");
+      const failMsg =
+        clickDlRes?.message ||
+        (isHindi ? "Page par matching download button ya link nahi mila." : "Could not find a matching download button or link on this page.");
+      recordSessionAction(failMsg, "failed");
+      $("statusText").textContent = failMsg;
+      appendHistory("buddy", `⚠️ ${failMsg}`);
+    }
+    return true;
+  }
+
+  if (intent.type === "RETRY_LAST_CLICK" && intent.attempt) {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    setRigEmotion("working", "Retrying…");
+    $("statusText").textContent = `Retrying "${intent.attempt.target || "click"}" with alternate method…`;
+    const retryRes = await sendRuntimeMessage({
+      type: "EXECUTE_ACTION",
+      action: intent.attempt.action || "click",
+      selector: intent.attempt.selector || undefined,
+      value: intent.attempt.target || undefined,
+      options: {
+        clickMethod: "alternate",
+        fallbackSelector: intent.attempt.selector || lastHighlightSelector || undefined,
+      },
+    });
+    if (retryRes?.ok) {
+      setRigEmotion("success", "Done!");
+      const msg = isHindi
+        ? `✅ Alternate click method se "${retryRes.text || intent.attempt.target}" execute ho gaya!`
+        : `✅ Retried "${retryRes.text || intent.attempt.target}" with alternate click method successfully!`;
+      recordSessionAction(msg, "confirmed");
+      $("statusText").textContent = msg;
+      appendHistory("buddy", msg);
+      speakResponse(msg, "success");
+    } else {
+      setRigEmotion("error", "Blocked");
+      const failMsg = retryRes?.message || "Alternate click method also could not complete this action.";
       recordSessionAction(failMsg, "failed");
       $("statusText").textContent = failMsg;
       appendHistory("buddy", `⚠️ ${failMsg}`);
@@ -4586,12 +4957,20 @@ async function executeNaturalBrowserAction(intent, trimmed) {
         ? "Clicking highlighted element…"
         : `Clicking "${intent.target}" on active page…`;
 
+    const resolvedSel =
+      intent.selector ||
+      (intent.target === "__CURRENT__" ? lastHighlightSelector || undefined : undefined);
+    lastExecutionAttempt = {
+      action: intent.action || "click",
+      target: intent.target,
+      selector: resolvedSel,
+      at: Date.now(),
+    };
+
     const res = await sendRuntimeMessage({
       type: "EXECUTE_ACTION",
       action: intent.action || "click",
-      selector:
-        intent.selector ||
-        (intent.target === "__CURRENT__" ? lastHighlightSelector || undefined : undefined),
+      selector: resolvedSel,
       value: intent.target,
       options: {
         fallbackSelector: lastHighlightSelector || undefined,
@@ -4777,7 +5156,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     // 2. User named specific fields (e.g. "Pehle naam fill karo, phir mobile number") without values:
     // Check uploaded document first, then non-sensitive userProfile; otherwise ask cleanly!
     if (intent.requestedFieldNames && intent.requestedFieldNames.length > 0 && !intent.explicitPairs) {
-      const { userProfile } = await chrome.storage.local.get("userProfile").catch(() => ({}));
+      const userProfile = await getScopedProfile();
       const docFields = activeUploadedDocument?.fields || {};
       const matchedPairs = [];
       const missingFields = [];
@@ -4829,7 +5208,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       const EPHEMERAL_PROFILE_RE =
         /^(?:__current__|search|query|q|chat|msg|message|comment|comments|prompt|note|notes|subject|title)$/i;
       // Check saved non-sensitive userProfile before asking user step-by-step
-      const { userProfile } = await chrome.storage.local.get("userProfile").catch(() => ({}));
+      const userProfile = await getScopedProfile();
       const profilePairs = userProfile
         ? Object.entries(userProfile)
             .filter(([k, v]) => {
@@ -5015,6 +5394,15 @@ async function sendQuery(question, intent, options = {}) {
           return;
         }
 
+        if (disAction === "open_url" && chosen.url) {
+          appendHistory("user", trimmed);
+          $("promptInput").value = "";
+          await executeNaturalBrowserAction(
+            { type: "NAVIGATE", url: chosen.url, label: chosen.text },
+            trimmed,
+          );
+          return;
+        }
         const isConseq =
           /purchase|buy|pay|delete|remove account|confirm payment|place\s*order|checkout|confirm\s*order|\bsubmit\b|file\s*return/i.test(
             `${chosen.text || ""} ${disTarget || ""}`,
@@ -5090,7 +5478,7 @@ async function sendQuery(question, intent, options = {}) {
       "preferredModel",
       "selectedProvider",
     ]);
-    const activeProv = selectedProvider || storedProvider || "gemini";
+    const activeProv = selectedProvider || storedProvider || "auto";
     const pageToggleEl = $("pageContextToggle");
     const pageVisionActive = pageToggleEl
       ? pageToggleEl.type === "checkbox"
@@ -5098,13 +5486,39 @@ async function sendQuery(question, intent, options = {}) {
         : pageToggleEl.classList.contains("active")
       : true;
     const detachPage = !pageVisionActive;
+    const hasActiveTaskState = Boolean(pendingSlot || pendingDisambiguation || activeFormSession?.active);
+    const hasExplicitPageRef = /\b(?:this\s+page|current\s+page|active\s+page|this\s+webpage|webpage|website\s+par|is\s+page|ye\s+page|yeh\s+page|page\s+(?:par|pe|pr|mein|me|kya|explain|summary|summarize|overview|errors?|issues?|alerts?|headings?|links?|buttons?|forms?|tables?)|on\s+this\s+screen|screen\s+(?:par|pe)|visible\s+(?:here|on\s+page)|is\s+form|ye\s+form|this\s+form|(?:1st|2nd|3rd|4th|first|second|third|fourth|last|next|pehl[aei]|doosr[aei]|teesr[aei]|aakhri)\s+(?:field|box|input|textbox|wal[aei])|these\s+products?|this\s+product|ye\s+product|in\s+dono|compare\s+these|these\s+items|is\s+table|this\s+table|duplicate\s+entries|rto\s+orders?|orders?\s+tab|is\s+button|this\s+button|is\s+field|ismein|isme|isko|yahan|yaha|here\s+on|ord-\d+)\b/i.test(
+      trimmed,
+    );
+    const isActionCmd = isLikelyActionCommand(trimmed);
+    const isCreativeGeneralWriting =
+      /\b(?:write|draft|compose)\s+(?:a|an|me)?\s*(?:professional\s+)?(?:email|letter|essay|poem|story|post|caption|code|script|sql|function|message|reply|bio)\b/i.test(
+        trimmed,
+      ) && !hasExplicitPageRef;
+    const lastAssistantMsg = historyPayload.length
+      ? [...historyPayload].reverse().find((h) => h.role === "assistant")?.content || ""
+      : "";
+    const isPageFollowUp =
+      /^(?:and\s+)?(?:ab|now|then|uske\s+baad|next|what\s+about\s+that|why\s+is\s+it|how\s+to\s+fix\s+it|is\s+that\s+good)\b/i.test(
+        trimmed,
+      ) &&
+      /\b(?:highlighted|clicked|filled|orders?\s+tab|active\s+page|form\s+field|selector|element)\b/i.test(
+        lastAssistantMsg,
+      );
+    const isGeneralChatQuery =
+      detachPage ||
+      (!intent &&
+        !hasActiveTaskState &&
+        !hasExplicitPageRef &&
+        !isPageFollowUp &&
+        (isCreativeGeneralWriting || !isActionCmd));
+
     const shouldInterpretWithGemini =
       !detachPage &&
+      !isGeneralChatQuery &&
       !options?.fromGeminiInterpret &&
-      (isLikelyActionCommand(trimmed) ||
-        Boolean(pendingSlot) ||
-        Boolean(sessionTaskContext.lastTargetField));
-    const finalIntent = detachPage
+      (isActionCmd || hasActiveTaskState || Boolean(sessionTaskContext.lastTargetField));
+    const finalIntent = isGeneralChatQuery
       ? "general"
       : shouldInterpretWithGemini && (!intent || intent === "answer")
         ? "interpret_command"
@@ -5138,14 +5552,21 @@ async function sendQuery(question, intent, options = {}) {
 
     hideChatLoadingSpinner();
 
-    if (!res || res.error) {
-      setRigEmotion("error", "Notice");
+    if (!res || res.error || res.activeProvider === "error") {
+      setRigEmotion("error", "Unavailable");
       const errMsg =
-        res?.pageReadable === false
+        res?.pageReadable === false && !isGeneralChatQuery
           ? "I cannot read the current webpage right now. Please refresh or allow page access."
-          : res?.message || res?.error || "I encountered an issue reaching AI Buddy. Please ensure your tab is open and refreshed.";
-      $("statusText").textContent = errMsg;
+          : res?.reply?.answer ||
+            res?.providerFailure?.message ||
+            res?.message ||
+            res?.error ||
+            "I encountered an issue reaching AI Buddy. Please verify your AI provider key or connection.";
+      $("statusText").textContent = res?.providerFailure?.message || errMsg;
       appendHistory("buddy", errMsg);
+      if (res?.providerWarning || res?.providerFailure) {
+        appendProviderWarningNotice(res.providerWarning, res.providerFailure);
+      }
       return;
     }
 
@@ -5153,7 +5574,7 @@ async function sendQuery(question, intent, options = {}) {
       res.clarificationQuestion ||
       res.reply?.clarificationQuestion ||
       res.reply?.answer ||
-      "I am grounded on this page and ready to assist you.";
+      "I am ready to help!";
     appendHistory("buddy", currentAnswer);
     recordConversationTurn(trimmed, currentAnswer);
 
@@ -5236,6 +5657,11 @@ async function sendQuery(question, intent, options = {}) {
           action: s.action || "click",
           textTarget: s.textTarget || undefined,
           value: s.value || undefined,
+          url: s.url || undefined,
+          filenameHint: s.filenameHint || undefined,
+          expectedText: s.expectedText || undefined,
+          waitMs: s.waitMs || undefined,
+          alternateTargets: Array.isArray(s.alternateTargets) ? s.alternateTargets : undefined,
           selector: s.selector || undefined,
           requiresApproval:
             permissionLevel === "suggest" ||
@@ -5254,13 +5680,41 @@ async function sendQuery(question, intent, options = {}) {
       if ($("planRetryBtn")) $("planRetryBtn").hidden = true;
       renderTaskPlanUI();
       await runPlanLoop();
+    } else if (res.actionType === "download") {
+      if (res.targetValue && /^https?:\/\//i.test(String(res.targetValue))) {
+        const dlRes = await sendRuntimeMessage({ type: "DOWNLOAD_FILE", url: res.targetValue });
+        recordSessionAction(dlRes?.ok ? `Downloaded ${dlRes.filename || res.targetValue}` : "Download failed", dlRes?.ok ? "confirmed" : "failed");
+      } else if (res.targetSelector || res.targetText) {
+        await sendRuntimeMessage({
+          type: "EXECUTE_ACTION",
+          action: "click",
+          selector: res.targetSelector || undefined,
+          value: res.targetText || "download",
+          options: { trackDownload: true },
+        });
+      }
     } else if (res.actionType === "web_search" || res.actionType === "open_website") {
       const dest = resolveWebsiteDestination(
         res.targetText || res.targetValue || trimmed,
         res.actionType === "web_search",
       );
-      await sendRuntimeMessage({ type: "NAVIGATE_TAB", url: dest.url });
-      recordSessionAction(`Navigated to ${dest.url}`, "confirmed");
+      if (dest.ambiguous && Array.isArray(dest.options) && dest.options.length > 1) {
+        pendingDisambiguation = {
+          action: "open_url",
+          target: dest.label,
+          candidates: dest.options.map((opt, idx) => ({
+            index: idx + 1,
+            text: opt.label,
+            url: opt.url,
+            tag: "portal",
+          })),
+        };
+        const askPortalMsg = `${dest.label}: ${dest.options.map((o, i) => `${i + 1}. ${o.label}`).join(" | ")}`;
+        appendHistory("buddy", askPortalMsg);
+      } else {
+        await sendRuntimeMessage({ type: "NAVIGATE_TAB", url: dest.url });
+        recordSessionAction(`Navigated to ${dest.url}`, "confirmed");
+      }
     } else if (res.actionType === "search_submit" && (res.targetValue || res.targetText)) {
       await sendRuntimeMessage({
         type: "EXECUTE_ACTION",
@@ -5541,10 +5995,8 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
       savedProfileData = activeUploadedDocument.fields;
     } else {
       try {
-        const { userProfile = {}, localMemories = [] } = await chrome.storage.local.get([
-          "userProfile",
-          "localMemories",
-        ]);
+        const userProfile = await getScopedProfile();
+        const localMemories = await getLocalMemoriesStore();
         if (userProfile && Object.keys(userProfile).length > 0) {
           const cleanProfile = {};
           for (const [pk, pv] of Object.entries(userProfile)) {
@@ -5682,7 +6134,7 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
 
       if (extraOpts?.explicitUserProvided) {
         try {
-          const { userProfile = {} } = await chrome.storage.local.get("userProfile");
+          const userProfile = await getScopedProfile();
           let changed = false;
           for (const f of filled) {
             const rawKey = String(f.key && f.key !== "__CURRENT__" ? f.key : f.field || "").trim().toLowerCase();
@@ -5699,7 +6151,7 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
               changed = true;
             }
           }
-          if (changed) await chrome.storage.local.set({ userProfile });
+          if (changed) await setScopedProfile(userProfile);
         } catch {}
       }
     }
@@ -6305,11 +6757,114 @@ function resolveSnapshotElementForStep(step, freshSnap, strategyIndex = 0) {
   return null;
 }
 
-async function startMultiActionPlan(instruction) {
+function normalizePlannerSteps(rawSteps, planId) {
+  if (!Array.isArray(rawSteps) || rawSteps.length === 0) return null;
+  const ALLOWED = new Set([
+    "navigate",
+    "open_website",
+    "open",
+    "click",
+    "click_submit",
+    "click_delete",
+    "open_link",
+    "type",
+    "fill_field",
+    "fill_from_document",
+    "select",
+    "check",
+    "uncheck",
+    "scroll",
+    "point",
+    "extract",
+    "download",
+    "verify_page",
+    "wait_for",
+    "keyboard",
+    "switch_tab",
+    "purchase",
+  ]);
+  const normalized = [];
+  rawSteps.forEach((raw, idx) => {
+    if (!raw || typeof raw !== "object") return;
+    const rawAct = String(raw.action || "click").toLowerCase().trim();
+    const action = ALLOWED.has(rawAct) ? rawAct : "click";
+    const title = String(raw.title || `${action} step ${idx + 1}`).trim();
+    const isConsequential =
+      Boolean(raw.isConsequential) ||
+      /purchase|click_delete|click_submit|send_message/i.test(action) ||
+      /\b(?:purchase|buy|pay|delete|remove\s+account|place\s+order)\b/i.test(title);
+    normalized.push({
+      id: `${planId}_${idx + 1}`,
+      stepNumber: idx + 1,
+      title,
+      action,
+      value: raw.value ?? raw.url ?? undefined,
+      url: raw.url ?? undefined,
+      filenameHint: raw.filenameHint ?? undefined,
+      expectedText: raw.expectedText ?? undefined,
+      waitMs: typeof raw.waitMs === "number" ? raw.waitMs : undefined,
+      textTarget: raw.textTarget ?? undefined,
+      selector: sanitizeStepSelector(raw.selector) || undefined,
+      alternateTargets: Array.isArray(raw.alternateTargets) ? raw.alternateTargets : undefined,
+      requestedFields: Array.isArray(raw.requestedFields) ? raw.requestedFields : undefined,
+      status: "pending",
+      isConsequential,
+      requiresApproval: isConsequential,
+      approvalPrompt: isConsequential
+        ? `Please confirm: Buddy is about to execute "${title}". Proceed?`
+        : undefined,
+    });
+  });
+  return normalized.length > 0 ? normalized : null;
+}
+
+async function startMultiActionPlan(instruction, isExplicitPlan = false) {
   // Invalidate any previous running loop immediately so a fresh plan is never blocked or corrupted
   planRunToken++;
   planLoopRunning = false;
-  const plan = buildMultiActionPlan(instruction);
+  let plan = buildMultiActionPlan(instruction);
+
+  // For complex/non-template instructions, consult AI planner (5s timeout) and keep local fallback if unavailable
+  const isPresetWorkflow =
+    isExplicitPlan &&
+    /meesho supplier panel|seller orders portal|multi-source research|find tables on this page/i.test(
+      String(instruction || ""),
+    );
+  if (!isPresetWorkflow) {
+    try {
+      const modelSel = $("modelSelector");
+      const activeMod = modelSel?.value && modelSel.value !== "auto" ? modelSel.value : undefined;
+      const activeProv = selectedProvider || "auto";
+      const aiPlanRes = await Promise.race([
+        sendRuntimeMessage(
+          {
+            type: "ASK",
+            question: instruction,
+            intent: "plan",
+            buddySlug: selectedBuddySlug,
+            customBuddyId: activeCustomBuddyId,
+            preferredProvider: activeProv,
+            preferredModel: activeMod,
+          },
+          { silent: true },
+        ).catch(() => null),
+        new Promise((r) => setTimeout(() => r(null), 5000)),
+      ]);
+      if (aiPlanRes && aiPlanRes.activeProvider !== "error" && Array.isArray(aiPlanRes.steps) && aiPlanRes.steps.length > 0) {
+        const aiSteps = normalizePlannerSteps(aiPlanRes.steps, plan.id);
+        if (aiSteps && aiSteps.length > 0) {
+          plan = {
+            ...plan,
+            steps: aiSteps,
+            plannedByAi: true,
+          };
+        }
+      }
+    } catch {
+      // Fall back seamlessly to local deterministic plan
+    }
+  }
+
   activePlan = plan;
   isPlanPaused = false;
   pendingApprovalStep = null;
@@ -6359,6 +6914,30 @@ async function runPlanLoop() {
           currentStep.resolvedSelector = currentStep.selector;
           currentStep.locatorStrategy = resolved.strategy;
           if (resolved.queryUsed) currentStep.textTarget = currentStep.textTarget || resolved.queryUsed;
+        } else if (
+          currentStep.action !== "navigate" &&
+          currentStep.action !== "open_website" &&
+          currentStep.action !== "verify_page" &&
+          currentStep.action !== "download" &&
+          currentStep.action !== "scroll" &&
+          currentStep.action !== "extract"
+        ) {
+          const urlLower = String(freshSnap.url || "").toLowerCase();
+          const hasOtpOrCaptchaAlert = (freshSnap.alerts || []).some((a) =>
+            /otp|captcha|two-factor|2fa|verify\s+your\s+identity|sign\s+in\s+required|session\s+expired/i.test(
+              `${a.name || ""} ${a.text || ""}`,
+            ),
+          );
+          const hasAuthInputs = (freshSnap.forms || []).some(
+            (f) => f.type === "password" || /\b(?:otp|captcha|verification\s*code)\b/i.test(`${f.name || ""} ${f.placeholder || ""}`),
+          );
+          const onAuthRoute = /(?:\/login|\/signin|\/sign-in|\/auth|\/otp|\/captcha|\/verify-account)/i.test(urlLower);
+          const stepWantsAuth = /\b(?:login|sign\s*in|password|otp|captcha|verify)\b/i.test(
+            `${currentStep.textTarget || ""} ${currentStep.title || ""}`,
+          );
+          if ((hasOtpOrCaptchaAlert || (onAuthRoute && hasAuthInputs)) && !stepWantsAuth) {
+            return { authWallDetected: true, currentUrl: freshSnap.url };
+          }
         }
       }
     } catch {
@@ -6409,6 +6988,25 @@ async function runPlanLoop() {
       const navCheck = await regroundStep(currentStep, strategyIdx);
       if (isStaleRun()) return;
 
+      if (navCheck?.authWallDetected) {
+        currentStep.status = "pending";
+        plan.status = "paused";
+        isPlanPaused = true;
+        await persistPlanCheckpoint(plan);
+        if (isStaleRun()) return;
+        renderTaskPlanUI();
+        setRigEmotion("concerned", "Login / OTP");
+        const active = getActiveBuddy();
+        const isHindi = active?.defaultLanguage !== "english";
+        appendHistory(
+          "buddy",
+          isHindi
+            ? `🔒 Page par Login / OTP / CAPTCHA verification dikh raha hai (${navCheck.currentUrl || "portal"}). Kripya pehle sign-in ya OTP complete karein, phir "continue" bolein ya Resume button dabayein.`
+            : `🔒 A Login, OTP, or CAPTCHA verification wall was detected (${navCheck.currentUrl || "portal"}). Please complete sign-in manually, then say "continue" or click Resume.`,
+        );
+        return;
+      }
+
       let res;
       if (navCheck?.skipNavigateAlreadyThere) {
         res = {
@@ -6431,8 +7029,14 @@ async function runPlanLoop() {
         });
         if (isStaleRun()) return;
 
-        // Automatic recoverable alternate-locator retry (max 1 auto-retry before surfacing manual Retry button)
-        if (!res?.ok && !res?.awaitingApproval && (currentStep.retryCount || 0) < 1 && currentStep.action !== "navigate") {
+        // Automatic recoverable alternate-locator + alternate clickMethod retry (max 1 auto-retry before AI recovery/manual Retry)
+        if (
+          !res?.ok &&
+          !res?.awaitingApproval &&
+          (currentStep.retryCount || 0) < 1 &&
+          currentStep.action !== "navigate" &&
+          currentStep.action !== "open_website"
+        ) {
           currentStep.retryCount = (currentStep.retryCount || 0) + 1;
           currentStep.locatorStrategyIndex = currentStep.retryCount;
           currentStep.selector = undefined;
@@ -6449,8 +7053,55 @@ async function runPlanLoop() {
               statusFilter: currentStep.statusFilter,
               useAlternateLocators: true,
               locatorStrategyIndex: currentStep.locatorStrategyIndex,
+              clickMethod: "alternate",
             },
           });
+        }
+
+        // Max 1 AI-assisted recovery on non-consequential steps if local alternate retry also failed
+        if (
+          !res?.ok &&
+          !res?.awaitingApproval &&
+          !currentStep.isConsequential &&
+          !currentStep._aiRecovered &&
+          currentStep.action !== "navigate" &&
+          currentStep.action !== "open_website" &&
+          currentStep.action !== "download"
+        ) {
+          currentStep._aiRecovered = true;
+          try {
+            const aiRec = await Promise.race([
+              sendRuntimeMessage(
+                {
+                  type: "ASK",
+                  question: `Step "${currentStep.title}" (action=${currentStep.action}, target=${currentStep.textTarget || ""}) failed with "${res?.error || res?.message || "not found"}". Pick the best matching control or selector on the current page.`,
+                  intent: "interpret_command",
+                  buddySlug: selectedBuddySlug,
+                  customBuddyId: activeCustomBuddyId,
+                  preferredProvider: selectedProvider || "auto",
+                  preferredModel: $("modelSelector")?.value && $("modelSelector").value !== "auto" ? $("modelSelector").value : undefined,
+                },
+                { silent: true },
+              ).catch(() => null),
+              new Promise((r) => setTimeout(() => r(null), 4000)),
+            ]);
+            if (isStaleRun()) return;
+            if (aiRec && aiRec.activeProvider !== "error" && (aiRec.targetText || aiRec.targetSelector)) {
+              if (aiRec.targetText) currentStep.textTarget = aiRec.targetText;
+              if (aiRec.targetSelector) currentStep.selector = sanitizeStepSelector(aiRec.targetSelector) || undefined;
+              res = await sendRuntimeMessage({
+                type: "EXECUTE_STEP",
+                step: currentStep,
+                options: {
+                  extractedDataStore: plan.extractedData,
+                  uploadedDocumentFields: activeUploadedDocument?.fields || {},
+                  statusFilter: currentStep.statusFilter,
+                  useAlternateLocators: true,
+                  clickMethod: "alternate",
+                },
+              });
+            }
+          } catch {}
         }
       }
 
@@ -7406,8 +8057,17 @@ if ($("connectBtn")) {
 if ($("signoutBtn")) {
   $("signoutBtn").onclick = async () => {
     conversationBuffer.length = 0;
+    activeFormSession = null;
+    pendingSlot = null;
+    pendingAction = null;
+    pendingDisambiguation = null;
+    lastExecutionAttempt = null;
+    activePlan = null;
+    isPlanPaused = false;
+    pendingApprovalStep = null;
     clearActiveUploadedDocument();
     if ($("historyBox")) $("historyBox").innerHTML = "";
+    if ($("taskPlanCard")) $("taskPlanCard").hidden = true;
     await sendRuntimeMessage({ type: "SIGN_OUT" });
     render();
   };
@@ -7651,13 +8311,46 @@ if ($("discardSavedTaskBtn")) {
 
 async function getLocalMemoriesStore() {
   try {
-    const { localMemories } = await chrome.storage.local.get("localMemories");
-    if (Array.isArray(localMemories)) return localMemories;
+    const { session, localMemories, scopedLocalMemories = {} } = await chrome.storage.local.get([
+      "session",
+      "localMemories",
+      "scopedLocalMemories",
+    ]);
+    const scope = getActiveScopeKey(session);
+    if (scope === "guest") {
+      if (Array.isArray(localMemories)) return localMemories;
+    } else if (Array.isArray(scopedLocalMemories?.[scope])) {
+      return scopedLocalMemories[scope];
+    } else {
+      return [];
+    }
   } catch {}
   return [
     { key: "preferred_language", value: "Hinglish / English friendly mix", kind: "preference" },
     { key: "ecommerce_platform", value: "Meesho & Amazon Seller Central", kind: "workflow" },
   ];
+}
+
+async function setLocalMemoriesStore(memories) {
+  try {
+    const { session, scopedLocalMemories = {} } = await chrome.storage.local.get([
+      "session",
+      "scopedLocalMemories",
+    ]);
+    const scope = getActiveScopeKey(session);
+    if (scope === "guest") {
+      await chrome.storage.local.set({ localMemories: memories }).catch(() => {});
+    } else {
+      await chrome.storage.local
+        .set({
+          scopedLocalMemories: {
+            ...scopedLocalMemories,
+            [scope]: memories,
+          },
+        })
+        .catch(() => {});
+    }
+  } catch {}
 }
 
 function renderMemoriesListUI(memories) {
@@ -7710,7 +8403,7 @@ async function loadMemories() {
       for (const lm of localList) {
         if (!merged.some((m) => m.key === lm.key)) merged.push(lm);
       }
-      await chrome.storage.local.set({ localMemories: merged }).catch(() => {});
+      await setLocalMemoriesStore(merged);
       renderMemoriesListUI(merged);
       return;
     }
@@ -7726,7 +8419,7 @@ async function deleteMemory(key) {
   try {
     const existing = await getLocalMemoriesStore();
     const filtered = existing.filter((m) => m.key !== key);
-    await chrome.storage.local.set({ localMemories: filtered }).catch(() => {});
+    await setLocalMemoriesStore(filtered);
 
     const { session } = await chrome.storage.local.get("session");
     const base = await getResolvedBackendBase();
@@ -7781,7 +8474,7 @@ if ($("saveMemoryBtn")) {
       // Save immediately to chrome.storage.local so Guest/offline users never lose saved memories
       const existing = await getLocalMemoriesStore();
       const updated = [{ key, value, kind: "preference", created_at: new Date().toISOString() }, ...existing.filter((m) => m.key !== key)];
-      await chrome.storage.local.set({ localMemories: updated }).catch(() => {});
+      await setLocalMemoriesStore(updated);
 
       const { session } = await chrome.storage.local.get("session");
       const base = await getResolvedBackendBase();
@@ -7809,6 +8502,15 @@ if ($("saveMemoryBtn")) {
   };
 }
 
+async function getScopedTaskHistoryStore() {
+  const { session, localTaskHistory = [], scopedTaskHistory = {} } = await chrome.storage.local
+    .get(["session", "localTaskHistory", "scopedTaskHistory"])
+    .catch(() => ({ localTaskHistory: [], scopedTaskHistory: {} }));
+  const scope = getActiveScopeKey(session);
+  const items = scope === "guest" ? localTaskHistory : scopedTaskHistory?.[scope] || [];
+  return { scope, session, scopedTaskHistory, items: Array.isArray(items) ? items : [] };
+}
+
 async function recordTaskExecution(plan) {
   if (!plan?.title) return;
   const entry = {
@@ -7819,12 +8521,20 @@ async function recordTaskExecution(plan) {
     created_at: new Date().toISOString(),
   };
   try {
-    const { localTaskHistory = [], session } = await chrome.storage.local.get([
-      "localTaskHistory",
-      "session",
-    ]);
-    const nextHistory = [entry, ...localTaskHistory.filter((t) => t.id !== entry.id)].slice(0, 20);
-    await chrome.storage.local.set({ localTaskHistory: nextHistory }).catch(() => {});
+    const { scope, session, scopedTaskHistory, items } = await getScopedTaskHistoryStore();
+    const nextHistory = [entry, ...items.filter((t) => t.id !== entry.id)].slice(0, 20);
+    if (scope === "guest") {
+      await chrome.storage.local.set({ localTaskHistory: nextHistory }).catch(() => {});
+    } else {
+      await chrome.storage.local
+        .set({
+          scopedTaskHistory: {
+            ...scopedTaskHistory,
+            [scope]: nextHistory,
+          },
+        })
+        .catch(() => {});
+    }
 
     const base = await getResolvedBackendBase();
     const headers = { "Content-Type": "application/json" };
@@ -7875,9 +8585,7 @@ async function loadTasksHistory() {
   const list = $("tasksHistoryList");
   if (!list) return;
   list.innerHTML = '<div style="color: var(--muted); font-size: 10px;">Loading task history…</div>';
-  const { session, localTaskHistory = [] } = await chrome.storage.local
-    .get(["session", "localTaskHistory"])
-    .catch(() => ({ localTaskHistory: [] }));
+  const { session, items: scopedHistory } = await getScopedTaskHistoryStore();
   try {
     const base = await getResolvedBackendBase();
     const headers = {};
@@ -7888,7 +8596,7 @@ async function loadTasksHistory() {
       const data = await res.json();
       if (data?.ok && Array.isArray(data.tasks)) {
         const merged = [...data.tasks];
-        for (const lt of localTaskHistory) {
+        for (const lt of scopedHistory) {
           if (!merged.some((t) => t.id === lt.id)) merged.push(lt);
         }
         renderTasksHistoryUI(merged.slice(0, 20));
@@ -7897,9 +8605,9 @@ async function loadTasksHistory() {
       }
     }
   } catch {
-    // Fallback to localTaskHistory cleanly
+    // Fallback to scoped task history cleanly
   }
-  renderTasksHistoryUI(localTaskHistory);
+  renderTasksHistoryUI(scopedHistory);
   checkSavedCheckpoint();
 }
 
@@ -7947,10 +8655,26 @@ if ($("refreshTasksHistoryBtn")) $("refreshTasksHistoryBtn").onclick = loadTasks
 
 // Models & Providers Handlers
 function updateProviderNoticeUI(providerId) {
-  const pid = providerId || selectedProvider || "gemini";
+  const pid = providerId || selectedProvider || "auto";
   const info = cachedProviderStatuses[pid] || DEFAULT_PROVIDER_META[pid] || DEFAULT_PROVIDER_META.gemini;
   const badge = $("activeProviderStatusBadge");
   const notice = $("providerSelectionNotice");
+
+  if (pid === "auto") {
+    const anyReady = Object.values(cachedProviderStatuses).some((p) => p?.configured);
+    if (badge) {
+      badge.textContent = anyReady ? "Auto Ready" : "Check Keys";
+      badge.className = `step-status-tag ${anyReady ? "completed" : "pending"}`;
+    }
+    if (notice) {
+      notice.style.borderColor = anyReady ? "rgba(16, 185, 129, 0.35)" : "rgba(245, 158, 11, 0.35)";
+      notice.style.color = anyReady ? "var(--text)" : "#fde68a";
+      notice.textContent = anyReady
+        ? "Auto Routing active — picks the best connected AI provider automatically."
+        : "Auto Routing active — add a provider API key on server or Gemini key in Settings for full AI.";
+    }
+    return;
+  }
 
   const statusLabel =
     info.statusLabel ||
@@ -7966,24 +8690,28 @@ function updateProviderNoticeUI(providerId) {
     if (isConnected) {
       notice.style.borderColor = "rgba(16, 185, 129, 0.35)";
       notice.style.color = "var(--text)";
-      notice.textContent =
-        pid === "gemini"
-          ? "Google Gemini is connected and active as the default AI engine."
-          : `${info.name} is connected and selected as your active provider.`;
+      notice.textContent = `${info.name} is connected and strictly selected as your active provider.`;
     } else {
       const missingKey = info.missingKeyName || `${pid.toUpperCase()}_API_KEY`;
-      const geminiConfigured = Boolean(cachedProviderStatuses.gemini?.configured);
       notice.style.borderColor = "rgba(245, 158, 11, 0.35)";
       notice.style.color = "#fde68a";
-      if (pid === "gemini") {
-        notice.textContent = `Google Gemini: ${statusLabel} (${missingKey}). Add GEMINI_API_KEY on server or Settings to enable full AI intelligence; limited local helper is active.`;
-      } else {
-        notice.textContent = geminiConfigured
-          ? `${info.name}: ${statusLabel} (${missingKey}). Your selection is saved — Google Gemini stays active as fallback until ${missingKey} is configured.`
-          : `${info.name}: ${statusLabel} (${missingKey}). Google Gemini is also unconfigured — local helper mode stays active until an API key is added.`;
-      }
+      notice.textContent = `${info.name}: ${statusLabel} (${missingKey}). Add ${missingKey} or switch to Auto Routing to allow automatic provider selection.`;
     }
   }
+}
+
+function inferProviderFromModelId(modelId) {
+  const m = String(modelId || "").toLowerCase();
+  if (!m || m === "auto") return null;
+  if (m.startsWith("gemini-")) return "gemini";
+  if (m.startsWith("groq-")) return "groq";
+  if (m.startsWith("openai-")) return "openai";
+  if (m.startsWith("openrouter-")) return "openrouter";
+  if (m.startsWith("ollama-")) return "ollama";
+  if (m.startsWith("github-")) return "github";
+  if (m.startsWith("cf-") || m.startsWith("cloudflare-")) return "cloudflare";
+  if (m.startsWith("hf-") || m.startsWith("huggingface-")) return "huggingface";
+  return null;
 }
 
 async function selectProvider(providerId) {
@@ -7994,12 +8722,21 @@ async function selectProvider(providerId) {
       warnedMissingProviders.delete(key);
     }
   }
-  await chrome.storage.local.set({ selectedProvider: providerId });
+  const updates = { selectedProvider: providerId };
+  if (providerId !== "auto" && $("modelSelector")) {
+    const curModel = $("modelSelector").value;
+    const inferred = inferProviderFromModelId(curModel);
+    if (inferred && inferred !== providerId) {
+      $("modelSelector").value = "auto";
+      updates.preferredModel = "auto";
+      if ($("headerModelLabel")) $("headerModelLabel").textContent = "Auto Model";
+    }
+  }
+  await chrome.storage.local.set(updates);
   if ($("providerSelector")) {
     $("providerSelector").value = providerId;
   }
   updateProviderNoticeUI(providerId);
-  // Highlight active row in providerStatusList if already rendered
   document.querySelectorAll("#providerStatusList .provider-row-item").forEach((row) => {
     const isSel = row.getAttribute("data-provider") === providerId;
     row.style.borderColor = isSel ? "var(--accent-cyan)" : "";
@@ -8015,7 +8752,7 @@ async function loadModelHubStatus() {
   try {
     const { preferredModel, selectedProvider: storedProvider, userApiKey } =
       await chrome.storage.local.get(["preferredModel", "selectedProvider", "userApiKey"]);
-    if (storedProvider) selectedProvider = storedProvider;
+    selectedProvider = storedProvider || "auto";
 
     const base = await getResolvedBackendBase();
     const res = await fetchWithTimeout(`${base}/api/public/extension/models`, {}, 8000);
@@ -8043,13 +8780,15 @@ async function loadModelHubStatus() {
         });
 
         if ($("providerSelector")) {
-          $("providerSelector").innerHTML = data.providers
-            .map((p) => {
-              const info = cachedProviderStatuses[p.id] || p;
-              const defaultSuffix = p.id === "gemini" ? " (Default)" : "";
-              return `<option value="${escapeHtml(p.id)}" ${p.id === selectedProvider ? "selected" : ""}>${escapeHtml(p.name)}${defaultSuffix} — ${escapeHtml(info.statusLabel)}</option>`;
-            })
-            .join("");
+          const autoOption = `<option value="auto" ${selectedProvider === "auto" ? "selected" : ""}>Auto (Smart Provider Routing)</option>`;
+          $("providerSelector").innerHTML =
+            autoOption +
+            data.providers
+              .map((p) => {
+                const info = cachedProviderStatuses[p.id] || p;
+                return `<option value="${escapeHtml(p.id)}" ${p.id === selectedProvider ? "selected" : ""}>${escapeHtml(p.name)} — ${escapeHtml(info.statusLabel)}</option>`;
+              })
+              .join("");
         }
 
         list.innerHTML = data.providers
@@ -8059,11 +8798,11 @@ async function loadModelHubStatus() {
             const statusText = info.statusLabel;
             const detailNote = info.configured
               ? p.rateLimitNote || "Ready for inference"
-              : `Missing ${p.missingKeyName || `${p.id.toUpperCase()}_API_KEY`} · Falls back to Gemini`;
+              : `Missing ${p.missingKeyName || `${p.id.toUpperCase()}_API_KEY`}`;
             return `
           <div class="item-row provider-row-item" data-provider="${escapeHtml(p.id)}" style="cursor: pointer; ${isSel ? "border-color: var(--accent-cyan); background: rgba(6, 182, 212, 0.08);" : ""}">
             <div>
-              <span style="font-weight: 600; color: var(--text);">${escapeHtml(p.name)}${p.id === "gemini" ? " · Default" : ""}</span>
+              <span style="font-weight: 600; color: var(--text);">${escapeHtml(p.name)}</span>
               <div style="font-size: 9px; color: var(--muted);">${escapeHtml(detailNote)}</div>
             </div>
             <span class="step-status-tag ${info.configured ? "completed" : "pending"}">${escapeHtml(statusText)}</span>
@@ -8114,15 +8853,17 @@ async function loadModelHubStatus() {
     }
   } catch {
     const { userApiKey } = await chrome.storage.local.get("userApiKey").catch(() => ({}));
-    const fallbackProviders = Object.values(DEFAULT_PROVIDER_META).map((p) => {
-      const configured = p.id === "gemini" && Boolean(userApiKey);
-      return {
-        ...p,
-        configured,
-        status: configured ? "connected" : p.supportsLocal ? "not_connected" : "missing_api",
-        statusLabel: configured ? "Connected" : p.supportsLocal ? "Not Connected" : "Missing API",
-      };
-    });
+    const fallbackProviders = Object.values(DEFAULT_PROVIDER_META)
+      .filter((p) => p.id !== "auto")
+      .map((p) => {
+        const configured = p.id === "gemini" && Boolean(userApiKey);
+        return {
+          ...p,
+          configured,
+          status: configured ? "connected" : p.supportsLocal ? "not_connected" : "missing_api",
+          statusLabel: configured ? "Connected" : p.supportsLocal ? "Not Connected" : "Missing API",
+        };
+      });
     fallbackProviders.forEach((p) => {
       cachedProviderStatuses[p.id] = p;
     });
@@ -8136,7 +8877,7 @@ async function loadModelHubStatus() {
         return `
       <div class="item-row provider-row-item" data-provider="${escapeHtml(info.id)}" style="cursor: pointer; ${isSel ? "border-color: var(--accent-cyan); background: rgba(6, 182, 212, 0.08);" : ""}">
         <div>
-          <span style="font-weight: 600; color: var(--text);">${escapeHtml(info.name)}${info.id === "gemini" ? " · Default" : ""}</span>
+          <span style="font-weight: 600; color: var(--text);">${escapeHtml(info.name)}</span>
           <div style="font-size: 9px; color: var(--muted);">${escapeHtml(detailNote)}</div>
         </div>
         <span class="step-status-tag ${info.configured ? "completed" : "pending"}">${escapeHtml(info.statusLabel)}</span>
@@ -8163,6 +8904,10 @@ if ($("modelSelector")) {
   $("modelSelector").onchange = (e) => {
     const val = e.target.value;
     chrome.storage.local.set({ preferredModel: val });
+    const inferredProvider = inferProviderFromModelId(val);
+    if (inferredProvider && inferredProvider !== selectedProvider) {
+      selectProvider(inferredProvider);
+    }
     if ($("headerModelLabel")) {
       const selectedOption = $("modelSelector").options[$("modelSelector").selectedIndex];
       $("headerModelLabel").textContent =
