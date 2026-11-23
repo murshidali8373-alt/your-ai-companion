@@ -7,10 +7,13 @@
     <style>
       :root {
         --bg: #090d16;
+        --bg-inset: #0b0f19;
+        --bg-track: #0f1523;
         --surface: #101625;
         --surface-card: #151d30;
         --surface-hover: #1b2640;
         --surface-active: #222f4e;
+        --surface-user: #1e2942;
         --border: rgba(255, 255, 255, 0.08);
         --border-hover: rgba(255, 255, 255, 0.16);
         --border-accent: rgba(99, 102, 241, 0.35);
@@ -18,15 +21,26 @@
         --accent: #6366f1;
         --accent-hover: #4f46e5;
         --accent-glow: rgba(99, 102, 241, 0.28);
+        --ring: rgba(99, 102, 241, 0.65);
         --accent-cyan: #06b6d4;
         --accent-violet: #8b5cf6;
         --accent-teal: #14b8a6;
+        --teal: var(--accent-teal);
         --text: #f8fafc;
         --text-muted: #94a3b8;
-        --text-dim: #64748b;
+        --muted: var(--text-muted);
+        --text-dim: #7c8ca3;
         --destructive: #ef4444;
+        --destructive-soft: rgba(239, 68, 68, 0.14);
+        --destructive-text: #fca5a5;
         --warning: #f59e0b;
+        --warning-soft: rgba(245, 158, 11, 0.14);
+        --warning-text: #fef08a;
         --success: #10b981;
+        --success-soft: rgba(16, 185, 129, 0.15);
+        --success-text: #6ee7b7;
+        --info-soft: rgba(59, 130, 246, 0.14);
+        --info-text: #93c5fd;
         --radius-sm: 6px;
         --radius-md: 10px;
         --radius-lg: 14px;
@@ -38,6 +52,11 @@
         box-sizing: border-box;
         margin: 0;
         padding: 0;
+      }
+
+      :focus-visible {
+        outline: 2px solid var(--ring);
+        outline-offset: 2px;
       }
 
       [hidden] {
@@ -264,7 +283,7 @@
         width: 30px;
         height: 30px;
         border-radius: 50%;
-        background: #0b0f19;
+        background: var(--bg-inset);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -456,9 +475,9 @@
       }
       .msg-user {
         align-self: flex-end;
-        background: #202b42;
-        color: #ffffff;
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: var(--surface-user);
+        color: var(--text);
+        border: 1px solid var(--border-hover);
         border-bottom-right-radius: 2px;
       }
       .msg-buddy {
@@ -598,6 +617,9 @@
       }
       .composer-card:focus-within {
         border-color: var(--accent);
+        box-shadow:
+          0 0 0 2px var(--accent-glow),
+          0 4px 16px rgba(0, 0, 0, 0.2);
       }
       .composer-input {
         width: 100%;
@@ -610,6 +632,9 @@
         font-size: 12px;
         line-height: 1.4;
         resize: none;
+        outline: none;
+      }
+      .composer-input:focus-visible {
         outline: none;
       }
       .composer-input::placeholder {
@@ -776,7 +801,7 @@
       .progress-bar-bg {
         width: 100%;
         height: 5px;
-        background: #0f1523;
+        background: var(--bg-track);
         border-radius: 3px;
         overflow: hidden;
       }
@@ -839,7 +864,7 @@
         justify-content: space-between;
         align-items: center;
         padding: 5px 6px;
-        background: #0b0f19;
+        background: var(--bg-inset);
         border: 1px solid var(--border);
         border-radius: var(--radius-sm);
         font-size: 11px;
@@ -991,7 +1016,11 @@
         </div>
 
         <!-- AUTHENTIC 3D BUDDY STAGE & FALLBACK RIG -->
-        <div id="characterStage" class="character-stage" title="Drag to rotate 3D Buddy or click to interact">
+        <div
+          id="characterStage"
+          class="character-stage"
+          title="Drag to rotate 3D Buddy or click to interact"
+        >
           <div id="buddy3dCanvasWrap" class="character-3d-canvas-wrap"></div>
           <img
             id="buddy3dImg"
@@ -1152,7 +1181,10 @@
               color: #e2e8f0;
             "
           >
-            <span id="uploadedDocLabel" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            <span
+              id="uploadedDocLabel"
+              style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap"
+            >
               📄 Document ready
             </span>
             <button
@@ -1212,7 +1244,11 @@
               </button>
             </div>
             <div style="display: flex; align-items: center; gap: 4px">
-              <button id="liveVoiceBtn" class="voice-btn" title="Start or stop continuous live voice conversation with Buddy">
+              <button
+                id="liveVoiceBtn"
+                class="voice-btn"
+                title="Start or stop continuous live voice conversation with Buddy"
+              >
                 🎙️ Live
               </button>
               <button id="voiceBtn" class="voice-btn" title="Push to talk or interrupt Buddy">
@@ -1287,8 +1323,17 @@
           <div class="section-card-title">
             <span>📝 Smart Form Filler</span>
             <div style="display: flex; align-items: center; gap: 6px">
-              <span style="font-size: 10px; color: var(--accent-cyan); font-weight: 600">Zero Risk</span>
-              <button id="closeFormFillBtn" class="ghost" style="padding: 1px 5px; font-size: 10px; cursor: pointer" title="Dismiss">✕</button>
+              <span style="font-size: 10px; color: var(--accent-cyan); font-weight: 600"
+                >Zero Risk</span
+              >
+              <button
+                id="closeFormFillBtn"
+                class="ghost"
+                style="padding: 1px 5px; font-size: 10px; cursor: pointer"
+                title="Dismiss"
+              >
+                ✕
+              </button>
             </div>
           </div>
           <p style="font-size: 10px; color: var(--text-muted)">
@@ -1383,7 +1428,16 @@
         <div id="proactiveInsightsCard" class="section-card" hidden>
           <div class="section-card-title">
             <span style="color: var(--accent-cyan)">✨ Proactive Suggestions</span>
-            <label style="display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-muted); cursor: pointer">
+            <label
+              style="
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                font-size: 10px;
+                color: var(--text-muted);
+                cursor: pointer;
+              "
+            >
               <input type="checkbox" id="proactiveQuietToggle" />
               Quiet Mode
             </label>
@@ -1395,11 +1449,14 @@
         <div id="liveAgentDashboardCard" class="section-card">
           <div class="section-card-title">
             <span>🤖 Live Multi-Agent Activity</span>
-            <span id="agentDashboardSummary" style="font-size: 10px; color: var(--accent-cyan)">Idle · 0 calls</span>
+            <span id="agentDashboardSummary" style="font-size: 10px; color: var(--accent-cyan)"
+              >Idle · 0 calls</span
+            >
           </div>
           <div id="liveSubtaskDetailsList" class="items-list">
             <div style="color: var(--text-muted); font-size: 10px">
-              Run any multi-step research, comparison, or workspace task to watch specialized agents work in parallel.
+              Run any multi-step research, comparison, or workspace task to watch specialized agents
+              work in parallel.
             </div>
           </div>
         </div>
@@ -1409,26 +1466,47 @@
           <div class="section-card-title">
             <span>📂 Real File Workspace</span>
             <div style="display: flex; gap: 4px">
-              <button id="workspaceUploadTriggerBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">
+              <button
+                id="workspaceUploadTriggerBtn"
+                class="ghost"
+                style="padding: 2px 7px; font-size: 10px"
+              >
                 ⬆️ Upload
               </button>
-              <button id="refreshWorkspaceBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">
+              <button
+                id="refreshWorkspaceBtn"
+                class="ghost"
+                style="padding: 2px 7px; font-size: 10px"
+              >
                 🔄
               </button>
             </div>
           </div>
           <div style="display: flex; gap: 4px; flex-wrap: wrap">
-            <button id="workspaceCompareBtn" class="ghost" style="padding: 3px 8px; font-size: 10px; flex: 1">
+            <button
+              id="workspaceCompareBtn"
+              class="ghost"
+              style="padding: 3px 8px; font-size: 10px; flex: 1"
+            >
               ⚖️ Compare Latest 2 Sheets
             </button>
-            <button id="workspaceExportReportBtn" class="ghost" style="padding: 3px 8px; font-size: 10px; flex: 1">
+            <button
+              id="workspaceExportReportBtn"
+              class="ghost"
+              style="padding: 3px 8px; font-size: 10px; flex: 1"
+            >
               📄 Export Verified PDF
             </button>
           </div>
-          <div id="workspaceStatusMsg" style="font-size: 10px; color: var(--text-muted)" hidden></div>
+          <div
+            id="workspaceStatusMsg"
+            style="font-size: 10px; color: var(--text-muted)"
+            hidden
+          ></div>
           <div id="workspaceArtifactsList" class="items-list">
             <div style="color: var(--text-muted); font-size: 10px">
-              Upload CSV, XLSX, DOCX, or PDF via Attach or Upload to inspect, compare, or generate reports.
+              Upload CSV, XLSX, DOCX, or PDF via Attach or Upload to inspect, compare, or generate
+              reports.
             </div>
           </div>
         </div>
@@ -1437,7 +1515,11 @@
         <div id="connectedAppsCard" class="section-card">
           <div class="section-card-title">
             <span>🔌 Connected Apps & OAuth</span>
-            <button id="refreshConnectorsBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">
+            <button
+              id="refreshConnectorsBtn"
+              class="ghost"
+              style="padding: 2px 7px; font-size: 10px"
+            >
               🔄
             </button>
           </div>
@@ -1510,13 +1592,20 @@
               >
                 ✅ Approve & Save
               </button>
-              <button id="discardWorkflowDraftBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
+              <button
+                id="discardWorkflowDraftBtn"
+                class="ghost"
+                style="padding: 3px 8px; font-size: 10px"
+              >
                 Dismiss
               </button>
             </div>
           </div>
           <div id="workflowsList" class="items-list"></div>
-          <div id="schedulerInfraNote" style="font-size: 9px; color: var(--text-dim); line-height: 1.3"></div>
+          <div
+            id="schedulerInfraNote"
+            style="font-size: 9px; color: var(--text-dim); line-height: 1.3"
+          ></div>
         </div>
 
         <!-- Workflow Presets -->
@@ -1879,7 +1968,8 @@
             <input type="checkbox" id="muteToggle" />
           </div>
           <p style="font-size: 10px; color: var(--text-muted); line-height: 1.4; margin-top: 4px">
-            Expressions, pointing, speaking, and privacy awareness are triggered automatically from conversation and page context.
+            Expressions, pointing, speaking, and privacy awareness are triggered automatically from
+            conversation and page context.
           </p>
         </div>
       </div>
@@ -1943,8 +2033,18 @@
             ></span>
           </div>
 
-          <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; border-top: 1px solid var(--border); padding-top: 8px">
+          <div
+            style="
+              display: flex;
+              flex-direction: column;
+              gap: 6px;
+              margin-bottom: 12px;
+              border-top: 1px solid var(--border);
+              padding-top: 8px;
+            "
+          >
             <label
+              for="settingsApiKeyInput"
               style="
                 font-size: 10px;
                 font-weight: 600;
@@ -1953,10 +2053,99 @@
               "
               >Google Gemini API Key (Direct Mode)</label
             >
-            <div style="display: flex; gap: 4px">
+            <div
+              id="settingsApiKeySavedRow"
+              hidden
+              style="
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 6px;
+                padding: 6px 8px;
+                background: var(--bg-inset);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-sm);
+              "
+            >
+              <span
+                id="settingsApiKeyMaskedLabel"
+                style="font-size: 11px; color: var(--success-text); font-weight: 500"
+                >Saved locally (••••••••••••)</span
+              >
+              <div style="display: flex; gap: 4px">
+                <button
+                  id="settingsUpdateApiKeyBtn"
+                  type="button"
+                  class="ghost"
+                  style="padding: 3px 8px; font-size: 10px; font-weight: 600"
+                >
+                  Update
+                </button>
+                <button
+                  id="settingsClearApiKeyBtn"
+                  type="button"
+                  class="ghost"
+                  style="
+                    padding: 3px 8px;
+                    font-size: 10px;
+                    font-weight: 600;
+                    color: var(--destructive-text);
+                  "
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+            <div
+              id="settingsClearApiKeyConfirmRow"
+              hidden
+              style="
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 6px;
+                padding: 6px 8px;
+                background: var(--destructive-soft);
+                border: 1px solid rgba(239, 68, 68, 0.35);
+                border-radius: var(--radius-sm);
+              "
+            >
+              <span style="font-size: 10px; color: var(--destructive-text); font-weight: 500"
+                >Remove saved Gemini key?</span
+              >
+              <div style="display: flex; gap: 4px">
+                <button
+                  id="settingsConfirmClearApiKeyBtn"
+                  type="button"
+                  style="
+                    padding: 3px 8px;
+                    font-size: 10px;
+                    font-weight: 600;
+                    background: var(--destructive);
+                    color: #ffffff;
+                    border: none;
+                    border-radius: var(--radius-sm);
+                    cursor: pointer;
+                  "
+                >
+                  Confirm Clear
+                </button>
+                <button
+                  id="settingsCancelClearApiKeyBtn"
+                  type="button"
+                  class="ghost"
+                  style="padding: 3px 8px; font-size: 10px"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+            <div id="settingsApiKeyInputWrap" style="display: flex; gap: 4px">
               <input
                 id="settingsApiKeyInput"
                 type="password"
+                autocomplete="off"
+                spellcheck="false"
                 placeholder="AIzaSy... (Runs 100% serverless)"
                 style="
                   flex: 1;
@@ -1970,14 +2159,26 @@
               />
               <button
                 id="settingsSaveApiKeyBtn"
+                type="button"
                 class="ghost"
                 style="padding: 4px 8px; font-size: 10px; font-weight: 600"
               >
                 Save
               </button>
+              <button
+                id="settingsCancelUpdateApiKeyBtn"
+                type="button"
+                hidden
+                class="ghost"
+                style="padding: 4px 8px; font-size: 10px"
+              >
+                Cancel
+              </button>
             </div>
             <span
               id="settingsApiKeyFeedback"
+              role="status"
+              aria-live="polite"
               style="font-size: 10px; color: var(--accent-cyan); display: none"
             ></span>
           </div>
@@ -2013,7 +2214,9 @@
         <div class="section-card">
           <div class="section-card-title">
             <span>🛡️ Security & Permissions</span>
-            <span class="status-badge" style="background: rgba(16, 185, 129, 0.15); color: #6ee7b7"
+            <span
+              class="status-badge"
+              style="background: var(--success-soft); color: var(--success-text)"
               >Guarded</span
             >
           </div>
@@ -2193,7 +2396,8 @@
                 border-radius: 4px;
               "
               hidden
-              >0 tok</span>
+              >0 tok</span
+            >
             <span id="planStatusBadge" class="status-badge">Pending</span>
           </div>
         </div>
@@ -2309,7 +2513,7 @@
       <!-- ================= SAFETY & CONFIRMATION CARDS ================= -->
       <!-- Consequential Action Approval Card -->
       <div id="consequentialApprovalCard" class="confirm-card" hidden>
-        <h4 style="font-size: 11px; color: #fef08a">🛡️ Consequential Step Approval</h4>
+        <h4 style="font-size: 11px; color: var(--warning-text)">🛡️ Consequential Step Approval</h4>
         <p id="consequentialPrompt" style="font-size: 11px; color: var(--text-muted)">
           Buddy is about to perform a consequential action (e.g. submit, purchase, payment, or
           delete).
@@ -2342,10 +2546,17 @@
       <!-- Self-Healing Granular Approval Card -->
       <div id="selfHealCard" class="confirm-card" hidden>
         <div style="display: flex; align-items: center; justify-content: space-between; gap: 6px">
-          <h4 style="font-size: 11px; color: #93c5fd">🩺 Self-Healing Repair & Verification</h4>
-          <span id="selfHealAttributionBadge" class="status-badge" style="font-size: 9px">triaged</span>
+          <h4 style="font-size: 11px; color: var(--info-text)">
+            🩺 Self-Healing Repair & Verification
+          </h4>
+          <span id="selfHealAttributionBadge" class="status-badge" style="font-size: 9px"
+            >triaged</span
+          >
         </div>
-        <p id="selfHealSummary" style="font-size: 11px; color: var(--text-muted); margin-top: 2px"></p>
+        <p
+          id="selfHealSummary"
+          style="font-size: 11px; color: var(--text-muted); margin-top: 2px"
+        ></p>
         <pre
           id="selfHealPreview"
           hidden
@@ -2435,7 +2646,9 @@
         style="border-color: var(--destructive); background: rgba(239, 68, 68, 0.12)"
         hidden
       >
-        <h4 style="color: #fca5a5; font-size: 11px; margin-bottom: 2px">🚨 Page Issues Detected</h4>
+        <h4 style="color: var(--destructive-text); font-size: 11px; margin-bottom: 2px">
+          🚨 Page Issues Detected
+        </h4>
         <p id="pageErrorText" style="font-size: 11px; color: var(--text)"></p>
         <div style="display: flex; gap: 6px; margin-top: 4px">
           <button

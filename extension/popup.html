@@ -4,14 +4,35 @@
     <meta charset="utf-8" />
     <title>AI Buddy</title>
     <style>
+      :root {
+        --bg: #090d16;
+        --surface: #101625;
+        --surface-card: #151d30;
+        --border: rgba(255, 255, 255, 0.08);
+        --border-hover: rgba(255, 255, 255, 0.16);
+        --accent: #6366f1;
+        --accent-hover: #4f46e5;
+        --ring: rgba(99, 102, 241, 0.65);
+        --text: #f8fafc;
+        --text-muted: #94a3b8;
+        --radius-sm: 6px;
+        --radius-md: 10px;
+      }
+      :focus-visible {
+        outline: 2px solid var(--ring);
+        outline-offset: 2px;
+      }
       body {
         width: 340px;
         margin: 0;
         font:
-          14px system-ui,
+          13px/1.5 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
           sans-serif;
-        background: #0f1419;
-        color: #e6edf3;
+        background: var(--bg);
+        color: var(--text);
       }
       .wrap {
         padding: 14px;
@@ -28,28 +49,42 @@
         width: 100%;
         box-sizing: border-box;
         min-height: 64px;
-        border-radius: 8px;
-        border: 1px solid #2d3743;
-        background: #161d25;
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border);
+        background: var(--surface);
         color: inherit;
-        padding: 8px;
+        padding: 8px 10px;
         font: inherit;
         resize: vertical;
       }
+      textarea::placeholder {
+        color: var(--text-muted);
+      }
       button {
         border: 0;
-        border-radius: 8px;
+        border-radius: var(--radius-sm);
         padding: 8px 12px;
         font: inherit;
         cursor: pointer;
-        background: #14b8a6;
-        color: #04201d;
+        background: var(--accent);
+        color: #ffffff;
         font-weight: 600;
+        transition:
+          background 0.15s ease,
+          border-color 0.15s ease;
+      }
+      button:hover:not(:disabled) {
+        background: var(--accent-hover);
       }
       button.ghost {
         background: transparent;
-        color: #9fb0c0;
-        border: 1px solid #2d3743;
+        color: var(--text-muted);
+        border: 1px solid var(--border);
+      }
+      button.ghost:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.04);
+        border-color: var(--border-hover);
+        color: var(--text);
       }
       .row {
         display: flex;
@@ -58,13 +93,14 @@
       }
       .answer {
         white-space: pre-wrap;
-        background: #161d25;
-        border-radius: 8px;
+        background: var(--surface-card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
         padding: 10px;
         line-height: 1.45;
       }
       .muted {
-        color: #9fb0c0;
+        color: var(--text-muted);
         font-size: 12px;
       }
       [hidden] {

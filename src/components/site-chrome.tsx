@@ -2,12 +2,18 @@ import { Link, useRouter } from "@tanstack/react-router";
 import {
   Download,
   ExternalLink,
+  KeyRound,
   LogIn,
+  Mic,
   Monitor,
   Moon,
+  MousePointerClick,
   PanelRight,
-  Sparkles,
+  Send,
   Sun,
+  Volume2,
+  X,
+  Zap,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -49,6 +55,7 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
   const [busy, setBusy] = useState(false);
   const [emotion, setEmotion] = useState<string>("idle");
   const [statusText, setStatusText] = useState("Ready to help you on this page.");
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   const [messages, setMessages] = useState<Array<{ role: "user" | "buddy"; text: string }>>([
     {
       role: "buddy",
@@ -217,6 +224,7 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
 
   const startVoice = () => {
     if (typeof window === "undefined") return;
+    setVoiceError(null);
     interface SpeechEvent {
       results?: Array<Array<{ transcript?: string }>>;
     }
@@ -236,7 +244,9 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
         .webkitSpeechRecognition;
 
     if (!SpeechRec) {
-      alert("Speech recognition is not supported in this browser.");
+      const msg = "Speech recognition is not supported in this browser. Type your question below.";
+      setVoiceError(msg);
+      setStatusText("Voice input unavailable in this browser.");
       return;
     }
 
@@ -253,6 +263,7 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
       };
       recognition.onerror = () => {
         setEmotion("idle");
+        setVoiceError("Could not capture audio. Check microphone permissions or type below.");
         setStatusText("Voice input ended.");
       };
       recognition.onend = () => {
@@ -260,6 +271,7 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
       };
       recognition.start();
     } catch {
+      setVoiceError("Could not start microphone. Type your question below.");
       setStatusText("Could not start microphone.");
     }
   };
@@ -270,16 +282,13 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
         onClick={handleOpen}
         variant="outline"
         size="sm"
-        className="gap-1.5 border-teal-500/40 text-teal-600 dark:text-teal-400 hover:bg-teal-500/10 hover:border-teal-500 shadow-sm transition-all"
+        className="gap-1.5 border-primary/30 text-foreground hover:bg-secondary shadow-sm transition-colors"
       >
-        <Sparkles className="size-3.5 text-teal-500 animate-pulse" />
+        <PanelRight className="size-3.5 text-primary" />
         <span className="font-medium">Side Panel</span>
-        <span
-          className={`size-2 rounded-full ${
-            extensionPresent ? "bg-emerald-500 ring-2 ring-emerald-500/30" : "bg-teal-400"
-          }`}
-          title={extensionPresent ? "Extension connected" : "Web Side Panel Ready"}
-        />
+        {extensionPresent && (
+          <span className="size-2 rounded-full bg-success" title="Extension connected" />
+        )}
       </Button>
 
       {/* Interactive In-Page AI Buddy Side Panel Drawer */}
@@ -299,12 +308,10 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
                   <span
                     className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
                       emotion === "speaking"
-                        ? "bg-amber-500/20 text-amber-500"
-                        : emotion === "thinking"
-                          ? "bg-blue-500/20 text-blue-500"
-                          : emotion === "pointing"
-                            ? "bg-purple-500/20 text-purple-500"
-                            : "bg-teal-500/20 text-teal-500"
+                        ? "bg-warning/20 text-warning-foreground dark:text-warning"
+                        : emotion === "thinking" || emotion === "pointing"
+                          ? "bg-primary/15 text-primary"
+                          : "bg-secondary text-secondary-foreground"
                     }`}
                   >
                     {emotion}
@@ -325,8 +332,9 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
                   extensionPresent ? setManualModalOpen(true) : setInstallModalOpen(true)
                 }
                 title="Extension Shortcut & Info"
+                aria-label="Extension Shortcut and Info"
               >
-                <PanelRight className="size-4 text-teal-500" />
+                <PanelRight className="size-4 text-primary" />
               </Button>
               <Button
                 variant="ghost"
@@ -334,8 +342,9 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
                 className="size-8 text-muted-foreground hover:text-foreground"
                 onClick={() => setDrawerOpen(false)}
                 title="Close Side Panel"
+                aria-label="Close Side Panel"
               >
-                <span className="text-base font-bold leading-none">✕</span>
+                <X className="size-4" />
               </Button>
             </div>
           </div>
@@ -343,22 +352,28 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
           {/* Quick Action Chips */}
           <div className="flex items-center gap-1.5 overflow-x-auto p-2 border-b border-border/60 bg-muted/20 text-xs no-scrollbar">
             <button
+              type="button"
               onClick={() => askInPage("Explain this page simply in Hinglish.")}
-              className="shrink-0 rounded-full border border-teal-500/30 bg-teal-500/10 px-2.5 py-1 text-[11px] font-medium text-teal-600 dark:text-teal-400 hover:bg-teal-500/20 transition-colors"
+              className="inline-flex items-center gap-1 shrink-0 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary hover:bg-primary/15 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              ⚡ Explain page
+              <Zap className="size-3" />
+              Explain page
             </button>
             <button
+              type="button"
               onClick={() => askInPage("Where do I sign in or create an account?")}
-              className="shrink-0 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              className="inline-flex items-center gap-1 shrink-0 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              🔑 Sign in help
+              <KeyRound className="size-3" />
+              Sign in help
             </button>
             <button
+              type="button"
               onClick={() => askInPage("Highlight the main buttons or actions on this screen.")}
-              className="shrink-0 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              className="inline-flex items-center gap-1 shrink-0 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              👉 Highlight actions
+              <MousePointerClick className="size-3" />
+              Highlight actions
             </button>
           </div>
 
@@ -374,7 +389,7 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
                 <div
                   className={`rounded-2xl px-3.5 py-2.5 text-xs max-w-[85%] leading-relaxed ${
                     m.role === "user"
-                      ? "bg-teal-600 text-white rounded-br-xs shadow-sm"
+                      ? "bg-primary text-primary-foreground rounded-br-xs shadow-sm"
                       : "bg-muted/80 text-foreground border border-border/70 rounded-bl-xs"
                   }`}
                 >
@@ -382,29 +397,31 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
                 </div>
                 {m.role === "buddy" && (
                   <button
+                    type="button"
                     onClick={() => speak(m.text)}
-                    className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-teal-500 pl-1"
+                    className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary pl-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded"
                   >
-                    <span>🔊 Listen</span>
+                    <Volume2 className="size-3" />
+                    <span>Listen</span>
                   </button>
                 )}
               </div>
             ))}
             {busy && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground p-2 rounded-lg bg-muted/30">
-                <span className="size-2 rounded-full bg-teal-500 animate-ping" />
+                <span className="size-2 rounded-full bg-primary animate-ping" />
                 <span>Buddy is reading page &amp; thinking…</span>
               </div>
             )}
             {lastHighlight && (
-              <div className="p-2 rounded-lg border border-teal-500/30 bg-teal-500/10 text-xs flex items-center justify-between">
-                <span className="text-teal-600 dark:text-teal-400 font-medium truncate max-w-[200px]">
+              <div className="p-2 rounded-lg border border-primary/30 bg-primary/10 text-xs flex items-center justify-between">
+                <span className="text-primary font-medium truncate max-w-[200px]">
                   Pointing at: {lastHighlight}
                 </span>
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-6 text-[10px] px-2 border-teal-500/40 text-teal-600 dark:text-teal-400"
+                  className="h-6 text-[10px] px-2 border-primary/40 text-primary"
                   onClick={() => handleHighlight(lastHighlight)}
                 >
                   Show again
@@ -415,6 +432,14 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
 
           {/* Input Footer */}
           <div className="p-3 border-t border-border/80 bg-card/60 space-y-2">
+            {voiceError && (
+              <p
+                role="alert"
+                className="rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-[11px] text-destructive"
+              >
+                {voiceError}
+              </p>
+            )}
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -425,9 +450,12 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
               <input
                 type="text"
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  if (voiceError) setVoiceError(null);
+                }}
                 placeholder="Ask Buddy anything about this page…"
-                className="flex-1 rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-teal-500"
+                className="flex-1 rounded-xl border border-input bg-background px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 disabled={busy}
               />
               <Button
@@ -436,19 +464,21 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
                 size="icon"
                 onClick={startVoice}
                 disabled={busy}
-                className="size-8.5 rounded-xl border-border text-muted-foreground hover:text-foreground shrink-0"
+                className="size-9 rounded-xl border-border text-muted-foreground hover:text-foreground shrink-0"
                 title="Speak voice query"
+                aria-label="Speak voice query"
               >
-                <span className="text-xs">🎤</span>
+                <Mic className="size-4" />
               </Button>
               <Button
                 type="submit"
                 size="icon"
                 disabled={busy || !query.trim()}
-                className="size-8.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white shrink-0"
+                className="size-9 rounded-xl shrink-0"
                 title="Send query"
+                aria-label="Send query"
               >
-                <span className="text-xs font-bold">➔</span>
+                <Send className="size-4" />
               </Button>
             </form>
 
@@ -456,7 +486,7 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
               <span className="flex items-center gap-1.5">
                 <span
                   className={`size-1.5 rounded-full ${
-                    extensionPresent ? "bg-emerald-500" : "bg-amber-500"
+                    extensionPresent ? "bg-success" : "bg-warning"
                   }`}
                 />
                 {extensionPresent ? "Chrome Extension Synced" : "Web Side Panel Mode"}
@@ -467,7 +497,7 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
                 onClick={() =>
                   extensionPresent ? setManualModalOpen(true) : setInstallModalOpen(true)
                 }
-                className="text-teal-600 dark:text-teal-400 hover:underline"
+                className="text-primary hover:underline"
               >
                 {extensionPresent ? "Shortcuts (Ctrl+Shift+P)" : "Get Chrome Extension"}
               </button>
@@ -484,7 +514,7 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
               <BuddyLogo size={32} />
               <div>
                 <DialogTitle className="text-lg">Install AI Buddy Extension</DialogTitle>
-                <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">
+                <p className="text-xs text-warning-foreground dark:text-warning font-medium">
                   Extension Not Detected
                 </p>
               </div>
@@ -522,7 +552,7 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
                 download="ai-buddy-extension.zip"
                 className="w-full"
               >
-                <Button className="w-full gap-2 bg-teal-600 hover:bg-teal-500 text-white font-medium">
+                <Button className="w-full gap-2 font-medium">
                   <Download className="size-4" />
                   Download Extension ZIP
                 </Button>
@@ -547,7 +577,7 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
               <BuddyLogo size={32} />
               <div>
                 <DialogTitle className="text-lg">AI Buddy Side Panel Ready</DialogTitle>
-                <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                <p className="text-xs text-success font-medium">
                   Extension Detected &amp; Connected
                 </p>
               </div>
@@ -559,9 +589,9 @@ function SidePanelButton({ signedIn }: { signedIn: boolean | null }) {
           </DialogHeader>
 
           <div className="space-y-3 pt-2 text-xs">
-            <div className="rounded-lg border border-teal-500/30 bg-teal-500/10 p-3 space-y-2">
+            <div className="rounded-lg border border-primary/30 bg-primary/10 p-3 space-y-2">
               <div className="font-semibold text-foreground flex items-center gap-1.5">
-                <PanelRight className="size-3.5 text-teal-500" />
+                <PanelRight className="size-3.5 text-primary" />
                 <span>How to open the side panel:</span>
               </div>
               <p className="text-muted-foreground leading-relaxed">

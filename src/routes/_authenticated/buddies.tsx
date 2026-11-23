@@ -10,6 +10,7 @@ import { Buddy3D } from "@/components/buddy-3d";
 import { BuddyAvatar } from "@/components/buddy-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { deleteCustomBuddy, getDashboard, listBuddies, selectBuddy } from "@/lib/app.functions";
 
 export const Route = createFileRoute("/_authenticated/buddies")({
@@ -61,6 +62,10 @@ function Gallery() {
         <div className="space-y-6">
           {buddies.data?.error && <p className="text-sm text-destructive">{buddies.data.error}</p>}
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {buddies.isLoading &&
+              Array.from({ length: 6 }).map((_, idx) => (
+                <Skeleton key={idx} className="h-36 w-full rounded-xl" />
+              ))}
             {(buddies.data?.buddies ?? []).map((b) => (
               <div
                 key={b.slug}

@@ -76,7 +76,12 @@ async function getResolvedBackendBase() {
         candidateOrigins.push("http://127.0.0.1:3000", "http://localhost:3000");
       }
     } catch {}
-    candidateOrigins.push(DEFAULT_BASE, FALLBACK_PRE_BASE, "http://127.0.0.1:3000", "http://localhost:3000");
+    candidateOrigins.push(
+      DEFAULT_BASE,
+      FALLBACK_PRE_BASE,
+      "http://127.0.0.1:3000",
+      "http://localhost:3000",
+    );
     for (const origin of [...new Set(candidateOrigins)]) {
       if (await probeBuddyHealthOrigin(origin)) {
         verifiedBackendBaseCache = origin;
@@ -196,7 +201,11 @@ async function sendRuntimeMessage(payload, opts = {}) {
 
     const timer = setTimeout(() => {
       const timeoutMsg = `Background worker timed out (${timeoutMs}ms) handling ${payload?.type}.`;
-      finish({ ok: false, error: timeoutMsg, message: timeoutMsg, ipcError: true }, true, timeoutMsg);
+      finish(
+        { ok: false, error: timeoutMsg, message: timeoutMsg, ipcError: true },
+        true,
+        timeoutMsg,
+      );
     }, timeoutMs);
 
     try {
@@ -440,15 +449,77 @@ const warnedMissingProviders = new Set();
 const recommendedModesShown = new Set();
 
 const DEFAULT_PROVIDER_META = {
-  auto: { id: "auto", name: "Auto (Smart Routing)", status: "connected", statusLabel: "Auto", supportsLocal: false },
-  gemini: { id: "gemini", name: "Google Gemini", status: "missing_api", statusLabel: "Unverified", missingKeyName: "GEMINI_API_KEY", supportsLocal: false },
-  groq: { id: "groq", name: "GroqCloud", status: "missing_api", statusLabel: "Missing API", missingKeyName: "GROQ_API_KEY", supportsLocal: false },
-  openrouter: { id: "openrouter", name: "OpenRouter", status: "missing_api", statusLabel: "Missing API", missingKeyName: "OPENROUTER_API_KEY", supportsLocal: false },
-  openai: { id: "openai", name: "OpenAI", status: "missing_api", statusLabel: "Missing API", missingKeyName: "OPENAI_API_KEY", supportsLocal: false },
-  ollama: { id: "ollama", name: "Ollama (Local)", status: "not_connected", statusLabel: "Not Connected", missingKeyName: "OLLAMA_BASE_URL", supportsLocal: true },
-  huggingface: { id: "huggingface", name: "Hugging Face Inference", status: "missing_api", statusLabel: "Missing API", missingKeyName: "HUGGINGFACE_API_KEY", supportsLocal: false },
-  cloudflare: { id: "cloudflare", name: "Cloudflare Workers AI", status: "missing_api", statusLabel: "Missing API", missingKeyName: "CLOUDFLARE_API_TOKEN", supportsLocal: false },
-  github: { id: "github", name: "GitHub Models", status: "missing_api", statusLabel: "Missing API", missingKeyName: "GITHUB_TOKEN", supportsLocal: false },
+  auto: {
+    id: "auto",
+    name: "Auto (Smart Routing)",
+    status: "connected",
+    statusLabel: "Auto",
+    supportsLocal: false,
+  },
+  gemini: {
+    id: "gemini",
+    name: "Google Gemini",
+    status: "missing_api",
+    statusLabel: "Unverified",
+    missingKeyName: "GEMINI_API_KEY",
+    supportsLocal: false,
+  },
+  groq: {
+    id: "groq",
+    name: "GroqCloud",
+    status: "missing_api",
+    statusLabel: "Missing API",
+    missingKeyName: "GROQ_API_KEY",
+    supportsLocal: false,
+  },
+  openrouter: {
+    id: "openrouter",
+    name: "OpenRouter",
+    status: "missing_api",
+    statusLabel: "Missing API",
+    missingKeyName: "OPENROUTER_API_KEY",
+    supportsLocal: false,
+  },
+  openai: {
+    id: "openai",
+    name: "OpenAI",
+    status: "missing_api",
+    statusLabel: "Missing API",
+    missingKeyName: "OPENAI_API_KEY",
+    supportsLocal: false,
+  },
+  ollama: {
+    id: "ollama",
+    name: "Ollama (Local)",
+    status: "not_connected",
+    statusLabel: "Not Connected",
+    missingKeyName: "OLLAMA_BASE_URL",
+    supportsLocal: true,
+  },
+  huggingface: {
+    id: "huggingface",
+    name: "Hugging Face Inference",
+    status: "missing_api",
+    statusLabel: "Missing API",
+    missingKeyName: "HUGGINGFACE_API_KEY",
+    supportsLocal: false,
+  },
+  cloudflare: {
+    id: "cloudflare",
+    name: "Cloudflare Workers AI",
+    status: "missing_api",
+    statusLabel: "Missing API",
+    missingKeyName: "CLOUDFLARE_API_TOKEN",
+    supportsLocal: false,
+  },
+  github: {
+    id: "github",
+    name: "GitHub Models",
+    status: "missing_api",
+    statusLabel: "Missing API",
+    missingKeyName: "GITHUB_TOKEN",
+    supportsLocal: false,
+  },
 };
 
 let busy = false;
@@ -743,7 +814,8 @@ function setRigEmotion(emotion, label, extra = {}) {
     : String(emotion || "idle").toLowerCase();
 
   const now = Date.now();
-  const hasExplicitPointCoords = canonical === "pointing" && typeof extra?.targetYRatio === "number";
+  const hasExplicitPointCoords =
+    canonical === "pointing" && typeof extra?.targetYRatio === "number";
   if (
     !hasExplicitPointCoords &&
     rt?.shouldTransitionCompanionState &&
@@ -963,10 +1035,12 @@ function switchBuddy(slugOrId, { persist = true, silent = false } = {}) {
   selectedCustomBuddyId = target.isCustom ? target.id || target.slug.replace("custom:", "") : null;
 
   if (persist && (prevSlug !== selectedBuddySlug || prevCustomId !== selectedCustomBuddyId)) {
-    chrome.storage.local.set({
-      selectedBuddySlug,
-      selectedCustomBuddyId,
-    }).catch(() => {});
+    chrome.storage.local
+      .set({
+        selectedBuddySlug,
+        selectedCustomBuddyId,
+      })
+      .catch(() => {});
   }
 
   // 1. Update Carousel selection highlight
@@ -1628,7 +1702,11 @@ function pickExtensionVoice(lang) {
   const target = String(lang || "en-IN").toLowerCase();
   const prefix = target.split("-")[0];
   return (
-    voices.find((v) => v.lang?.toLowerCase() === target && /natural|google|heera|ravi|swara|madhur|lekha/i.test(v.name)) ||
+    voices.find(
+      (v) =>
+        v.lang?.toLowerCase() === target &&
+        /natural|google|heera|ravi|swara|madhur|lekha/i.test(v.name),
+    ) ||
     voices.find((v) => v.lang?.toLowerCase() === target) ||
     voices.find((v) => v.lang?.toLowerCase().startsWith(prefix)) ||
     voices.find((v) => v.lang?.toLowerCase().endsWith("-in")) ||
@@ -1877,11 +1955,11 @@ function getActiveScopeKey(session) {
 
 async function getScopedProfile(sessionOverride) {
   try {
-    const { session, userProfile = {}, scopedUserProfiles = {} } = await chrome.storage.local.get([
-      "session",
-      "userProfile",
-      "scopedUserProfiles",
-    ]);
+    const {
+      session,
+      userProfile = {},
+      scopedUserProfiles = {},
+    } = await chrome.storage.local.get(["session", "userProfile", "scopedUserProfiles"]);
     const scope = getActiveScopeKey(sessionOverride !== undefined ? sessionOverride : session);
     if (scope === "guest") return userProfile || {};
     return scopedUserProfiles?.[scope] || {};
@@ -2069,9 +2147,13 @@ async function render() {
 
   // Sync latest custom buddies from backend if available
   const apiBase = await getResolvedBackendBase();
-  fetchWithTimeout(`${apiBase}/api/public/extension/buddies`, {
-    headers: session?.accessToken ? { authorization: `Bearer ${session.accessToken}` } : {},
-  }, 6000)
+  fetchWithTimeout(
+    `${apiBase}/api/public/extension/buddies`,
+    {
+      headers: session?.accessToken ? { authorization: `Bearer ${session.accessToken}` } : {},
+    },
+    6000,
+  )
     .then((r) => (r.ok ? r.json() : null))
     .then((data) => {
       if (data?.ok && Array.isArray(data.buddies) && data.buddies.length > 0) {
@@ -2158,7 +2240,13 @@ async function checkPageForErrors() {
 
     const rt = window.Buddy3DRuntime;
     const focusedPassword = (snapshot.forms || []).some(
-      (f) => f.focused && (f.type === "password" || rt?.detectPrivacyTrigger?.({ activeFieldLabel: f.label || f.name, activeFieldType: f.type })?.isPrivacy),
+      (f) =>
+        f.focused &&
+        (f.type === "password" ||
+          rt?.detectPrivacyTrigger?.({
+            activeFieldLabel: f.label || f.name,
+            activeFieldType: f.type,
+          })?.isPrivacy),
     );
     if (focusedPassword || snapshot.hasFocusedPassword) {
       setRigEmotion("privacy", "Privacy");
@@ -2166,7 +2254,9 @@ async function checkPageForErrors() {
     }
 
     const rawAlerts = snapshot.alerts || [];
-    const alerts = rawAlerts.filter((a) => String(a?.errorMessage || a?.name || "").trim().length > 0);
+    const alerts = rawAlerts.filter(
+      (a) => String(a?.errorMessage || a?.name || "").trim().length > 0,
+    );
     const invalidForms = (snapshot.forms || []).filter((f) => f.invalid);
 
     const banner = $("pageErrorBanner");
@@ -2247,7 +2337,10 @@ async function executeScroll(
       speakResponse(msg, "happy");
     }
   } else {
-    recordSessionAction(res?.message || `Scroll ${targetContainerText || targetText || direction} failed`, "failed");
+    recordSessionAction(
+      res?.message || `Scroll ${targetContainerText || targetText || direction} failed`,
+      "failed",
+    );
     if (announceInChat) {
       const failMsg =
         res?.message ||
@@ -2282,7 +2375,12 @@ async function executeFind(query, mode = "find", extraOpts = {}) {
       },
     },
   });
-  if (res?.ok && res.ambiguous && Array.isArray(res.ambiguousCandidates) && res.ambiguousCandidates.length > 1) {
+  if (
+    res?.ok &&
+    res.ambiguous &&
+    Array.isArray(res.ambiguousCandidates) &&
+    res.ambiguousCandidates.length > 1
+  ) {
     pendingDisambiguation = {
       action: mode === "point" ? "point" : "find",
       target: query,
@@ -2307,7 +2405,10 @@ async function executeFind(query, mode = "find", extraOpts = {}) {
     setRigEmotion("confused", "Which one?");
     $("statusText").textContent = `Clarification needed for "${query}"`;
     appendHistory("buddy", askWhichMsg);
-    recordSessionAction(`Asked clarification among ${pendingDisambiguation.candidates.length} "${query}" matches`, "unconfirmed");
+    recordSessionAction(
+      `Asked clarification among ${pendingDisambiguation.candidates.length} "${query}" matches`,
+      "unconfirmed",
+    );
     speakResponse(askWhichMsg, "confused");
     return;
   }
@@ -2349,7 +2450,9 @@ async function executeFind(query, mode = "find", extraOpts = {}) {
       `🎯 ${msg}${res.targetMatch?.textSnippet ? `\nElement: "${res.targetMatch.textSnippet}"` : ""}`,
     );
     speakResponse(
-      isHindi ? `Maine ${query} par point kar diya hai.` : `I am pointing to ${query} on this page.`,
+      isHindi
+        ? `Maine ${query} par point kar diya hai.`
+        : `I am pointing to ${query} on this page.`,
       "pointing",
     );
   } else {
@@ -2372,7 +2475,9 @@ let activeUploadedDocument = null;
 function maskSensitiveDocValue(key, val) {
   const s = String(val || "").trim();
   if (!s) return "";
-  const nk = String(key || "").replace(/[^a-z]/gi, "").toLowerCase();
+  const nk = String(key || "")
+    .replace(/[^a-z]/gi, "")
+    .toLowerCase();
   if (nk.includes("aadhaar") || nk.includes("aadhar")) {
     const digits = s.replace(/\D/g, "");
     return digits.length >= 4 ? `XXXX-XXXX-${digits.slice(-4)}` : "XXXX-XXXX";
@@ -2477,7 +2582,8 @@ function extractRequestedDocFieldKeys(text) {
   if (/\bcity\b/i.test(lower)) keys.push("city");
   if (/\bstate\b/i.test(lower)) keys.push("state");
   if (/\b(?:pincode|pin\s*code|zip)\b/i.test(lower)) keys.push("pincode");
-  if (/\b(?:aadhaar|aadhar)\s*(?:number|no|num|digit|id)\b/i.test(lower)) keys.push("aadhaarNumber");
+  if (/\b(?:aadhaar|aadhar)\s*(?:number|no|num|digit|id)\b/i.test(lower))
+    keys.push("aadhaarNumber");
   if (/\bpan\s*(?:number|no|num|id)\b/i.test(lower)) keys.push("panNumber");
   if (/\b(?:gstin|gst)\b/i.test(lower)) keys.push("gstin");
   if (/\b(?:invoice)(?:\s*number|\s*no)?\b/i.test(lower)) keys.push("invoiceNumber");
@@ -2489,7 +2595,10 @@ function extractRequestedDocFieldKeys(text) {
 function stripBuddyPrefix(text) {
   return String(text || "")
     .trim()
-    .replace(/^(?:(?:hey|hi|hello|ok|okay|dear|please|kripya|bhai|yaar|dost|sun|suno)\s+)?(?:ai\s+)?buddy\b[,:\s-]*/i, "")
+    .replace(
+      /^(?:(?:hey|hi|hello|ok|okay|dear|please|kripya|bhai|yaar|dost|sun|suno)\s+)?(?:ai\s+)?buddy\b[,:\s-]*/i,
+      "",
+    )
     .replace(/^(?:bhai|yaar|dost|sun|suno|please|kripya|plz|pls)\b[,\s:-]+(?=\S)/i, "")
     .replace(/^(?:please|kripya|plz|pls)\s+/i, "")
     .replace(/\s+(?:please|kripya|plz|pls)[.!?\s]*$/i, "")
@@ -2508,7 +2617,10 @@ function normalizeHinglishCommand(rawText) {
     .replace(/\bkrdo\b|\bkr\s+do\b/gi, "kar do")
     .replace(/\bkro\b|\bkrr+o\b/gi, "karo")
     .replace(/\bkr\b(?=\s+(?:do|de|dein|ke|na|rha|raha|rahi|lo)|[.!?\s]*$)/gi, "kar")
-    .replace(/\bkyuu+n?\b|\bkyu+\b|\bq\b(?=\s+(?:kar|karo|ho|h|hai|nahi|nhi|likh|fill|bhai|buddy)?\s*[?!.]*$)/gi, "kyun")
+    .replace(
+      /\bkyuu+n?\b|\bkyu+\b|\bq\b(?=\s+(?:kar|karo|ho|h|hai|nahi|nhi|likh|fill|bhai|buddy)?\s*[?!.]*$)/gi,
+      "kyun",
+    )
     .replace(/\bsb+\b/gi, "sab")
     .replace(/\bkch+\b/gi, "kuch")
     .replace(/\bbtaa*o\b/gi, "batao")
@@ -2536,7 +2648,10 @@ function resolvePositionalFieldTarget(raw) {
   const s = String(raw || "")
     .trim()
     .toLowerCase()
-    .replace(/\b(?:field|input|box|textbox|textarea|area|dropdown|select|jagah|wal[aei]|wle|number|no\.?)\b/gi, " ")
+    .replace(
+      /\b(?:field|input|box|textbox|textarea|area|dropdown|select|jagah|wal[aei]|wle|number|no\.?)\b/gi,
+      " ",
+    )
     .replace(/\b(?:mein|me|main|par|pe|pr|ko|ka|ki|ke|the|is|this)\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -2597,7 +2712,11 @@ function resolveOrdinalChoiceIndex(text) {
 }
 
 function isNonValuePlaceholder(rawVal) {
-  const normVal = normalizeHinglishCommand(String(rawVal || "").trim().toLowerCase());
+  const normVal = normalizeHinglishCommand(
+    String(rawVal || "")
+      .trim()
+      .toLowerCase(),
+  );
   return /^(?:kuch|kch|kuch\s+bhi|something|anything|text|value|data|details|info|information|ye|yeh|ye\s*wal[aei]|yeh\s*wal[aei]|is\s*wal[aei]|isko|isme|is\s*(?:box|field|input)|this|this\s*(?:box|field|input)|the\s*(?:box|field|input)|it|yahan|yaha|yha|karo|kro|kar\s*do|kr\s*do|krdo|kar\s*de|fill|bharo|bhar\s*do|daalo|daal\s*do|likho|likh\s*do|type|form|all\s+fields|fields|inputs|page|errors?|issues?)$/i.test(
     normVal,
   );
@@ -2765,7 +2884,11 @@ function extractFillDetails(text) {
   );
 
   const knownFieldExactRe = new RegExp(`^(?:${KNOWN_FIELD_ALIASES})$`, "i");
-  const cleanEdgeQuotes = (s) => String(s || "").trim().replace(/^["']|["']$/g, "").trim();
+  const cleanEdgeQuotes = (s) =>
+    String(s || "")
+      .trim()
+      .replace(/^["']|["']$/g, "")
+      .trim();
 
   for (const clause of clauses) {
     // Pattern B-ko: "<value> ko <field> mein daal do"
@@ -2775,7 +2898,11 @@ function extractFillDetails(text) {
       const rawTarget = match[2].trim();
       const normT = normalizeFillTarget(rawTarget);
       if (rawVal && !isNonValuePlaceholder(rawVal)) {
-        if (/^(?:is|ye|yeh|isko|isme|is\s*box|this|this\s*box|this\s*field|yahan|yaha|yha)$/i.test(rawTarget)) {
+        if (
+          /^(?:is|ye|yeh|isko|isme|is\s*box|this|this\s*box|this\s*field|yahan|yaha|yha)$/i.test(
+            rawTarget,
+          )
+        ) {
           explicitPairs.push({ target: "__CURRENT__", value: rawVal, overwrite });
           continue;
         }
@@ -2796,12 +2923,16 @@ function extractFillDetails(text) {
       const valLooksLikeField = knownFieldExactRe.test(normalizeFillTarget(rawVal));
       const targetLooksLikeField =
         /^(?:this|this\s*box|this\s*field|it|here|isko|isme|yahan|yaha|yha)$/i.test(rawTarget) ||
-        /\b(?:box|field|input|textbox|textarea|area|dropdown|select|bar|wala|wali|wale)\b/i.test(rawTarget) ||
+        /\b(?:box|field|input|textbox|textarea|area|dropdown|select|bar|wala|wali|wale)\b/i.test(
+          rawTarget,
+        ) ||
         /\b(?:into|inside)\b/i.test(clause) ||
         knownFieldExactRe.test(normTCheck);
 
       if (!valLooksLikeField && targetLooksLikeField && !isNonValuePlaceholder(rawVal)) {
-        if (/^(?:this|this\s*box|this\s*field|it|here|isko|isme|yahan|yaha|yha)$/i.test(rawTarget)) {
+        if (
+          /^(?:this|this\s*box|this\s*field|it|here|isko|isme|yahan|yaha|yha)$/i.test(rawTarget)
+        ) {
           explicitPairs.push({ target: "__CURRENT__", value: rawVal, overwrite });
           continue;
         }
@@ -2831,7 +2962,11 @@ function extractFillDetails(text) {
         knownFieldExactRe.test(normT) ||
         /\b(?:field|box|input|textbox|textarea)\b/i.test(rawTarget);
       if ((hasFillVerbOrAssign || isPositionalOrKnown) && !isNonValuePlaceholder(rawVal)) {
-        if (/^(?:is|ye|yeh|isko|isme|is\s*box|this|this\s*box|this\s*field|yahan|yaha|yha)$/i.test(rawTarget)) {
+        if (
+          /^(?:is|ye|yeh|isko|isme|is\s*box|this|this\s*box|this\s*field|yahan|yaha|yha)$/i.test(
+            rawTarget,
+          )
+        ) {
           explicitPairs.push({ target: "__CURRENT__", value: rawVal, overwrite });
           continue;
         }
@@ -2850,7 +2985,9 @@ function extractFillDetails(text) {
       const rawVal = cleanEdgeQuotes(match[1]);
       const rawTarget = match[2].trim();
       if (!isNonValuePlaceholder(rawVal)) {
-        if (/^(?:this|this\s*box|this\s*field|it|here|isko|isme|yahan|yaha|yha)$/i.test(rawTarget)) {
+        if (
+          /^(?:this|this\s*box|this\s*field|it|here|isko|isme|yahan|yaha|yha)$/i.test(rawTarget)
+        ) {
           explicitPairs.push({ target: "__CURRENT__", value: rawVal, overwrite });
           continue;
         }
@@ -2919,7 +3056,9 @@ function extractFillDetails(text) {
     if (
       clauses.length === 1 &&
       hasFillVerbOrAssign &&
-      !/\b(?:click|press|dabao|scroll|point|highlight|find|kholo|open|ki\s+jagah|instead\s+of)\b/i.test(clause)
+      !/\b(?:click|press|dabao|scroll|point|highlight|find|kholo|open|ki\s+jagah|instead\s+of)\b/i.test(
+        clause,
+      )
     ) {
       const bareVerbEndRe =
         /^(?:["']([^"']+)["']|(.+?))\s+(?:(?:ye|yeh|isko|isme|yahan|yaha|yha|ye\s+wal[aei]|is\s+(?:box|field|input)(?:\s+(?:mein|me|main|ko))?)\s+)?(?:(?:fill|type|likh|likho|lkh|lkho|daal|daalo|dalo|bhar|bharo|enter)\s*(?:(?:kar|kr)\s*do|krdo|(?:kar|kr)\s*de|(?:kar|kr)o|karein|do|de)?)[.!?\s]*$/i;
@@ -2929,15 +3068,23 @@ function extractFillDetails(text) {
       if (fMatch) {
         const rawCandidate = (fMatch[1] || fMatch[2] || "").trim();
         const candidateClean = rawCandidate
-          .replace(/^(?:(?:ye|yeh|is)\s+wal[aei]|isme|isko|is\s*box\s*(?:mein|me|main)?|is\s*field\s*(?:mein|me|main)?|ye|yeh|yahan|yaha|yha|ab|please)\s+/i, "")
-          .replace(/\s+(?:ko|ka|ke|ki|mein|me|main|par|pe|pr|in|into|se|ye|yeh|isko|isme|ye\s+wal[aei])$/i, "")
+          .replace(
+            /^(?:(?:ye|yeh|is)\s+wal[aei]|isme|isko|is\s*box\s*(?:mein|me|main)?|is\s*field\s*(?:mein|me|main)?|ye|yeh|yahan|yaha|yha|ab|please)\s+/i,
+            "",
+          )
+          .replace(
+            /\s+(?:ko|ka|ke|ki|mein|me|main|par|pe|pr|in|into|se|ye|yeh|isko|isme|ye\s+wal[aei])$/i,
+            "",
+          )
           .trim();
         const candNormTarget = normalizeFillTarget(candidateClean);
         const looksLikeQuestion =
           /^(?:what|why|how|where|when|which|who|kya|kyun|kaise|kahan|kidhar|kaun|kaunsa|kab|kitna)\b/i.test(
             candidateClean,
           ) || /[?]$/.test(clause.trim());
-        const endsWithLocationCase = /\b(?:ko|ke|mein|me|main|par|pe|pr|in|into|from|se)$/i.test(rawCandidate);
+        const endsWithLocationCase = /\b(?:ko|ke|mein|me|main|par|pe|pr|in|into|from|se)$/i.test(
+          rawCandidate,
+        );
         const looksLikeFormOrFieldOnly =
           !fMatch[1] &&
           (knownFieldExactRe.test(candNormTarget) ||
@@ -2978,8 +3125,14 @@ function extractFillDetails(text) {
       if (wholeMatch) {
         const rawWhole = (wholeMatch[1] || wholeMatch[2] || "").trim();
         const wholeClean = rawWhole
-          .replace(/^(?:(?:ye|yeh|is)\s+wal[aei]|isme|isko|is\s*box\s*(?:mein|me|main)?|is\s*field\s*(?:mein|me|main)?|ye|yeh|yahan|yaha|yha|ab|please)\s+/i, "")
-          .replace(/\s+(?:ko|ka|ke|ki|mein|me|main|par|pe|pr|in|into|se|ye|yeh|isko|isme|ye\s+wal[aei])$/i, "")
+          .replace(
+            /^(?:(?:ye|yeh|is)\s+wal[aei]|isme|isko|is\s*box\s*(?:mein|me|main)?|is\s*field\s*(?:mein|me|main)?|ye|yeh|yahan|yaha|yha|ab|please)\s+/i,
+            "",
+          )
+          .replace(
+            /\s+(?:ko|ka|ke|ki|mein|me|main|par|pe|pr|in|into|se|ye|yeh|isko|isme|ye\s+wal[aei])$/i,
+            "",
+          )
           .trim();
         if (
           wholeClean &&
@@ -2996,19 +3149,54 @@ function extractFillDetails(text) {
   // Fallback Pattern E: natural comma-separated attributes ("name Rahul, email rahul@gmail.com, city Delhi")
   if (explicitPairs.length === 0) {
     const patterns = [
-      { key: "first name", regex: /\bfirst\s+name\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+last\s+name|\s+surname|\s+email|\s+city|\s+pin|\s+phone|\s+mobile|\s+bhar|\s+fill|$)/i },
-      { key: "lastname", regex: /\b(?:last\s+name|surname)\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+email|\s+city|\s+pin|\s+phone|\s+mobile|\s+bhar|\s+fill|$)/i },
-      { key: "name", regex: /\b(?:name|naam)\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+email|\s+city|\s+pin|\s+phone|\s+mobile|\s+address|\s+bhar|\s+fill|$)/i },
-      { key: "email", regex: /\b(?:email|mail)\s+(?:as\s+|is\s+|:\s*)?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i },
-      { key: "phone", regex: /\b(?:phone|mobile(?:\s+number)?)\s+(?:as\s+|is\s+|:\s*)?(\+?\d{10,13})/i },
-      { key: "address", regex: /\b(?:address|pata)\s+(?:as\s+|is\s+|:\s*)?([^,\n]+?)(?:,|\s+city|\s+state|\s+pin|\s+bhar|\s+fill|$)/i },
-      { key: "city", regex: /\bcity\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+state|\s+pin|\s+phone|\s+fill|$)/i },
-      { key: "state", regex: /\bstate\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+pin|\s+city|\s+phone|\s+fill|$)/i },
+      {
+        key: "first name",
+        regex:
+          /\bfirst\s+name\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+last\s+name|\s+surname|\s+email|\s+city|\s+pin|\s+phone|\s+mobile|\s+bhar|\s+fill|$)/i,
+      },
+      {
+        key: "lastname",
+        regex:
+          /\b(?:last\s+name|surname)\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+email|\s+city|\s+pin|\s+phone|\s+mobile|\s+bhar|\s+fill|$)/i,
+      },
+      {
+        key: "name",
+        regex:
+          /\b(?:name|naam)\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+email|\s+city|\s+pin|\s+phone|\s+mobile|\s+address|\s+bhar|\s+fill|$)/i,
+      },
+      {
+        key: "email",
+        regex:
+          /\b(?:email|mail)\s+(?:as\s+|is\s+|:\s*)?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i,
+      },
+      {
+        key: "phone",
+        regex: /\b(?:phone|mobile(?:\s+number)?)\s+(?:as\s+|is\s+|:\s*)?(\+?\d{10,13})/i,
+      },
+      {
+        key: "address",
+        regex:
+          /\b(?:address|pata)\s+(?:as\s+|is\s+|:\s*)?([^,\n]+?)(?:,|\s+city|\s+state|\s+pin|\s+bhar|\s+fill|$)/i,
+      },
+      {
+        key: "city",
+        regex:
+          /\bcity\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+state|\s+pin|\s+phone|\s+fill|$)/i,
+      },
+      {
+        key: "state",
+        regex:
+          /\bstate\s+(?:as\s+|is\s+|:\s*)?([A-Za-z\s]+?)(?:,|\s+pin|\s+city|\s+phone|\s+fill|$)/i,
+      },
       { key: "pincode", regex: /\b(?:pin|pincode|zip)\s+(?:as\s+|is\s+|:\s*)?(\d{5,6})/i },
-      { key: "gstin", regex: /\b(?:gstin|gst)\s+(?:as\s+|is\s+|:\s*)?([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})/i },
+      {
+        key: "gstin",
+        regex:
+          /\b(?:gstin|gst)\s+(?:as\s+|is\s+|:\s*)?([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})/i,
+      },
     ];
     for (const p of patterns) {
-      if ((p.key === "name") && (fields["first name"] || fields["lastname"])) continue;
+      if (p.key === "name" && (fields["first name"] || fields["lastname"])) continue;
       const match = cleaned.match(p.regex);
       if (match && match[1]) {
         const val = match[1].trim();
@@ -3035,7 +3223,9 @@ function extractFieldsFromMessage(text) {
 }
 
 function isLikelyActionCommand(text) {
-  const norm = normalizeHinglishCommand(String(text || "")).toLowerCase().trim();
+  const norm = normalizeHinglishCommand(String(text || ""))
+    .toLowerCase()
+    .trim();
   if (!norm) return false;
   return /\b(?:fill|type|likh|likho|daal|daalo|bhar|bharo|enter|click|press|dabao|scroll|open|kholo|search|dhoondho|dhundo|select|choose|chuno|check|uncheck|badal|badlo|change|update|replace|modify|remove|hatao|hatana|lagao|submit|bhejo|rakh|rakhna|isme|isko|usko|ye\s+wala|wahi|yahi|kar\s+do|karo)\b/i.test(
     norm,
@@ -3053,7 +3243,10 @@ function parseActionIntent(text) {
   if (ctx) {
     if (
       /^(?:cancel|rehne\s+do|chhodo|mat\s+karo|nahi|no|skip|band\s+karo)[.!?\s]*$/i.test(lower) &&
-      (ctx.pendingSlot || ctx.hasPendingAction || ctx.pendingDisambiguation || ctx.activeFormSession?.active)
+      (ctx.pendingSlot ||
+        ctx.hasPendingAction ||
+        ctx.pendingDisambiguation ||
+        ctx.activeFormSession?.active)
     ) {
       return { type: "CANCEL_PENDING" };
     }
@@ -3086,7 +3279,12 @@ function parseActionIntent(text) {
       normStripped.match(
         /^(?:["']?(.+?)["']?\s+ki\s+jagah|instead\s+of\s+["']?(.+?)["']?(?:\s*,|\s+))\s*["']?(.+?)["']?\s*(?:likh\s*(?:do|de|karo)?|likho|daal\s*(?:do|de|karo)?|daalo|kar\s+do|karo|write|fill|type)[.!?\s]*$/i,
       );
-    if (replaceValMatch && (ctx.activeFormSession?.lastFilled || ctx.session?.lastTargetSelector || ctx.session?.lastTargetField)) {
+    if (
+      replaceValMatch &&
+      (ctx.activeFormSession?.lastFilled ||
+        ctx.session?.lastTargetSelector ||
+        ctx.session?.lastTargetField)
+    ) {
       const oldVal = (replaceValMatch[1] || replaceValMatch[2] || "").trim();
       const newVal = (replaceValMatch[3] || "").trim();
       if (newVal && !isNonValuePlaceholder(newVal)) {
@@ -3176,7 +3374,9 @@ function parseActionIntent(text) {
           explicitUserProvided: true,
           fromChatCommand: true,
           fromFormSession: true,
-          noSubmitPrompt: Boolean(ctx.pendingSlot?.noSubmitPrompt || sessionFill.hasExplicitNoSubmit),
+          noSubmitPrompt: Boolean(
+            ctx.pendingSlot?.noSubmitPrompt || sessionFill.hasExplicitNoSubmit,
+          ),
         };
       }
     }
@@ -3203,7 +3403,8 @@ function parseActionIntent(text) {
     ) {
       const target = ctx.pendingSlot.targetField || ctx.session?.lastTargetField || "__CURRENT__";
       const isBoxSingle =
-        target === "__CURRENT__" || /\b(?:search|chat|msg|message|comment|prompt|query)\b/i.test(String(target));
+        target === "__CURRENT__" ||
+        /\b(?:search|chat|msg|message|comment|prompt|query)\b/i.test(String(target));
       return {
         type: "FORM_FILL",
         explicitPairs: [
@@ -3256,17 +3457,38 @@ function parseActionIntent(text) {
     const refSel = ctx.session?.lastTargetRef?.selector || ctx.session?.lastTargetSelector || null;
     const refLabel = ctx.session?.lastTargetRef?.label || ctx.session?.lastTargetField || null;
     if (refSel || refLabel) {
-      if (/^(?:hover(?:\s+(?:over|on))?\s+(?:it|this|that)|(?:is|us)\s*(?:par|pe|pr)\s+hover\s*(?:karo|kro)?)[.!?\s]*$/i.test(lower)) {
+      if (
+        /^(?:hover(?:\s+(?:over|on))?\s+(?:it|this|that)|(?:is|us)\s*(?:par|pe|pr)\s+hover\s*(?:karo|kro)?)[.!?\s]*$/i.test(
+          lower,
+        )
+      ) {
         return { type: "HOVER", target: refLabel || "__CURRENT__", selector: refSel };
       }
-      if (/^(?:double[\s-]*click(?:\s+on)?\s+(?:it|this|that)|(?:is|us)\s*(?:par|pe|pr)\s+double[\s-]*click\s*(?:karo|kro)?)[.!?\s]*$/i.test(lower)) {
+      if (
+        /^(?:double[\s-]*click(?:\s+on)?\s+(?:it|this|that)|(?:is|us)\s*(?:par|pe|pr)\s+double[\s-]*click\s*(?:karo|kro)?)[.!?\s]*$/i.test(
+          lower,
+        )
+      ) {
         return { type: "DOUBLE_CLICK", target: refLabel || "__CURRENT__", selector: refSel };
       }
-      if (/^(?:right[\s-]*click(?:\s+on)?\s+(?:it|this|that)|(?:is|us)\s*(?:par|pe|pr)\s+right[\s-]*click\s*(?:karo|kro)?)[.!?\s]*$/i.test(lower)) {
+      if (
+        /^(?:right[\s-]*click(?:\s+on)?\s+(?:it|this|that)|(?:is|us)\s*(?:par|pe|pr)\s+right[\s-]*click\s*(?:karo|kro)?)[.!?\s]*$/i.test(
+          lower,
+        )
+      ) {
         return { type: "RIGHT_CLICK", target: refLabel || "__CURRENT__", selector: refSel };
       }
-      if (/^(?:open\s+(?:it|this|that)\s+in\s+(?:another|a\s+new|new)\s+tab|(?:isko|use)\s+naye\s+tab\s+mein\s+kholo)[.!?\s]*$/i.test(lower)) {
-        return { type: "TAB_ACTION", action: "open_tab", target: refLabel || "__CURRENT__", selector: refSel };
+      if (
+        /^(?:open\s+(?:it|this|that)\s+in\s+(?:another|a\s+new|new)\s+tab|(?:isko|use)\s+naye\s+tab\s+mein\s+kholo)[.!?\s]*$/i.test(
+          lower,
+        )
+      ) {
+        return {
+          type: "TAB_ACTION",
+          action: "open_tab",
+          target: refLabel || "__CURRENT__",
+          selector: refSel,
+        };
       }
     }
 
@@ -3372,17 +3594,26 @@ function parseActionIntent(text) {
   }
   const openTabMatch =
     normStripped.match(/^(?:open|launch)\s+(.+?)\s+in\s+(?:another|a\s+new|new)\s+tab[.!?\s]*$/i) ||
-    normStripped.match(/^(.+?)\s+(?:ko\s+)?(?:naye|new)\s+tab\s+(?:mein|me|main)\s+(?:kholo|khol\s+do|open\s*(?:karo|kro)?)[.!?\s]*$/i);
+    normStripped.match(
+      /^(.+?)\s+(?:ko\s+)?(?:naye|new)\s+tab\s+(?:mein|me|main)\s+(?:kholo|khol\s+do|open\s*(?:karo|kro)?)[.!?\s]*$/i,
+    );
   if (openTabMatch?.[1]) {
     return { type: "TAB_ACTION", action: "open_tab", target: openTabMatch[1].trim() };
   }
-  if (/^(?:close\s+(?:this|the\s+current)\s+tab|(?:ye|yeh|is|current)\s+tab\s+(?:band|close)\s*(?:karo|kro|(?:kar|kr)\s*do)?)[.!?\s]*$/i.test(lower)) {
+  if (
+    /^(?:close\s+(?:this|the\s+current)\s+tab|(?:ye|yeh|is|current)\s+tab\s+(?:band|close)\s*(?:karo|kro|(?:kar|kr)\s*do)?)[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
     return { type: "TAB_ACTION", action: "close_tab" };
   }
   const switchTabMatch =
     normStripped.match(/^switch\s+(?:to\s+)?(?:the\s+)?(.+?)\s+tab[.!?\s]*$/i) ||
     normStripped.match(/^(.+?)\s+tab\s+(?:par|pe|pr)\s+(?:switch|jao)[.!?\s]*$/i);
-  if (switchTabMatch?.[1] && !/^(?:orders?|settings?|history|home)$/i.test(switchTabMatch[1].trim())) {
+  if (
+    switchTabMatch?.[1] &&
+    !/^(?:orders?|settings?|history|home)$/i.test(switchTabMatch[1].trim())
+  ) {
     return { type: "TAB_ACTION", action: "switch_tab", target: switchTabMatch[1].trim() };
   }
 
@@ -3459,23 +3690,35 @@ function parseActionIntent(text) {
   }
 
   // 3. SMART SCROLLING, PAGINATION & INFINITE SCROLL
-  const infiniteScrollMatch =
-    lower.match(/^(?:keep\s+scrolling|infinite\s+scroll|scroll\s+and\s+(?:load|collect)(?:\s+all)?(?:\s+items)?|(?:neeche|niche)\s+scroll\s+karke\s+(?:sab|saare|all)\s+items?\s+(?:collect|load|nikaalo)\s*(?:karo|kro)?)(?:\s+until\s+(.+))?[.!?\s]*$/i);
+  const infiniteScrollMatch = lower.match(
+    /^(?:keep\s+scrolling|infinite\s+scroll|scroll\s+and\s+(?:load|collect)(?:\s+all)?(?:\s+items)?|(?:neeche|niche)\s+scroll\s+karke\s+(?:sab|saare|all)\s+items?\s+(?:collect|load|nikaalo)\s*(?:karo|kro)?)(?:\s+until\s+(.+))?[.!?\s]*$/i,
+  );
   if (infiniteScrollMatch) {
     return { type: "INFINITE_SCROLL", targetText: infiniteScrollMatch[1]?.trim() || undefined };
   }
 
   const scrollUntilTextMatch =
-    lower.match(/^scroll\s+until\s+(?:you\s+see\s+|the\s+)?["']?(.+?)["']?(?:\s+appears?)?[.!?\s]*$/i) ||
-    lower.match(/^jab\s+tak\s+["']?(.+?)["']?\s+na\s+dikhe\s+scroll\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i);
+    lower.match(
+      /^scroll\s+until\s+(?:you\s+see\s+|the\s+)?["']?(.+?)["']?(?:\s+appears?)?[.!?\s]*$/i,
+    ) ||
+    lower.match(
+      /^jab\s+tak\s+["']?(.+?)["']?\s+na\s+dikhe\s+scroll\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i,
+    );
   if (scrollUntilTextMatch?.[1]) {
     return { type: "SCROLL_UNTIL_TEXT", text: scrollUntilTextMatch[1].trim() };
   }
 
-  const paginateMatch =
-    lower.match(/^(?:go\s+to\s+(?:the\s+)?(last|next)\s+page|(last|aakhri|agle|next)\s+page\s+(?:par|pe|pr)\s+(?:jao|chalo)|(?:go\s+to\s+)?page\s+(\d+)|page\s+(\d+)\s+(?:par|pe|pr)\s+(?:jao|chalo))[.!?\s]*$/i);
+  const paginateMatch = lower.match(
+    /^(?:go\s+to\s+(?:the\s+)?(last|next)\s+page|(last|aakhri|agle|next)\s+page\s+(?:par|pe|pr)\s+(?:jao|chalo)|(?:go\s+to\s+)?page\s+(\d+)|page\s+(\d+)\s+(?:par|pe|pr)\s+(?:jao|chalo))[.!?\s]*$/i,
+  );
   if (paginateMatch) {
-    const rawPg = (paginateMatch[1] || paginateMatch[2] || paginateMatch[3] || paginateMatch[4] || "next").toLowerCase();
+    const rawPg = (
+      paginateMatch[1] ||
+      paginateMatch[2] ||
+      paginateMatch[3] ||
+      paginateMatch[4] ||
+      "next"
+    ).toLowerCase();
     const mappedPg = rawPg === "aakhri" ? "last" : rawPg === "agle" ? "next" : rawPg;
     return { type: "PAGINATE", targetPage: mappedPg };
   }
@@ -3483,10 +3726,7 @@ function parseActionIntent(text) {
   const namedContainerScrollMatch =
     lower.match(
       /^(.+?)\s+(?:ko|box\s+ko|area\s+ko|section\s+ko|panel\s+ko)\s+(neeche|niche|upar|left|right|baayein|daayein|down|up)\s+scroll\s*(?:karo|kro|(?:kar|kr)\s*do|karein)?[.!?\s]*$/i,
-    ) ||
-    lower.match(
-      /^scroll\s+(?:the\s+)?(.+?)\s+(down|up|left|right)[.!?\s]*$/i,
-    );
+    ) || lower.match(/^scroll\s+(?:the\s+)?(.+?)\s+(down|up|left|right)[.!?\s]*$/i);
   if (namedContainerScrollMatch) {
     const rawName = namedContainerScrollMatch[1]
       .replace(/^(?:is\s+page\s+(?:ke|par|pr)|page\s+(?:ke|par|pr)|the|this)\s+/i, "")
@@ -3494,7 +3734,13 @@ function parseActionIntent(text) {
       .trim();
     const rawDir = namedContainerScrollMatch[2].toLowerCase();
     if (rawName && !/^(?:page|window|screen|to|thoda|slightly)$/i.test(rawName)) {
-      const dirMap = { neeche: "down", niche: "down", upar: "up", baayein: "left", daayein: "right" };
+      const dirMap = {
+        neeche: "down",
+        niche: "down",
+        upar: "up",
+        baayein: "left",
+        daayein: "right",
+      };
       return {
         type: "SCROLL",
         direction: dirMap[rawDir] || rawDir,
@@ -3504,11 +3750,14 @@ function parseActionIntent(text) {
   }
 
   const scrollToTargetMatch =
-    lower.match(/^(.+?)\s+(?:tak|par|pe|pr)\s+scroll\s*(?:karo|kro|(?:kar|kr)\s*do|karein)?[.!?\s]*$/i) ||
-    lower.match(/^scroll\s+(?:to|until)\s+(?:the\s+)?(.+?)(?:\s+is\s+visible)?[.!?\s]*$/i);
+    lower.match(
+      /^(.+?)\s+(?:tak|par|pe|pr)\s+scroll\s*(?:karo|kro|(?:kar|kr)\s*do|karein)?[.!?\s]*$/i,
+    ) || lower.match(/^scroll\s+(?:to|until)\s+(?:the\s+)?(.+?)(?:\s+is\s+visible)?[.!?\s]*$/i);
   if (
     scrollToTargetMatch &&
-    !/^(?:top|bottom|up|down|left|right|last|end|neeche|niche|upar)$/i.test(scrollToTargetMatch[1].trim())
+    !/^(?:top|bottom|up|down|left|right|last|end|neeche|niche|upar)$/i.test(
+      scrollToTargetMatch[1].trim(),
+    )
   ) {
     const cleanScrollTarget = scrollToTargetMatch[1]
       .replace(/^(?:is\s+page\s+(?:ke|par|pr)|page\s+(?:ke|par|pr)|the)\s+/i, "")
@@ -3543,7 +3792,9 @@ function parseActionIntent(text) {
 
   const dblClickMatch =
     lower.match(/^double[\s-]*click\s+(?:on\s+)?(?:the\s+)?(.+?)[.!?\s]*$/i) ||
-    lower.match(/^(.+?)\s+(?:par|pe|pr)\s+double[\s-]*click\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i);
+    lower.match(
+      /^(.+?)\s+(?:par|pe|pr)\s+double[\s-]*click\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i,
+    );
   if (dblClickMatch) {
     const t = (dblClickMatch[1] || dblClickMatch[2] || "").trim();
     if (t) return { type: "DOUBLE_CLICK", target: t };
@@ -3551,7 +3802,9 @@ function parseActionIntent(text) {
 
   const rightClickMatch =
     lower.match(/^right[\s-]*click\s+(?:on\s+)?(?:the\s+)?(.+?)[.!?\s]*$/i) ||
-    lower.match(/^(.+?)\s+(?:par|pe|pr)\s+right[\s-]*click\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i);
+    lower.match(
+      /^(.+?)\s+(?:par|pe|pr)\s+right[\s-]*click\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i,
+    );
   if (rightClickMatch) {
     const t = (rightClickMatch[1] || rightClickMatch[2] || "").trim();
     if (t) return { type: "RIGHT_CLICK", target: t };
@@ -3567,33 +3820,69 @@ function parseActionIntent(text) {
 
   const clearFieldMatch =
     lower.match(/^clear\s+(?:the\s+)?(.+?)\s+(?:field|box|input|textbox)[.!?\s]*$/i) ||
-    lower.match(/^(.+?)\s+(?:field|box|input|textbox)\s+(?:clear|saaf|khali)\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i) ||
-    lower.match(/^clear\s+(?:the\s+)?(name|email|phone|mobile|address|search|city|state|pincode)\s*(?:field)?[.!?\s]*$/i);
+    lower.match(
+      /^(.+?)\s+(?:field|box|input|textbox)\s+(?:clear|saaf|khali)\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i,
+    ) ||
+    lower.match(
+      /^clear\s+(?:the\s+)?(name|email|phone|mobile|address|search|city|state|pincode)\s*(?:field)?[.!?\s]*$/i,
+    );
   if (clearFieldMatch) {
     const t = (clearFieldMatch[1] || "").trim();
     if (t) return { type: "CLEAR_FIELD", target: normalizeFillTarget(t) || t };
   }
 
   const dragMatch =
-    normStripped.match(/^drag\s+(?:the\s+)?(.+?)\s+(?:to|onto|into)\s+(?:the\s+)?(.+?)[.!?\s]*$/i) ||
-    normStripped.match(/^(.+?)\s+ko\s+(.+?)\s+(?:mein|me|par|pe|pr)\s+drag\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i);
+    normStripped.match(
+      /^drag\s+(?:the\s+)?(.+?)\s+(?:to|onto|into)\s+(?:the\s+)?(.+?)[.!?\s]*$/i,
+    ) ||
+    normStripped.match(
+      /^(.+?)\s+ko\s+(.+?)\s+(?:mein|me|par|pe|pr)\s+drag\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i,
+    );
   if (dragMatch?.[1] && dragMatch?.[2]) {
     return { type: "DRAG_AND_DROP", source: dragMatch[1].trim(), target: dragMatch[2].trim() };
   }
 
   const ordinalItemMatch =
-    lower.match(/^(?:open|click(?:\s+on)?|select)\s+(?:the\s+)?(1st|2nd|3rd|4th|5th|first|second|third|fourth|fifth|last)\s+(product|listing|item|result|card|row|order)[.!?\s]*$/i) ||
-    lower.match(/^(pehl[aei]|doosr[aei]|dusr[aei]|teesr[aei]|tisr[aei]|chauth[aei]|aakhri)\s+(product|listing|item|result|card|row|order)\s+(?:par\s+click\s*(?:karo|kro|(?:kar|kr)\s*do)?|kholo|open\s*(?:karo|kro)?|select\s*(?:karo|kro)?)[.!?\s]*$/i);
+    lower.match(
+      /^(?:open|click(?:\s+on)?|select)\s+(?:the\s+)?(1st|2nd|3rd|4th|5th|first|second|third|fourth|fifth|last)\s+(product|listing|item|result|card|row|order)[.!?\s]*$/i,
+    ) ||
+    lower.match(
+      /^(pehl[aei]|doosr[aei]|dusr[aei]|teesr[aei]|tisr[aei]|chauth[aei]|aakhri)\s+(product|listing|item|result|card|row|order)\s+(?:par\s+click\s*(?:karo|kro|(?:kar|kr)\s*do)?|kholo|open\s*(?:karo|kro)?|select\s*(?:karo|kro)?)[.!?\s]*$/i,
+    );
   if (ordinalItemMatch) {
     const ordToken = ordinalItemMatch[1].toLowerCase();
     const kind = ordinalItemMatch[2].toLowerCase();
     const ordMap = {
-      "1st": 1, first: 1, pehla: 1, pehli: 1, pehle: 1,
-      "2nd": 2, second: 2, doosra: 2, doosri: 2, doosre: 2, dusra: 2, dusri: 2, dusre: 2,
-      "3rd": 3, third: 3, teesra: 3, teesri: 3, teesre: 3, tisra: 3, tisri: 3, tisre: 3,
-      "4th": 4, fourth: 4, chautha: 4, chauthi: 4, chauthe: 4,
-      "5th": 5, fifth: 5,
-      last: -1, aakhri: -1,
+      "1st": 1,
+      first: 1,
+      pehla: 1,
+      pehli: 1,
+      pehle: 1,
+      "2nd": 2,
+      second: 2,
+      doosra: 2,
+      doosri: 2,
+      doosre: 2,
+      dusra: 2,
+      dusri: 2,
+      dusre: 2,
+      "3rd": 3,
+      third: 3,
+      teesra: 3,
+      teesri: 3,
+      teesre: 3,
+      tisra: 3,
+      tisri: 3,
+      tisre: 3,
+      "4th": 4,
+      fourth: 4,
+      chautha: 4,
+      chauthi: 4,
+      chauthe: 4,
+      "5th": 5,
+      fifth: 5,
+      last: -1,
+      aakhri: -1,
     };
     const isOpen = /\b(?:open|kholo)\b/i.test(lower);
     return {
@@ -3628,9 +3917,10 @@ function parseActionIntent(text) {
   }
 
   // 3b-2. WEB SEARCH & OPEN EXTERNAL WEBSITE ("Google par HGH injections search karo", "Google par search karna hai")
-  const hasExplicitInPage = /\b(?:is\s+page\s+(?:par|pe|pr|mein|me|main)|page\s+(?:par|pe|pr|mein|me|main)|on\s+this\s+page|in\s+this\s+page)\b/i.test(
-    lower,
-  );
+  const hasExplicitInPage =
+    /\b(?:is\s+page\s+(?:par|pe|pr|mein|me|main)|page\s+(?:par|pe|pr|mein|me|main)|on\s+this\s+page|in\s+this\s+page)\b/i.test(
+      lower,
+    );
   if (!hasExplicitInPage) {
     // Incomplete external search command missing a query ("Bhai Google par search karna hai" / "Google par search karo")
     if (
@@ -3688,10 +3978,19 @@ function parseActionIntent(text) {
     }
 
     const openWebsiteMatch =
-      normStripped.match(/^(?:open|visit|go\s+to)\s+(?:the\s+)?(.+?\b(?:website|site|portal|dashboard|hub|panel)\b.*?)[.!?\s]*$/i) ||
-      normStripped.match(/^(.+?\b(?:website|site|portal|dashboard|hub|panel)\b)\s+(?:open\s*(?:karo|kar\s+do)?|kholo|khol\s+do|dikhao)[.!?\s]*$/i) ||
-      normStripped.match(/^(?:(?:open|visit|go\s+to)\s+)?(google(?:\s+(?:sheets|docs|drive))?|youtube|amazon(?:\s+seller)?|flipkart(?:\s+seller(?:\s+hub)?)?|meesho(?:\s+(?:seller|supplier(?:\s+panel)?))?|uidai|myaadhaar|aadhaar|digilocker|irctc|gst(?:\s+portal)?|income\s*tax|parivahan|github|wikipedia)\s*(?:kholo|khol\s+do|open\s*(?:karo|kar\s+do)?)?[.!?\s]*$/i);
-    const hasPortalName = /\b(?:google(?:\s+(?:sheets|docs|drive))?|youtube|amazon|flipkart|meesho|seller|uidai|myaadhaar|aadhaar|aadhar|digilocker|irctc|gst|income\s*tax|efiling|itr|parivahan|github|wikipedia)\b/i.test(lower);
+      normStripped.match(
+        /^(?:open|visit|go\s+to)\s+(?:the\s+)?(.+?\b(?:website|site|portal|dashboard|hub|panel)\b.*?)[.!?\s]*$/i,
+      ) ||
+      normStripped.match(
+        /^(.+?\b(?:website|site|portal|dashboard|hub|panel)\b)\s+(?:open\s*(?:karo|kar\s+do)?|kholo|khol\s+do|dikhao)[.!?\s]*$/i,
+      ) ||
+      normStripped.match(
+        /^(?:(?:open|visit|go\s+to)\s+)?(google(?:\s+(?:sheets|docs|drive))?|youtube|amazon(?:\s+seller)?|flipkart(?:\s+seller(?:\s+hub)?)?|meesho(?:\s+(?:seller|supplier(?:\s+panel)?))?|uidai|myaadhaar|aadhaar|digilocker|irctc|gst(?:\s+portal)?|income\s*tax|parivahan|github|wikipedia)\s*(?:kholo|khol\s+do|open\s*(?:karo|kar\s+do)?)?[.!?\s]*$/i,
+      );
+    const hasPortalName =
+      /\b(?:google(?:\s+(?:sheets|docs|drive))?|youtube|amazon|flipkart|meesho|seller|uidai|myaadhaar|aadhaar|aadhar|digilocker|irctc|gst|income\s*tax|efiling|itr|parivahan|github|wikipedia)\b/i.test(
+        lower,
+      );
     const isLocalUiTarget = /\b(?:tab|button|link|menu|drawer|modal|popup)\b/i.test(lower);
     if (
       openWebsiteMatch?.[1] &&
@@ -3710,7 +4009,10 @@ function parseActionIntent(text) {
     }
     const dlClean = stripped
       .replace(/^(?:download|save|export)\s+(?:the\s+|this\s+)?/i, "")
-      .replace(/\s+(?:download|save|export)\s*(?:karo|kro|(?:kar|kr)\s*do|karein|file)?[.!?\s]*$/i, "")
+      .replace(
+        /\s+(?:download|save|export)\s*(?:karo|kro|(?:kar|kr)\s*do|karein|file)?[.!?\s]*$/i,
+        "",
+      )
       .replace(/\s+(?:file|pdf|document|doc|report|label|invoice)$/i, (m) => m)
       .trim();
     return {
@@ -3720,7 +4022,11 @@ function parseActionIntent(text) {
   }
 
   // 3c. IN-PAGE EXPLICIT SEARCH ("122 search karo is page par", "is page par pension search kr do")
-  if (!/\b(?:fill|type|likh|likho|daal|daalo|bhar|bharo|enter|click|press|dabao|open|kholo)\b/i.test(lower)) {
+  if (
+    !/\b(?:fill|type|likh|likho|daal|daalo|bhar|bharo|enter|click|press|dabao|open|kholo)\b/i.test(
+      lower,
+    )
+  ) {
     const inPageSearchMatch =
       lower.match(
         /^(?:is\s+page\s+(?:par|pe|pr|mein|me|main)|page\s+(?:par|pe|pr|mein|me|main)|yahan|yaha|yha|on\s+this\s+page|in\s+this\s+page)\s+(.+?)\s+(?:search|find|locate|dhoondho|dhundo)\s*(?:karo|kro|(?:kar|kr)\s*do|karein)?[.!?\s]*$/i,
@@ -3732,9 +4038,7 @@ function parseActionIntent(text) {
         /^(?:search|find|locate)\s+["']?(.+?)["']?\s+(?:on\s+this\s+page|in\s+this\s+page|here|is\s+page\s+(?:par|pe|pr|mein|me))[.!?\s]*$/i,
       );
     if (inPageSearchMatch?.[1]) {
-      const cleanQ = inPageSearchMatch[1]
-        .replace(/^(?:the|a|an|ye|yeh)\s+/i, "")
-        .trim();
+      const cleanQ = inPageSearchMatch[1].replace(/^(?:the|a|an|ye|yeh)\s+/i, "").trim();
       if (cleanQ) {
         return { type: "FIND", target: cleanQ, inPageOnly: true };
       }
@@ -3762,17 +4066,17 @@ function parseActionIntent(text) {
   const isDocBackedFill =
     /(?:aadhaar|aadhar|pan\s+card|pan\s+details|uploaded\s+(?:id|document|doc|file|pdf|image)|document\s+(?:se|details|info)|id\s+(?:se|details))/i.test(
       lower,
-    ) && /\b(?:fill|type|likh|likho|daal|daalo|bhar|bharo|enter|(?:kar|kr)\s*do|(?:kar|kr)o)\b/i.test(lower);
+    ) &&
+    /\b(?:fill|type|likh|likho|daal|daalo|bhar|bharo|enter|(?:kar|kr)\s*do|(?:kar|kr)o)\b/i.test(
+      lower,
+    );
 
   const isFieldFromDoc =
     /(?:is\s+field\s+(?:mein|me|main)|isko|this\s+field)\s+.*?(?:aadhaar|aadhar|pan|dob|address|pincode|name)\s*(?:number|no)?\s*(?:daal|daalo|fill|likho|enter)/i.test(
       lower,
     );
 
-  if (
-    (isDocBackedFill || isFieldFromDoc) &&
-    !/\b(?:open|click|press|dabao|kholo)\b/i.test(lower)
-  ) {
+  if ((isDocBackedFill || isFieldFromDoc) && !/\b(?:open|click|press|dabao|kholo)\b/i.test(lower)) {
     const reqKeys = extractRequestedDocFieldKeys(lower);
     return {
       type: "FORM_FILL",
@@ -3798,7 +4102,10 @@ function parseActionIntent(text) {
     const noSubmitPrompt =
       Boolean(fillDetails.hasExplicitNoSubmit) ||
       (fillDetails.explicitPairs.length === 1 &&
-        targets.every((t) => t === "__current__" || /\b(?:search|chat|msg|message|comment|prompt|query)\b/.test(t)));
+        targets.every(
+          (t) =>
+            t === "__current__" || /\b(?:search|chat|msg|message|comment|prompt|query)\b/.test(t),
+        ));
     return {
       type: "FORM_FILL",
       fields: fillDetails.fields,
@@ -3823,7 +4130,11 @@ function parseActionIntent(text) {
     );
     if (fieldMention?.[1]) {
       const candT = fieldMention[1].trim();
-      if (/^(?:is|ye|yeh|isko|isme|is\s*box|this|this\s*box|this\s*field|yahan|yaha|yha|ye\s+wala)$/i.test(candT)) {
+      if (
+        /^(?:is|ye|yeh|isko|isme|is\s*box|this|this\s*box|this\s*field|yahan|yaha|yha|ye\s+wala)$/i.test(
+          candT,
+        )
+      ) {
         targetField = ctx?.session?.lastTargetField || "__CURRENT__";
       } else {
         targetField = normalizeFillTarget(candT) || "__CURRENT__";
@@ -3836,7 +4147,9 @@ function parseActionIntent(text) {
       type: "FILL_NEED_VALUE",
       targetField,
       verb,
-      noSubmitPrompt: /\b(?:search|chat|msg|message|comment|prompt|query)\b/.test(String(targetField)),
+      noSubmitPrompt: /\b(?:search|chat|msg|message|comment|prompt|query)\b/.test(
+        String(targetField),
+      ),
     };
   }
 
@@ -3873,7 +4186,10 @@ function parseActionIntent(text) {
         .map((s) =>
           s
             .replace(/^(?:pehle|first|aur|and|next)\s+/i, "")
-            .replace(/\s+(?:fill\s+(?:(?:kar|kr)\s*do|(?:kar|kr)o)|fill|type\s+(?:karo|kro)|bharo|bhar\s*do|likho|daalo)[.!?\s]*$/i, "")
+            .replace(
+              /\s+(?:fill\s+(?:(?:kar|kr)\s*do|(?:kar|kr)o)|fill|type\s+(?:karo|kro)|bharo|bhar\s*do|likho|daalo)[.!?\s]*$/i,
+              "",
+            )
             .trim(),
         )
         .filter((s) => s.length > 0);
@@ -3889,7 +4205,9 @@ function parseActionIntent(text) {
     isWholeFormTrigger &&
     !fillDetails.explicitPairs &&
     !/\b(?:saved|profile|document|doc|aadhaar|aadhar|pan)\b/i.test(lower) &&
-    /\busing\s+(?:the\s+)?(?:info|information|details|data)\s+i\s+(?:provide|give|share|send)\b/i.test(lower)
+    /\busing\s+(?:the\s+)?(?:info|information|details|data)\s+i\s+(?:provide|give|share|send)\b/i.test(
+      lower,
+    )
   ) {
     return { type: "FORM_INSPECT" };
   }
@@ -3908,9 +4226,17 @@ function parseActionIntent(text) {
 
   // 7b. PARTIAL CONVERSATIONAL FIELD / CUSTOM DROPDOWN UPDATE ("change the product color to black", "product color ko black kar do")
   const partialChangeMatch =
-    normStripped.match(/^(?:change|update|set|modify)\s+(?:the\s+)?(.+?)\s+(?:to|as)\s+["']?(.+?)["']?[.!?\s]*$/i) ||
-    normStripped.match(/^(.+?)\s+(?:ko|ka)\s+["']?(.+?)["']?\s+(?:badal|change|update|set)\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i);
-  if (partialChangeMatch?.[1] && partialChangeMatch?.[2] && !/\b(?:tab|page|buddy|language|mode)\b/i.test(partialChangeMatch[1])) {
+    normStripped.match(
+      /^(?:change|update|set|modify)\s+(?:the\s+)?(.+?)\s+(?:to|as)\s+["']?(.+?)["']?[.!?\s]*$/i,
+    ) ||
+    normStripped.match(
+      /^(.+?)\s+(?:ko|ka)\s+["']?(.+?)["']?\s+(?:badal|change|update|set)\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i,
+    );
+  if (
+    partialChangeMatch?.[1] &&
+    partialChangeMatch?.[2] &&
+    !/\b(?:tab|page|buddy|language|mode)\b/i.test(partialChangeMatch[1])
+  ) {
     const pf = normalizeFillTarget(partialChangeMatch[1]) || partialChangeMatch[1].trim();
     const pv = partialChangeMatch[2].trim();
     if (pf && pv && !isNonValuePlaceholder(pv)) {
@@ -3920,8 +4246,12 @@ function parseActionIntent(text) {
 
   // 8. SELECT / DROPDOWN COMMAND
   const selectMatch =
-    lower.match(/^(?:select|choose|chuno)\s+["']?(.+?)["']?\s+(?:in|from|mein|me|main)\s+(?:the\s+)?(.+?)(?:\s+dropdown|\s+select)?[.!?\s]*$/i) ||
-    lower.match(/^(.+?)\s+(?:dropdown\s+)?(?:mein|me|main|par|pe|pr)\s+["']?(.+?)["']?\s+(?:select|choose|chuno)\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i);
+    lower.match(
+      /^(?:select|choose|chuno)\s+["']?(.+?)["']?\s+(?:in|from|mein|me|main)\s+(?:the\s+)?(.+?)(?:\s+dropdown|\s+select)?[.!?\s]*$/i,
+    ) ||
+    lower.match(
+      /^(.+?)\s+(?:dropdown\s+)?(?:mein|me|main|par|pe|pr)\s+["']?(.+?)["']?\s+(?:select|choose|chuno)\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i,
+    );
   if (selectMatch) {
     const isFirstPattern = /^(?:select|choose|chuno)\b/i.test(lower);
     const val = (isFirstPattern ? selectMatch[1] : selectMatch[2]).trim();
@@ -3930,7 +4260,9 @@ function parseActionIntent(text) {
       return { type: "SELECT", targetField, value: val };
     }
   }
-  const simpleSelectMatch = lower.match(/^(.+?)\s+(?:select\s+(?:karo|kro|(?:kar|kr)\s*do)|choose\s+(?:karo|kro)|chuno)[.!?\s]*$/i);
+  const simpleSelectMatch = lower.match(
+    /^(.+?)\s+(?:select\s+(?:karo|kro|(?:kar|kr)\s*do)|choose\s+(?:karo|kro)|chuno)[.!?\s]*$/i,
+  );
   if (simpleSelectMatch && !/\bradio\b/i.test(lower)) {
     const words = simpleSelectMatch[1].trim().split(/\s+/);
     if (words.length >= 2) {
@@ -3942,7 +4274,9 @@ function parseActionIntent(text) {
     }
     return { type: "SELECT", targetField: "", value: simpleSelectMatch[1].trim() };
   }
-  const leadingSelectMatch = lower.match(/^(?:select|choose|chuno)\s+(?:the\s+)?["']?(.+?)["']?(?:\s+option)?[.!?\s]*$/i);
+  const leadingSelectMatch = lower.match(
+    /^(?:select|choose|chuno)\s+(?:the\s+)?["']?(.+?)["']?(?:\s+option)?[.!?\s]*$/i,
+  );
   if (leadingSelectMatch && !/\bradio\b/i.test(lower)) {
     const optVal = leadingSelectMatch[1].trim();
     if (optVal) {
@@ -3965,14 +4299,16 @@ function parseActionIntent(text) {
 
   // 9. CHECKBOX / RADIO COMMAND
   const uncheckMatch =
-    lower.match(/^(.+?)\s+(?:checkbox\s+)?(?:uncheck|untick)\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i) ||
-    lower.match(/^(?:uncheck|untick)\s+(?:the\s+)?(.+?)(?:\s+checkbox)?[.!?\s]*$/i);
+    lower.match(
+      /^(.+?)\s+(?:checkbox\s+)?(?:uncheck|untick)\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i,
+    ) || lower.match(/^(?:uncheck|untick)\s+(?:the\s+)?(.+?)(?:\s+checkbox)?[.!?\s]*$/i);
   if (uncheckMatch) {
     return { type: "CHECK", target: normalizeFillTarget(uncheckMatch[1]), checked: false };
   }
   const checkMatch =
-    lower.match(/^(.+?)\s+(?:checkbox\s+)?(?:check|tick)\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i) ||
-    lower.match(/^(?:check|tick)\s+(?:the\s+)?(.+?)(?:\s+checkbox)?[.!?\s]*$/i);
+    lower.match(
+      /^(.+?)\s+(?:checkbox\s+)?(?:check|tick)\s*(?:karo|kro|(?:kar|kr)\s*do)?[.!?\s]*$/i,
+    ) || lower.match(/^(?:check|tick)\s+(?:the\s+)?(.+?)(?:\s+checkbox)?[.!?\s]*$/i);
   if (checkMatch) {
     return { type: "CHECK", target: normalizeFillTarget(checkMatch[1]), checked: true };
   }
@@ -3995,19 +4331,28 @@ function parseActionIntent(text) {
         : pointLeadingMatch[1];
     const cleanNoPunct = raw.replace(/[.!?\s]+$/, "").trim();
     const withoutPrefix = cleanNoPunct
-      .replace(/^(?:(?:ab|now|phir|fir|then|yha|yaha|yahan)\s+)?(?:is\s+page\s+(?:par|pe|pr|se)|page\s+(?:par|pe|pr|se)|ye|yeh|wo|woh|is|this|the|a|an|kripya|please)\s+/i, "")
+      .replace(
+        /^(?:(?:ab|now|phir|fir|then|yha|yaha|yahan)\s+)?(?:is\s+page\s+(?:par|pe|pr|se)|page\s+(?:par|pe|pr|se)|ye|yeh|wo|woh|is|this|the|a|an|kripya|please)\s+/i,
+        "",
+      )
       .replace(/^(?:ab|now|phir|fir)\s+/i, "")
       .trim();
     const clean = /^search\s+(?:box|field|input)$/i.test(withoutPrefix)
       ? withoutPrefix
-      : withoutPrefix.replace(/\s+(?:button|tab|link|icon|menu|bar|option|field|input|box)$/i, "").trim();
+      : withoutPrefix
+          .replace(/\s+(?:button|tab|link|icon|menu|bar|option|field|input|box)$/i, "")
+          .trim();
     if (clean.length > 0) {
       return { type: "POINT", target: clean };
     }
   }
 
   // 10b. STANDALONE SUBMIT COMMAND ("Submit karo", "Submit kr do", "Form submit karo")
-  if (/^(?:(?:ab|now|phir|fir)\s+)?(?:(?:is|the|this)\s+)?(?:form\s+)?submit\s*(?:karo|kro|(?:kar|kr)\s*do|kijiye|kar\s+dein)?[.!?\s]*$/i.test(lower)) {
+  if (
+    /^(?:(?:ab|now|phir|fir)\s+)?(?:(?:is|the|this)\s+)?(?:form\s+)?submit\s*(?:karo|kro|(?:kar|kr)\s*do|kijiye|kar\s+dein)?[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
     return { type: "CLICK", target: "submit", isConsequential: true };
   }
 
@@ -4044,7 +4389,10 @@ function parseActionIntent(text) {
       return { type: "CLICK", target: "__CURRENT__", isConsequential: false };
     }
     let clean = raw
-      .replace(/^(?:is\s+page\s+(?:par|pe|pr|se)|page\s+(?:par|pe|pr|se)|ye|yeh|wo|woh|the|a|an|kripya|please|jaldi)\s+/i, "")
+      .replace(
+        /^(?:is\s+page\s+(?:par|pe|pr|se)|page\s+(?:par|pe|pr|se)|ye|yeh|wo|woh|the|a|an|kripya|please|jaldi)\s+/i,
+        "",
+      )
       .replace(/\s+(?:button|btn|tab|link|icon|menu|bar|option|radio|checkbox)$/i, "")
       .trim();
 
@@ -4061,9 +4409,7 @@ function parseActionIntent(text) {
   const searchSubmitTrailing = normStripped.match(
     /^(.+?)\s+search\s+(?:karo|kar\s+do|karein|do)[.!?\s]*$/i,
   );
-  const searchSubmitLeading = normStripped.match(
-    /^search\s+["']?([^"'\n]+?)["']?[.!?\s]*$/i,
-  );
+  const searchSubmitLeading = normStripped.match(/^search\s+["']?([^"'\n]+?)["']?[.!?\s]*$/i);
   if (
     (searchSubmitTrailing || searchSubmitLeading) &&
     !/\b(?:button|btn|tab|link|icon|menu|bar|field|input|box|website|site|portal|form|kahan|where|how to|kaise|explain)\b/i.test(
@@ -4092,9 +4438,14 @@ function parseActionIntent(text) {
     !lower.includes("explain") &&
     !lower.includes("how to")
   ) {
-    let raw = (findTrailingMatch ? findTrailingMatch[1] : findLeadingMatch[1]).replace(/[.!?\s]+$/, "").trim();
+    let raw = (findTrailingMatch ? findTrailingMatch[1] : findLeadingMatch[1])
+      .replace(/[.!?\s]+$/, "")
+      .trim();
     let withoutPrefix = raw
-      .replace(/^(?:(?:ab|now|phir|fir|yha|yaha|yahan)\s+)?(?:is\s+page\s+(?:par|pe|pr|se)|page\s+(?:par|pe|pr|se)|ye|yeh|wo|woh|the|a|an|kripya|please)\s+/i, "")
+      .replace(
+        /^(?:(?:ab|now|phir|fir|yha|yaha|yahan)\s+)?(?:is\s+page\s+(?:par|pe|pr|se)|page\s+(?:par|pe|pr|se)|ye|yeh|wo|woh|the|a|an|kripya|please)\s+/i,
+        "",
+      )
       .replace(/^(?:ab|now|phir|fir)\s+/i, "")
       .trim();
     let clean = /^search\s+(?:box|field|input)$/i.test(withoutPrefix)
@@ -4122,7 +4473,11 @@ function resolveWebsiteDestination(query, forceSearchOnly = false) {
       return { url: "https://seller.flipkart.com", isSearch: false, label: "Flipkart Seller Hub" };
     }
     if (/\bamazon\b/i.test(q) && /\b(?:seller|dashboard|central|merchant)\b/i.test(q)) {
-      return { url: "https://sellercentral.amazon.in", isSearch: false, label: "Amazon Seller Central" };
+      return {
+        url: "https://sellercentral.amazon.in",
+        isSearch: false,
+        label: "Amazon Seller Central",
+      };
     }
     if (/^amazon$/i.test(lower)) {
       return {
@@ -4130,7 +4485,10 @@ function resolveWebsiteDestination(query, forceSearchOnly = false) {
         label: "Amazon",
         options: [
           { label: "Amazon India Shopping (amazon.in)", url: "https://www.amazon.in" },
-          { label: "Amazon Seller Central (sellercentral.amazon.in)", url: "https://sellercentral.amazon.in" },
+          {
+            label: "Amazon Seller Central (sellercentral.amazon.in)",
+            url: "https://sellercentral.amazon.in",
+          },
         ],
       };
     }
@@ -4140,7 +4498,10 @@ function resolveWebsiteDestination(query, forceSearchOnly = false) {
         label: "Flipkart",
         options: [
           { label: "Flipkart Shopping (flipkart.com)", url: "https://www.flipkart.com" },
-          { label: "Flipkart Seller Hub (seller.flipkart.com)", url: "https://seller.flipkart.com" },
+          {
+            label: "Flipkart Seller Hub (seller.flipkart.com)",
+            url: "https://seller.flipkart.com",
+          },
         ],
       };
     }
@@ -4230,7 +4591,9 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     if ($("confirmCard")) $("confirmCard").hidden = true;
     appendHistory("user", trimmed);
     $("promptInput").value = "";
-    const cancelMsg = isHindi ? "Theek hai, pending action cancel kar diya." : "Okay, cancelled the pending action.";
+    const cancelMsg = isHindi
+      ? "Theek hai, pending action cancel kar diya."
+      : "Okay, cancelled the pending action.";
     setRigEmotion("idle", "Cancelled");
     $("statusText").textContent = cancelMsg;
     appendHistory("buddy", cancelMsg);
@@ -4251,12 +4614,17 @@ async function executeNaturalBrowserAction(intent, trimmed) {
   }
 
   if (intent.type === "SELECT_CONTEXT_ITEM" && pendingDisambiguation?.candidates?.length) {
-    const chosen = pendingDisambiguation.candidates[(intent.index || 1) - 1] || pendingDisambiguation.candidates[0];
+    const chosen =
+      pendingDisambiguation.candidates[(intent.index || 1) - 1] ||
+      pendingDisambiguation.candidates[0];
     const disAction = pendingDisambiguation.action || "click";
     const disTarget = pendingDisambiguation.target;
     pendingDisambiguation = null;
     if (disAction === "open_url" && chosen.url) {
-      return executeNaturalBrowserAction({ type: "NAVIGATE", url: chosen.url, label: chosen.text }, trimmed);
+      return executeNaturalBrowserAction(
+        { type: "NAVIGATE", url: chosen.url, label: chosen.text },
+        trimmed,
+      );
     }
     return executeNaturalBrowserAction(
       {
@@ -4325,7 +4693,9 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     const targetEntry =
       (intent.oldValue &&
         activeFormSession?.filledFields?.find((f) =>
-          String(f.value || "").toLowerCase().includes(intent.oldValue.toLowerCase()),
+          String(f.value || "")
+            .toLowerCase()
+            .includes(intent.oldValue.toLowerCase()),
         )) ||
       activeFormSession?.lastFilled ||
       (sessionTaskContext.lastTargetSelector || sessionTaskContext.lastTargetField
@@ -4553,7 +4923,11 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     if (res?.ok) {
       setRigEmotion("happy", "Opened!");
       lastHighlightSelector = null;
-      recordTaskContext({ actionType: intent.type.toLowerCase(), targetField: null, targetSelector: null });
+      recordTaskContext({
+        actionType: intent.type.toLowerCase(),
+        targetField: null,
+        targetSelector: null,
+      });
       const msg =
         intent.type === "WEB_SEARCH"
           ? isHindi
@@ -4617,7 +4991,11 @@ async function executeNaturalBrowserAction(intent, trimmed) {
         fallbackSelector: lastHighlightSelector || undefined,
       },
     });
-    if (clickDlRes?.ambiguous && Array.isArray(clickDlRes.candidates) && clickDlRes.candidates.length > 1) {
+    if (
+      clickDlRes?.ambiguous &&
+      Array.isArray(clickDlRes.candidates) &&
+      clickDlRes.candidates.length > 1
+    ) {
       pendingDisambiguation = {
         action: "click",
         target: intent.target || "download",
@@ -4658,7 +5036,9 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       setRigEmotion("error", "Not found");
       const failMsg =
         clickDlRes?.message ||
-        (isHindi ? "Page par matching download button ya link nahi mila." : "Could not find a matching download button or link on this page.");
+        (isHindi
+          ? "Page par matching download button ya link nahi mila."
+          : "Could not find a matching download button or link on this page.");
       recordSessionAction(failMsg, "failed");
       $("statusText").textContent = failMsg;
       appendHistory("buddy", `⚠️ ${failMsg}`);
@@ -4670,7 +5050,8 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     appendHistory("user", trimmed);
     $("promptInput").value = "";
     setRigEmotion("working", "Retrying…");
-    $("statusText").textContent = `Retrying "${intent.attempt.target || "click"}" with alternate method…`;
+    $("statusText").textContent =
+      `Retrying "${intent.attempt.target || "click"}" with alternate method…`;
     const retryRes = await sendRuntimeMessage({
       type: "EXECUTE_ACTION",
       action: intent.attempt.action || "click",
@@ -4692,7 +5073,8 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       speakResponse(msg, "success");
     } else {
       setRigEmotion("error", "Blocked");
-      const failMsg = retryRes?.message || "Alternate click method also could not complete this action.";
+      const failMsg =
+        retryRes?.message || "Alternate click method also could not complete this action.";
       recordSessionAction(failMsg, "failed");
       $("statusText").textContent = failMsg;
       appendHistory("buddy", `⚠️ ${failMsg}`);
@@ -4807,7 +5189,11 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     parts.push(`📄 **${snap.title || "Current Page"}** (${snap.url || ""})`);
     if (snap.headings?.length) {
       parts.push(
-        `• Headings (${snap.headings.length}): ${snap.headings.slice(0, 6).map((h) => h.name || h.text).filter(Boolean).join(" | ")}`,
+        `• Headings (${snap.headings.length}): ${snap.headings
+          .slice(0, 6)
+          .map((h) => h.name || h.text)
+          .filter(Boolean)
+          .join(" | ")}`,
       );
     }
     if (snap.forms?.length) {
@@ -4826,17 +5212,26 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       parts.push(`• Buttons & Links (${snap.controls.length}): ${btnItems.join(", ")}`);
     }
     if (snap.scrollableContainers?.length) {
-      const boxNames = snap.scrollableContainers.map(
-        (sc) => sc.ariaLabel || sc.selector || sc.tag,
+      const boxNames = snap.scrollableContainers.map((sc) => sc.ariaLabel || sc.selector || sc.tag);
+      parts.push(
+        `• Scrollable Areas (${snap.scrollableContainers.length}): ${boxNames.join(", ")}`,
       );
-      parts.push(`• Scrollable Areas (${snap.scrollableContainers.length}): ${boxNames.join(", ")}`);
     }
     if (snap.alerts?.length) {
-      parts.push(`• Page Alerts (${snap.alerts.length}): ${snap.alerts.slice(0, 3).map((a) => a.errorMessage || a.name).filter(Boolean).join(" | ")}`);
+      parts.push(
+        `• Page Alerts (${snap.alerts.length}): ${snap.alerts
+          .slice(0, 3)
+          .map((a) => a.errorMessage || a.name)
+          .filter(Boolean)
+          .join(" | ")}`,
+      );
     }
     const summaryMsg = parts.join("\n");
     setRigEmotion("happy", "Ready");
-    recordSessionAction(`Listed page inventory (${snap.forms?.length || 0} fields, ${snap.controls?.length || 0} controls)`, "confirmed");
+    recordSessionAction(
+      `Listed page inventory (${snap.forms?.length || 0} fields, ${snap.controls?.length || 0} controls)`,
+      "confirmed",
+    );
     $("statusText").textContent = "Listed visible page structure.";
     appendHistory("buddy", summaryMsg);
     speakResponse(
@@ -4910,7 +5305,9 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     );
 
     if (realAlerts.length > 0) {
-      lines.push(isHindi ? "\n• **Website Alerts / Banners:**" : "\n• **Website Alerts / Banners:**");
+      lines.push(
+        isHindi ? "\n• **Website Alerts / Banners:**" : "\n• **Website Alerts / Banners:**",
+      );
       for (const a of realAlerts.slice(0, 5)) {
         const msg = String(a.errorMessage || a.name).trim();
         lines.push(`  - "${msg}"`);
@@ -4921,7 +5318,9 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       lines.push(isHindi ? "\n• **Invalid Form Fields:**" : "\n• **Invalid Form Fields:**");
       for (const f of invalidForms.slice(0, 8)) {
         const label = f.name || f.placeholder || f.role || "field";
-        const reason = f.errorMessage || (isHindi ? "Required ya invalid format" : "Required or failed validation");
+        const reason =
+          f.errorMessage ||
+          (isHindi ? "Required ya invalid format" : "Required or failed validation");
         lines.push(`  - **${label}**: ${reason}`);
       }
       const firstInvalid = invalidForms[0];
@@ -4934,14 +5333,18 @@ async function executeNaturalBrowserAction(intent, trimmed) {
 
     lines.push(
       isHindi
-        ? "\n💡 **Kaise Fix Karein:** Upar bataye gaye field(s) mein sahi details daalein (ya mujhe bolein jaise: `\"email mein name@example.com fill kar do\"`) aur alert message check karke dobara submit karein."
+        ? '\n💡 **Kaise Fix Karein:** Upar bataye gaye field(s) mein sahi details daalein (ya mujhe bolein jaise: `"email mein name@example.com fill kar do"`) aur alert message check karke dobara submit karein.'
         : "\n💡 **How to Fix:** Update the highlighted/listed field(s) with valid input (or tell me e.g. `fill name@example.com in email`), then review before submitting.",
     );
 
     const reportMsg = lines.join("\n");
     setRigEmotion("concerned", "Explained");
-    $("statusText").textContent = `Found ${realAlerts.length} alert(s) and ${invalidForms.length} invalid field(s).`;
-    recordSessionAction(`Explained ${realAlerts.length} page alert(s) and ${invalidForms.length} invalid field(s)`, "confirmed");
+    $("statusText").textContent =
+      `Found ${realAlerts.length} alert(s) and ${invalidForms.length} invalid field(s).`;
+    recordSessionAction(
+      `Explained ${realAlerts.length} page alert(s) and ${invalidForms.length} invalid field(s)`,
+      "confirmed",
+    );
     appendHistory("buddy", reportMsg);
     speakResponse(reportMsg, "concerned");
     return true;
@@ -5087,7 +5490,12 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       }
       const res = await sendRuntimeMessage({ type: "SWITCH_TAB", tabId: matched.id });
       setRigEmotion(res?.ok ? "happy" : "error", res?.ok ? "Switched" : "Failed");
-      appendHistory("buddy", res?.ok ? `🗂️ Switched to tab "${matched.title}".` : `⚠️ ${res?.message || "Switch failed."}`);
+      appendHistory(
+        "buddy",
+        res?.ok
+          ? `🗂️ Switched to tab "${matched.title}".`
+          : `⚠️ ${res?.message || "Switch failed."}`,
+      );
       return true;
     }
   }
@@ -5134,10 +5542,14 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     if (!snapARes?.ok || !snapARes.snapshot || !snapBRes?.ok || !snapBRes.snapshot) {
       const failedPages = [];
       if (!snapARes?.ok || !snapARes?.snapshot) {
-        failedPages.push(`Tab 1 ("${tabA.title || tabA.url}"): ${snapARes?.message || "unreadable"}`);
+        failedPages.push(
+          `Tab 1 ("${tabA.title || tabA.url}"): ${snapARes?.message || "unreadable"}`,
+        );
       }
       if (!snapBRes?.ok || !snapBRes?.snapshot) {
-        failedPages.push(`Tab 2 ("${tabB.title || tabB.url}"): ${snapBRes?.message || "unreadable"}`);
+        failedPages.push(
+          `Tab 2 ("${tabB.title || tabB.url}"): ${snapBRes?.message || "unreadable"}`,
+        );
       }
       setRigEmotion("error", "Read Failed");
       const errMsg = isHindi
@@ -5151,13 +5563,23 @@ async function executeNaturalBrowserAction(intent, trimmed) {
 
     const snapA = snapARes.snapshot;
     const snapB = snapBRes.snapshot;
-    const hA = new Set((snapA.headings || []).map((h) => String(h.name || h.text || "").trim()).filter(Boolean));
-    const hB = new Set((snapB.headings || []).map((h) => String(h.name || h.text || "").trim()).filter(Boolean));
+    const hA = new Set(
+      (snapA.headings || []).map((h) => String(h.name || h.text || "").trim()).filter(Boolean),
+    );
+    const hB = new Set(
+      (snapB.headings || []).map((h) => String(h.name || h.text || "").trim()).filter(Boolean),
+    );
     const sharedHeadings = [...hA].filter((h) => hB.has(h)).slice(0, 5);
     const onlyA = [...hA].filter((h) => !hB.has(h)).slice(0, 4);
     const onlyB = [...hB].filter((h) => !hA.has(h)).slice(0, 4);
-    const wordsA = String(snapA.text || "").trim().split(/\s+/).filter(Boolean).length;
-    const wordsB = String(snapB.text || "").trim().split(/\s+/).filter(Boolean).length;
+    const wordsA = String(snapA.text || "")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean).length;
+    const wordsB = String(snapB.text || "")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean).length;
     const formsA = (snapA.forms || []).length;
     const formsB = (snapB.forms || []).length;
     const controlsA = (snapA.controls || []).length;
@@ -5180,8 +5602,12 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       .join("\n");
 
     setRigEmotion("happy", "Compared");
-    $("statusText").textContent = `Compared "${snapA.title || tabA.title}" vs "${snapB.title || tabB.title}".`;
-    recordSessionAction(`Compared 2 pages: ${snapA.url || tabA.url} vs ${snapB.url || tabB.url}`, "confirmed");
+    $("statusText").textContent =
+      `Compared "${snapA.title || tabA.title}" vs "${snapB.title || tabB.title}".`;
+    recordSessionAction(
+      `Compared 2 pages: ${snapA.url || tabA.url} vs ${snapB.url || tabB.url}`,
+      "confirmed",
+    );
     appendHistory("buddy", comparisonReport);
     speakResponse(
       isHindi
@@ -5214,7 +5640,14 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     return true;
   }
 
-  if (intent.type === "HOVER" || intent.type === "DOUBLE_CLICK" || intent.type === "RIGHT_CLICK" || intent.type === "FOCUS" || intent.type === "CLEAR_FIELD" || intent.type === "DRAG_AND_DROP") {
+  if (
+    intent.type === "HOVER" ||
+    intent.type === "DOUBLE_CLICK" ||
+    intent.type === "RIGHT_CLICK" ||
+    intent.type === "FOCUS" ||
+    intent.type === "CLEAR_FIELD" ||
+    intent.type === "DRAG_AND_DROP"
+  ) {
     appendHistory("user", trimmed);
     $("promptInput").value = "";
     const actMap = {
@@ -5233,7 +5666,11 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       const snapRes = await sendRuntimeMessage({ type: "GET_PAGE_SNAPSHOT" });
       const pool = [...(snapRes?.snapshot?.controls || []), ...(snapRes?.snapshot?.forms || [])];
       const findSel = (q) =>
-        pool.find((e) => `${e.name || ""} ${e.text || ""} ${e.placeholder || ""}`.toLowerCase().includes(q.toLowerCase()))?.selector;
+        pool.find((e) =>
+          `${e.name || ""} ${e.text || ""} ${e.placeholder || ""}`
+            .toLowerCase()
+            .includes(q.toLowerCase()),
+        )?.selector;
       dragSourceSel = findSel(intent.source || "") || intent.source;
       dragTargetSel = findSel(intent.target || "") || intent.target;
     }
@@ -5254,7 +5691,12 @@ async function executeNaturalBrowserAction(intent, trimmed) {
           actionType: actionName,
           targetField: intent.target || res.text || null,
           targetSelector: res.selector,
-          targetRef: { label: intent.target || res.text || "element", selector: res.selector, actionType: actionName, capturedAt: Date.now() },
+          targetRef: {
+            label: intent.target || res.text || "element",
+            selector: res.selector,
+            actionType: actionName,
+            capturedAt: Date.now(),
+          },
           undoRecord: res.undoRecord || undefined,
         });
       }
@@ -5274,7 +5716,11 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     return true;
   }
 
-  if (intent.type === "SCROLL_UNTIL_TEXT" || intent.type === "INFINITE_SCROLL" || intent.type === "PAGINATE") {
+  if (
+    intent.type === "SCROLL_UNTIL_TEXT" ||
+    intent.type === "INFINITE_SCROLL" ||
+    intent.type === "PAGINATE"
+  ) {
     appendHistory("user", trimmed);
     $("promptInput").value = "";
     const actionMap = {
@@ -5322,10 +5768,16 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     );
     if (products.length === 0) {
       setRigEmotion("confused", "Not found");
-      appendHistory("buddy", `⚠️ Could not find selectable ${intent.targetKind || "item"} cards on this page.`);
+      appendHistory(
+        "buddy",
+        `⚠️ Could not find selectable ${intent.targetKind || "item"} cards on this page.`,
+      );
       return true;
     }
-    const idx = intent.index === -1 ? products.length - 1 : Math.min(products.length - 1, Math.max(0, intent.index - 1));
+    const idx =
+      intent.index === -1
+        ? products.length - 1
+        : Math.min(products.length - 1, Math.max(0, intent.index - 1));
     const chosen = products[idx];
     const res = await sendRuntimeMessage({
       type: "EXECUTE_ACTION",
@@ -5338,7 +5790,12 @@ async function executeNaturalBrowserAction(intent, trimmed) {
         actionType: "ordinal_click",
         targetField: chosen.name || chosen.text,
         targetSelector: chosen.selector,
-        targetRef: { label: chosen.name || chosen.text, selector: chosen.selector, actionType: "click", capturedAt: Date.now() },
+        targetRef: {
+          label: chosen.name || chosen.text,
+          selector: chosen.selector,
+          actionType: "click",
+          capturedAt: Date.now(),
+        },
       });
       setRigEmotion("success", "Opened!");
       const msg = `✅ ${res.message || `Clicked item #${idx + 1}.`}`;
@@ -5479,7 +5936,10 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       const msg = isHindi
         ? `✅ "${intent.target}" ko ${intent.checked ? "check" : "uncheck"} kar diya hai.`
         : `✅ ${res.message}`;
-      recordSessionAction(`${intent.checked ? "Checked" : "Unchecked"} "${intent.target}"`, "confirmed");
+      recordSessionAction(
+        `${intent.checked ? "Checked" : "Unchecked"} "${intent.target}"`,
+        "confirmed",
+      );
       $("statusText").textContent = msg;
       appendHistory("buddy", msg);
       speakResponse(msg, "happy");
@@ -5545,22 +6005,32 @@ async function executeNaturalBrowserAction(intent, trimmed) {
 
     const parts = [];
     if (isHindi) {
-      parts.push(`📋 Is page ("${snapRes.snapshot.title || "Current Page"}") par ${forms.length} form fields hain:`);
+      parts.push(
+        `📋 Is page ("${snapRes.snapshot.title || "Current Page"}") par ${forms.length} form fields hain:`,
+      );
       if (reqFields.length) parts.push(`• Required / Empty: ${reqFields.join(", ")}`);
       if (optFields.length) parts.push(`• Other Empty Fields: ${optFields.join(", ")}`);
       if (filledFields.length) parts.push(`• Already Filled: ${filledFields.join(", ")}`);
       if (docMatches.length > 0) {
-        parts.push(`• ✅ Aapke uploaded ${activeUploadedDocument.documentType} se auto-fill ho sakte hain: ${[...new Set(docMatches)].join(", ")}. ("Is page ka form fill kar do" bolein)`);
+        parts.push(
+          `• ✅ Aapke uploaded ${activeUploadedDocument.documentType} se auto-fill ho sakte hain: ${[...new Set(docMatches)].join(", ")}. ("Is page ka form fill kar do" bolein)`,
+        );
       } else if (reqFields.length + optFields.length > 0) {
-        parts.push(`• 💡 Aap apna Aadhaar/PAN/document 📎 Attach kar sakte hain ya chat mein details likh kar fill karwa sakte hain.`);
+        parts.push(
+          `• 💡 Aap apna Aadhaar/PAN/document 📎 Attach kar sakte hain ya chat mein details likh kar fill karwa sakte hain.`,
+        );
       }
     } else {
-      parts.push(`📋 This form requires ${forms.length} field(s) on "${snapRes.snapshot.title || "Current Page"}":`);
+      parts.push(
+        `📋 This form requires ${forms.length} field(s) on "${snapRes.snapshot.title || "Current Page"}":`,
+      );
       if (reqFields.length) parts.push(`• Required / Empty: ${reqFields.join(", ")}`);
       if (optFields.length) parts.push(`• Other Empty Fields: ${optFields.join(", ")}`);
       if (filledFields.length) parts.push(`• Already Filled: ${filledFields.join(", ")}`);
       if (docMatches.length > 0) {
-        parts.push(`• ✅ Ready to auto-fill from uploaded ${activeUploadedDocument.documentType}: ${[...new Set(docMatches)].join(", ")}.`);
+        parts.push(
+          `• ✅ Ready to auto-fill from uploaded ${activeUploadedDocument.documentType}: ${[...new Set(docMatches)].join(", ")}.`,
+        );
       }
     }
     const inspectMsg = parts.join("\n");
@@ -5594,7 +6064,9 @@ async function executeNaturalBrowserAction(intent, trimmed) {
     try {
       const activeT = await queryActiveWebTab();
       const activeUrl = (activeT?.url || "").toLowerCase();
-      const isGovSite = /\.gov(?:\.in)?|uidai|incometax|gst\.gov|parivahan|passportindia/i.test(activeUrl);
+      const isGovSite = /\.gov(?:\.in)?|uidai|incometax|gst\.gov|parivahan|passportindia/i.test(
+        activeUrl,
+      );
       if (isGovSite && /submit|final|apply|file\s+return|confirm|proceed/i.test(intent.target)) {
         needsConfirm = true;
       }
@@ -5665,7 +6137,10 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       setRigEmotion("confused", "Which one?");
       $("statusText").textContent = `Clarification needed for "${intent.target}"`;
       appendHistory("buddy", askMsg);
-      recordSessionAction(`Asked user to pick among ${res.candidates.length} "${intent.target}" controls`, "unconfirmed");
+      recordSessionAction(
+        `Asked user to pick among ${res.candidates.length} "${intent.target}" controls`,
+        "unconfirmed",
+      );
       speakResponse(askMsg, "confused");
       return true;
     }
@@ -5744,7 +6219,10 @@ async function executeNaturalBrowserAction(intent, trimmed) {
 
     // 1. Uploaded document auto-fill ("Aadhaar details fill kar do", "is page ka form fill kar do", "Is field mein Aadhaar number daalo")
     if (intent.useUploadedDocument) {
-      if (!activeUploadedDocument || Object.keys(activeUploadedDocument.fields || {}).length === 0) {
+      if (
+        !activeUploadedDocument ||
+        Object.keys(activeUploadedDocument.fields || {}).length === 0
+      ) {
         setRigEmotion("confused", "Need Doc");
         const askDocMsg = isHindi
           ? "📄 Abhi koi readable document upload nahi hai. Kripya neeche 📎 Attach button se apna Aadhaar, PAN, invoice ya PDF/image upload karein—main kabhi bhi fake details nahi banata."
@@ -5791,7 +6269,11 @@ async function executeNaturalBrowserAction(intent, trimmed) {
         const missingReq = [];
         for (const k of intent.requestedDocKeys) {
           if (docFields[k]) {
-            explicitPairs.push({ target: k, value: docFields[k], overwrite: Boolean(intent.overwrite) });
+            explicitPairs.push({
+              target: k,
+              value: docFields[k],
+              overwrite: Boolean(intent.overwrite),
+            });
           } else {
             missingReq.push(k);
           }
@@ -5827,7 +6309,11 @@ async function executeNaturalBrowserAction(intent, trimmed) {
 
     // 2. User named specific fields (e.g. "Pehle naam fill karo, phir mobile number") without values:
     // Check uploaded document first, then non-sensitive userProfile; otherwise ask cleanly!
-    if (intent.requestedFieldNames && intent.requestedFieldNames.length > 0 && !intent.explicitPairs) {
+    if (
+      intent.requestedFieldNames &&
+      intent.requestedFieldNames.length > 0 &&
+      !intent.explicitPairs
+    ) {
       const userProfile = await getScopedProfile();
       const docFields = activeUploadedDocument?.fields || {};
       const matchedPairs = [];
@@ -5839,7 +6325,9 @@ async function executeNaturalBrowserAction(intent, trimmed) {
           (normF.includes("mobile") || normF.includes("phone") ? docFields.phone : undefined) ||
           (normF.includes("email") ? docFields.email : undefined) ||
           (normF.includes("address") || normF.includes("pata") ? docFields.address : undefined) ||
-          (normF.includes("aadhaar") || normF.includes("aadhar") ? docFields.aadhaarNumber : undefined) ||
+          (normF.includes("aadhaar") || normF.includes("aadhar")
+            ? docFields.aadhaarNumber
+            : undefined) ||
           (normF.includes("pan") ? docFields.panNumber : undefined) ||
           (normF.includes("dob") ? docFields.dob : undefined) ||
           (normF.includes("pin") ? docFields.pincode : undefined);
@@ -5918,7 +6406,10 @@ async function executeNaturalBrowserAction(intent, trimmed) {
           name: f.name || f.id || "",
           type: f.type || f.tag || "text",
         }));
-      const fieldNames = emptyFields.map((f) => f.label).filter(Boolean).slice(0, 8);
+      const fieldNames = emptyFields
+        .map((f) => f.label)
+        .filter(Boolean)
+        .slice(0, 8);
 
       if (emptyFields.length > 0) {
         const firstField = emptyFields[0];
@@ -5995,7 +6486,9 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       appendHistory("buddy", msg);
       $("statusText").textContent = res.message;
       speakResponse(
-        isHindi ? `Data extract karke clipboard mein copy kar diya hai.` : `Extracted data to clipboard.`,
+        isHindi
+          ? `Data extract karke clipboard mein copy kar diya hai.`
+          : `Extracted data to clipboard.`,
         "happy",
       );
     } else {
@@ -6107,7 +6600,10 @@ async function sendQuery(question, intent, options = {}) {
       /^(?:(?:ab|now|phir|fir|then|yahan|yaha|yha|here|isko|this|is\s+(?:par|pe|pr)|us\s+(?:par|pe|pr))\s+)?(?:(?:par|pe|pr|ko)\s+)?(?:click\s*(?:karo|kro|(?:kar|kr)\s*do|kijiye|do)?|press\s*(?:karo|kro|(?:kar|kr)\s*do)|tap\s*(?:karo|kro|(?:kar|kr)\s*do)|dabao|daba\s*do)[.!?\s]*$/i.test(
         normForDisCheck,
       );
-    if (!/^(?:bas\s+)?(?:yahi|ye|yeh)\s*(?:wala|wali|wale)?[.!?\s]*$/i.test(trimmed) && !isUnderspecifiedClick) {
+    if (
+      !/^(?:bas\s+)?(?:yahi|ye|yeh)\s*(?:wala|wali|wale)?[.!?\s]*$/i.test(trimmed) &&
+      !isUnderspecifiedClick
+    ) {
       pendingDisambiguation = null;
     }
   }
@@ -6158,10 +6654,13 @@ async function sendQuery(question, intent, options = {}) {
         : pageToggleEl.classList.contains("active")
       : true;
     const detachPage = !pageVisionActive;
-    const hasActiveTaskState = Boolean(pendingSlot || pendingDisambiguation || activeFormSession?.active);
-    const hasExplicitPageRef = /\b(?:this\s+page|current\s+page|active\s+page|this\s+webpage|webpage|website\s+par|is\s+page|ye\s+page|yeh\s+page|page\s+(?:par|pe|pr|mein|me|kya|explain|summary|summarize|overview|errors?|issues?|alerts?|headings?|links?|buttons?|forms?|tables?)|on\s+this\s+screen|screen\s+(?:par|pe)|visible\s+(?:here|on\s+page)|is\s+form|ye\s+form|this\s+form|(?:1st|2nd|3rd|4th|first|second|third|fourth|last|next|pehl[aei]|doosr[aei]|teesr[aei]|aakhri)\s+(?:field|box|input|textbox|wal[aei])|these\s+products?|this\s+product|ye\s+product|in\s+dono|compare\s+these|these\s+items|is\s+table|this\s+table|duplicate\s+entries|rto\s+orders?|orders?\s+tab|is\s+button|this\s+button|is\s+field|ismein|isme|isko|yahan|yaha|here\s+on|ord-\d+)\b/i.test(
-      trimmed,
+    const hasActiveTaskState = Boolean(
+      pendingSlot || pendingDisambiguation || activeFormSession?.active,
     );
+    const hasExplicitPageRef =
+      /\b(?:this\s+page|current\s+page|active\s+page|this\s+webpage|webpage|website\s+par|is\s+page|ye\s+page|yeh\s+page|page\s+(?:par|pe|pr|mein|me|kya|explain|summary|summarize|overview|errors?|issues?|alerts?|headings?|links?|buttons?|forms?|tables?)|on\s+this\s+screen|screen\s+(?:par|pe)|visible\s+(?:here|on\s+page)|is\s+form|ye\s+form|this\s+form|(?:1st|2nd|3rd|4th|first|second|third|fourth|last|next|pehl[aei]|doosr[aei]|teesr[aei]|aakhri)\s+(?:field|box|input|textbox|wal[aei])|these\s+products?|this\s+product|ye\s+product|in\s+dono|compare\s+these|these\s+items|is\s+table|this\s+table|duplicate\s+entries|rto\s+orders?|orders?\s+tab|is\s+button|this\s+button|is\s+field|ismein|isme|isko|yahan|yaha|here\s+on|ord-\d+)\b/i.test(
+        trimmed,
+      );
     const isActionCmd = isLikelyActionCommand(trimmed);
     const isCreativeGeneralWriting =
       /\b(?:write|draft|compose)\s+(?:a|an|me)?\s*(?:professional\s+)?(?:email|letter|essay|poem|story|post|caption|code|script|sql|function|message|reply|bio)\b/i.test(
@@ -6277,21 +6776,31 @@ async function sendQuery(question, intent, options = {}) {
     }
 
     const modeRec =
-      res.recommendedMode || getLocalModeRecommendation(trimmed, active.slug, active.defaultLanguage);
+      res.recommendedMode ||
+      getLocalModeRecommendation(trimmed, active.slug, active.defaultLanguage);
     if (modeRec) {
       appendModeRecommendationNotice(modeRec);
     }
 
     // If AI returned a clarifying question ("Kya likhna hai? Text bata do."), store pendingSlot only when asking for a field value
-    if (res.actionType === "ask_clarification" || res.needsClarification || res.reply?.needsClarification) {
+    if (
+      res.actionType === "ask_clarification" ||
+      res.needsClarification ||
+      res.reply?.needsClarification
+    ) {
       const wantsFillValue = res.reply?.needs === "value_to_fill" || Boolean(res.targetField);
       if (wantsFillValue) {
         pendingSlot = {
           type: "fill_value",
-          targetField: res.targetField || res.targetText || sessionTaskContext.lastTargetField || "__CURRENT__",
+          targetField:
+            res.targetField ||
+            res.targetText ||
+            sessionTaskContext.lastTargetField ||
+            "__CURRENT__",
           targetSelector: res.targetSelector || res.highlightSelector || undefined,
           noSubmitPrompt: Boolean(
-            res.targetField && /\b(?:search|chat|msg|message|comment|prompt|query)\b/i.test(String(res.targetField)),
+            res.targetField &&
+            /\b(?:search|chat|msg|message|comment|prompt|query)\b/i.test(String(res.targetField)),
           ),
         };
         recordTaskContext({
@@ -6320,7 +6829,14 @@ async function sendQuery(question, intent, options = {}) {
     const consentRequired = requireConsent !== false;
     const readOnlyMode = permissionLevel === "observe" || permissionLevel === "explain";
 
-    if (readOnlyMode && (res.steps?.length || (res.actionType && res.actionType !== "point" && res.actionType !== "inspect" && res.actionType !== "explain_page"))) {
+    if (
+      readOnlyMode &&
+      (res.steps?.length ||
+        (res.actionType &&
+          res.actionType !== "point" &&
+          res.actionType !== "inspect" &&
+          res.actionType !== "explain_page"))
+    ) {
       if (res.highlightSelector || res.targetSelector) {
         lastHighlightSelector = res.highlightSelector || res.targetSelector;
       }
@@ -6369,7 +6885,10 @@ async function sendQuery(question, intent, options = {}) {
     } else if (res.actionType === "download") {
       if (res.targetValue && /^https?:\/\//i.test(String(res.targetValue))) {
         const dlRes = await sendRuntimeMessage({ type: "DOWNLOAD_FILE", url: res.targetValue });
-        recordSessionAction(dlRes?.ok ? `Downloaded ${dlRes.filename || res.targetValue}` : "Download failed", dlRes?.ok ? "confirmed" : "failed");
+        recordSessionAction(
+          dlRes?.ok ? `Downloaded ${dlRes.filename || res.targetValue}` : "Download failed",
+          dlRes?.ok ? "confirmed" : "failed",
+        );
       } else if (res.targetSelector || res.targetText) {
         await sendRuntimeMessage({
           type: "EXECUTE_ACTION",
@@ -6422,7 +6941,10 @@ async function sendQuery(question, intent, options = {}) {
       (res.targetSelector || res.targetText)
     ) {
       const actionLabel = res.targetText || res.targetSelector || "target";
-      if (permissionLevel === "suggest" || (consentRequired && CONSEQUENTIAL_RE.test(actionLabel))) {
+      if (
+        permissionLevel === "suggest" ||
+        (consentRequired && CONSEQUENTIAL_RE.test(actionLabel))
+      ) {
         pendingAction = {
           type: res.actionType === "open_link" ? "open_link" : "click",
           selector: res.targetSelector || undefined,
@@ -6446,7 +6968,11 @@ async function sendQuery(question, intent, options = {}) {
           selector: res.targetSelector || undefined,
           value: res.targetText || undefined,
         });
-        if (clickRes?.ambiguous && Array.isArray(clickRes.candidates) && clickRes.candidates.length > 1) {
+        if (
+          clickRes?.ambiguous &&
+          Array.isArray(clickRes.candidates) &&
+          clickRes.candidates.length > 1
+        ) {
           pendingDisambiguation = {
             action: execActionName,
             target: actionLabel,
@@ -6468,7 +6994,10 @@ async function sendQuery(question, intent, options = {}) {
           speakResponse(askMsg, "confused");
         } else if (clickRes?.ok) {
           const hasErrFb = Boolean(clickRes.hasErrorFeedback);
-          setRigEmotion(hasErrFb ? "concerned" : "happy", hasErrFb ? "Notice" : execActionName === "open_link" ? "Opened!" : "Clicked!");
+          setRigEmotion(
+            hasErrFb ? "concerned" : "happy",
+            hasErrFb ? "Notice" : execActionName === "open_link" ? "Opened!" : "Clicked!",
+          );
           let clickedMsg =
             execActionName === "open_link"
               ? isHindi
@@ -6486,13 +7015,18 @@ async function sendQuery(question, intent, options = {}) {
         } else if (clickRes && !clickRes.ok) {
           if (clickRes.stale) lastHighlightSelector = null;
           setRigEmotion("confused", "Blocked");
-          const failMsg = clickRes.message || `Could not ${execActionName} "${res.targetText || "target"}".`;
+          const failMsg =
+            clickRes.message || `Could not ${execActionName} "${res.targetText || "target"}".`;
           recordSessionAction(failMsg, "failed");
           $("statusText").textContent = failMsg;
           appendHistory("buddy", `⚠️ ${failMsg}`);
         }
       }
-    } else if ((res.actionType === "type" || res.actionType === "fill") && (res.targetValue !== null && res.targetValue !== undefined)) {
+    } else if (
+      (res.actionType === "type" || res.actionType === "fill") &&
+      res.targetValue !== null &&
+      res.targetValue !== undefined
+    ) {
       await startSmartFormFill(null, {
         explicitPairs: [
           {
@@ -6540,7 +7074,11 @@ async function sendQuery(question, intent, options = {}) {
       } else if (res.targetField && res.targetValue) {
         await startSmartFormFill(
           { [res.targetField]: res.targetValue },
-          { explicitUserProvided: true, selector: res.targetSelector || undefined, fromChatCommand: true },
+          {
+            explicitUserProvided: true,
+            selector: res.targetSelector || undefined,
+            fromChatCommand: true,
+          },
         );
       } else {
         await startSmartFormFill();
@@ -6550,9 +7088,7 @@ async function sendQuery(question, intent, options = {}) {
     }
 
     lastHighlightSelector =
-      res.highlightSelector ||
-      (res.actionType === "point" ? res.targetSelector : null) ||
-      null;
+      res.highlightSelector || (res.actionType === "point" ? res.targetSelector : null) || null;
     lastCallout = { title: res.calloutTitle || null, description: res.calloutDescription || null };
 
     if (lastHighlightSelector) {
@@ -6663,7 +7199,7 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
 
   const candidateKeys = [
     ...Object.keys(sampleData || {}),
-    ...((extraOpts?.explicitPairs || []).map((p) => p.target || "")),
+    ...(extraOpts?.explicitPairs || []).map((p) => p.target || ""),
   ];
   const hasSensitiveInput = candidateKeys.some((k) => SENSITIVE_FIELD_RE.test(String(k)));
 
@@ -6796,7 +7332,12 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
         targetField: lastFilledItem.field,
         targetSelector: lastFilledItem.selector || undefined,
         targetRef: lastFilledItem.selector
-          ? { label: lastFilledItem.field, selector: lastFilledItem.selector, actionType: "fill", capturedAt: Date.now() }
+          ? {
+              label: lastFilledItem.field,
+              selector: lastFilledItem.selector,
+              actionType: "fill",
+              capturedAt: Date.now(),
+            }
           : undefined,
       });
       if (!activeFormSession) {
@@ -6809,7 +7350,9 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
         };
       }
       activeFormSession.filledFields = [
-        ...(activeFormSession.filledFields || []).filter((f) => f.selector !== lastFilledItem.selector),
+        ...(activeFormSession.filledFields || []).filter(
+          (f) => f.selector !== lastFilledItem.selector,
+        ),
         ...filled.map((f) => ({
           key: f.key,
           field: f.field,
@@ -6831,7 +7374,9 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
           const userProfile = await getScopedProfile();
           let changed = false;
           for (const f of filled) {
-            const rawKey = String(f.key && f.key !== "__CURRENT__" ? f.key : f.field || "").trim().toLowerCase();
+            const rawKey = String(f.key && f.key !== "__CURRENT__" ? f.key : f.field || "")
+              .trim()
+              .toLowerCase();
             if (
               rawKey &&
               !/^__INDEX_/.test(rawKey) &&
@@ -6851,7 +7396,9 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
     }
     const lines = [];
     const formatFieldDisplay = (f) =>
-      SENSITIVE_FIELD_RE.test(String(f.field || "")) ? `${f.field} = "•••"` : `${f.field} = "${f.value}"`;
+      SENSITIVE_FIELD_RE.test(String(f.field || ""))
+        ? `${f.field} = "•••"`
+        : `${f.field} = "${f.value}"`;
     const filledSensitive = filled.some((f) => SENSITIVE_FIELD_RE.test(String(f.field || "")));
 
     if (filled.length > 0) {
@@ -6956,7 +7503,9 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
       appendHistory("buddy", rejectMsg);
     } else if (skipped.length > 0 && hasExplicit) {
       setRigEmotion("concerned", "Skipped");
-      const skipDetail = skipped.map((s) => `${s.key === "__CURRENT__" ? "target box" : s.key}: ${s.reason}`).join("; ");
+      const skipDetail = skipped
+        .map((s) => `${s.key === "__CURRENT__" ? "target box" : s.key}: ${s.reason}`)
+        .join("; ");
       const skipMsg = isHindi
         ? `🛡️ Yeh field(s) skip kiye gaye: ${skipDetail}`
         : `🛡️ Refused / skipped: ${skipDetail}`;
@@ -6998,7 +7547,10 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
           ? `🔒 Pehle se bhare field (${preserved.map((p) => p.field).join(", ")}) safe rakhe gaye hain.\nAb **${nextField.label}** mein kya daalna hai?`
           : `🔒 Existing field(s) (${preserved.map((p) => p.field).join(", ")}) preserved.\nNext, what should I enter in **${nextField.label}**?`;
         setRigEmotion("curious", "Need Details");
-        recordSessionAction(`Preserved ${preserved.map((p) => p.field).join(", ")}; waiting for ${nextField.label}`, "confirmed");
+        recordSessionAction(
+          `Preserved ${preserved.map((p) => p.field).join(", ")}; waiting for ${nextField.label}`,
+          "confirmed",
+        );
         $("statusText").textContent = `Waiting for ${nextField.label}…`;
         appendHistory("buddy", presNextMsg);
         speakResponse(presNextMsg, "curious", {
@@ -7010,7 +7562,10 @@ async function startSmartFormFill(sampleData = null, extraOpts = {}) {
         const presMsg = isHindi
           ? `🔒 Field "${preserved.map((p) => p.field).join(", ")}" mein pehle se data bhara hua hai. Agar aap badalna chahte hain to "change karke <nayi value> kar do" bolein.`
           : `🔒 Existing data in "${preserved.map((p) => p.field).join(", ")}" was preserved. Say "change <field> to <value>" if you want to overwrite it.`;
-        recordSessionAction(`Preserved existing values in ${preserved.map((p) => p.field).join(", ")}`, "confirmed");
+        recordSessionAction(
+          `Preserved existing values in ${preserved.map((p) => p.field).join(", ")}`,
+          "confirmed",
+        );
         $("statusText").textContent = "Existing field values preserved.";
         appendHistory("buddy", presMsg);
       }
@@ -7194,19 +7749,24 @@ function buildMultiActionPlan(instruction) {
       ) {
         act = "extract";
         val = "order_id";
-      } else if (segLower.includes("scroll") || segLower.includes("neeche jao") || segLower.includes("upar jao")) {
+      } else if (
+        segLower.includes("scroll") ||
+        segLower.includes("neeche jao") ||
+        segLower.includes("upar jao")
+      ) {
         act = "scroll";
-        val = segLower.includes("up") || segLower.includes("upar")
-          ? "up"
-          : segLower.includes("left")
-            ? "left"
-            : segLower.includes("right")
-              ? "right"
-              : segLower.includes("top")
-                ? "top"
-                : segLower.includes("bottom") || segLower.includes("last")
-                  ? "bottom"
-                  : "down";
+        val =
+          segLower.includes("up") || segLower.includes("upar")
+            ? "up"
+            : segLower.includes("left")
+              ? "left"
+              : segLower.includes("right")
+                ? "right"
+                : segLower.includes("top")
+                  ? "top"
+                  : segLower.includes("bottom") || segLower.includes("last")
+                    ? "bottom"
+                    : "down";
       } else if (/\b(?:fill|type|likho|likh|daalo|daal|bharo|bhar)\b/i.test(segLower)) {
         const isDocSeg =
           /(?:uploaded\s+(?:id|document|doc|file)|document\s+se|id\s+se|aadhaar|aadhar|pan)/i.test(
@@ -7349,7 +7909,11 @@ function renderTaskPlanUI() {
   if ($("planApproveBtn")) {
     $("planApproveBtn").hidden = activePlan.status !== "awaiting_approval";
   }
-  if ($("planLogsBox") && !$("planLogsBox").hidden && typeof refreshPlanLogsBoxContent === "function") {
+  if (
+    $("planLogsBox") &&
+    !$("planLogsBox").hidden &&
+    typeof refreshPlanLogsBoxContent === "function"
+  ) {
     refreshPlanLogsBoxContent();
   }
 
@@ -7440,7 +8004,10 @@ function resolveSnapshotElementForStep(step, freshSnap, strategyIndex = 0) {
       q
         .toLowerCase()
         .trim()
-        .replace(/^(?:click|open|press|select|go to|navigate to|find|locate|fill|type|search|copy)\s+/i, "")
+        .replace(
+          /^(?:click|open|press|select|go to|navigate to|find|locate|fill|type|search|copy)\s+/i,
+          "",
+        )
         .replace(/\s+(?:button|btn|link|tab|input|field|box|section)$/i, "")
         .trim(),
     )
@@ -7449,13 +8016,19 @@ function resolveSnapshotElementForStep(step, freshSnap, strategyIndex = 0) {
   const uniqueQueries = [...new Set(rawQueries)];
   const orderedQueries =
     strategyIndex > 0 && uniqueQueries.length > 1
-      ? [...uniqueQueries.slice(strategyIndex % uniqueQueries.length), ...uniqueQueries.slice(0, strategyIndex % uniqueQueries.length)]
+      ? [
+          ...uniqueQueries.slice(strategyIndex % uniqueQueries.length),
+          ...uniqueQueries.slice(0, strategyIndex % uniqueQueries.length),
+        ]
       : uniqueQueries;
 
-  const isClickableStep = ["click", "click_submit", "click_delete", "open_link", "open"].includes(step.action);
-  const pool = isClickableStep && (freshSnap.controls || []).length > 0
-    ? [...(freshSnap.controls || []), ...(freshSnap.forms || []), ...(freshSnap.headings || [])]
-    : allElements;
+  const isClickableStep = ["click", "click_submit", "click_delete", "open_link", "open"].includes(
+    step.action,
+  );
+  const pool =
+    isClickableStep && (freshSnap.controls || []).length > 0
+      ? [...(freshSnap.controls || []), ...(freshSnap.forms || []), ...(freshSnap.headings || [])]
+      : allElements;
 
   for (const q of orderedQueries) {
     const exact = pool.find((el) => (el.name || "").toLowerCase().trim() === q);
@@ -7517,7 +8090,9 @@ function normalizePlannerSteps(rawSteps, planId) {
   const normalized = [];
   rawSteps.forEach((raw, idx) => {
     if (!raw || typeof raw !== "object") return;
-    const rawAct = String(raw.action || "click").toLowerCase().trim();
+    const rawAct = String(raw.action || "click")
+      .toLowerCase()
+      .trim();
     const action = ALLOWED.has(rawAct) ? rawAct : "click";
     const title = String(raw.title || `${action} step ${idx + 1}`).trim();
     const isConsequential =
@@ -7581,7 +8156,12 @@ async function startMultiActionPlan(instruction, isExplicitPlan = false) {
         ).catch(() => null),
         new Promise((r) => setTimeout(() => r(null), 5000)),
       ]);
-      if (aiPlanRes && aiPlanRes.activeProvider !== "error" && Array.isArray(aiPlanRes.steps) && aiPlanRes.steps.length > 0) {
+      if (
+        aiPlanRes &&
+        aiPlanRes.activeProvider !== "error" &&
+        Array.isArray(aiPlanRes.steps) &&
+        aiPlanRes.steps.length > 0
+      ) {
         const aiSteps = normalizePlannerSteps(aiPlanRes.steps, plan.id);
         if (aiSteps && aiSteps.length > 0) {
           plan = {
@@ -7623,7 +8203,10 @@ async function runPlanLoop() {
   planLoopRunning = true;
 
   const isStaleRun = () =>
-    !activePlan || activePlan !== plan || myRunToken !== planRunToken || plan.status === "cancelled";
+    !activePlan ||
+    activePlan !== plan ||
+    myRunToken !== planRunToken ||
+    plan.status === "cancelled";
 
   const regroundStep = async (currentStep, strategyIdx = 0) => {
     try {
@@ -7644,7 +8227,8 @@ async function runPlanLoop() {
           currentStep.selector = sanitizeStepSelector(resolved.selector) || resolved.selector;
           currentStep.resolvedSelector = currentStep.selector;
           currentStep.locatorStrategy = resolved.strategy;
-          if (resolved.queryUsed) currentStep.textTarget = currentStep.textTarget || resolved.queryUsed;
+          if (resolved.queryUsed)
+            currentStep.textTarget = currentStep.textTarget || resolved.queryUsed;
         } else if (
           currentStep.action !== "navigate" &&
           currentStep.action !== "open_website" &&
@@ -7660,9 +8244,16 @@ async function runPlanLoop() {
             ),
           );
           const hasAuthInputs = (freshSnap.forms || []).some(
-            (f) => f.type === "password" || /\b(?:otp|captcha|verification\s*code)\b/i.test(`${f.name || ""} ${f.placeholder || ""}`),
+            (f) =>
+              f.type === "password" ||
+              /\b(?:otp|captcha|verification\s*code)\b/i.test(
+                `${f.name || ""} ${f.placeholder || ""}`,
+              ),
           );
-          const onAuthRoute = /(?:\/login|\/signin|\/sign-in|\/auth|\/otp|\/captcha|\/verify-account)/i.test(urlLower);
+          const onAuthRoute =
+            /(?:\/login|\/signin|\/sign-in|\/auth|\/otp|\/captcha|\/verify-account)/i.test(
+              urlLower,
+            );
           const stepWantsAuth = /\b(?:login|sign\s*in|password|otp|captcha|verify)\b/i.test(
             `${currentStep.textTarget || ""} ${currentStep.title || ""}`,
           );
@@ -7771,7 +8362,9 @@ async function runPlanLoop() {
           currentStep.retryCount = (currentStep.retryCount || 0) + 1;
           currentStep.locatorStrategyIndex = currentStep.retryCount;
           currentStep.selector = undefined;
-          await sendRuntimeMessage({ type: "WAIT_FOR_PAGE_SETTLE", timeoutMs: 1500 }).catch(() => {});
+          await sendRuntimeMessage({ type: "WAIT_FOR_PAGE_SETTLE", timeoutMs: 1500 }).catch(
+            () => {},
+          );
           if (isStaleRun()) return;
           await regroundStep(currentStep, currentStep.locatorStrategyIndex);
           if (isStaleRun()) return;
@@ -7810,16 +8403,24 @@ async function runPlanLoop() {
                   buddySlug: selectedBuddySlug,
                   customBuddyId: activeCustomBuddyId,
                   preferredProvider: selectedProvider || "auto",
-                  preferredModel: $("modelSelector")?.value && $("modelSelector").value !== "auto" ? $("modelSelector").value : undefined,
+                  preferredModel:
+                    $("modelSelector")?.value && $("modelSelector").value !== "auto"
+                      ? $("modelSelector").value
+                      : undefined,
                 },
                 { silent: true },
               ).catch(() => null),
               new Promise((r) => setTimeout(() => r(null), 4000)),
             ]);
             if (isStaleRun()) return;
-            if (aiRec && aiRec.activeProvider !== "error" && (aiRec.targetText || aiRec.targetSelector)) {
+            if (
+              aiRec &&
+              aiRec.activeProvider !== "error" &&
+              (aiRec.targetText || aiRec.targetSelector)
+            ) {
               if (aiRec.targetText) currentStep.textTarget = aiRec.targetText;
-              if (aiRec.targetSelector) currentStep.selector = sanitizeStepSelector(aiRec.targetSelector) || undefined;
+              if (aiRec.targetSelector)
+                currentStep.selector = sanitizeStepSelector(aiRec.targetSelector) || undefined;
               res = await sendRuntimeMessage({
                 type: "EXECUTE_STEP",
                 step: currentStep,
@@ -8118,7 +8719,8 @@ if ($("qaResearch")) {
   $("qaResearch").onclick = () => sendQuery("Research: ", "deep_research");
 }
 if ($("qaWorkWithFiles")) {
-  $("qaWorkWithFiles").onclick = () => sendQuery("Analyze spreadsheet and find duplicates: ", "file_analysis");
+  $("qaWorkWithFiles").onclick = () =>
+    sendQuery("Analyze spreadsheet and find duplicates: ", "file_analysis");
 }
 if ($("qaAutomateTask")) {
   $("qaAutomateTask").onclick = () => sendQuery("Automate task: ", "workflow");
@@ -8292,7 +8894,8 @@ async function handleUploadedDocumentFile(file) {
       setRigEmotion("happy", hasTable && !hasFields ? "Sheet Ready" : "Doc Ready");
       if (hasTable && !hasFields) {
         const cols = (extractRes.table.headers || []).join(", ");
-        $("statusText").textContent = `Spreadsheet "${file.name}" loaded (${extractRes.table.rowCount} rows).`;
+        $("statusText").textContent =
+          `Spreadsheet "${file.name}" loaded (${extractRes.table.rowCount} rows).`;
         const msg = isHindi
           ? `📊 Spreadsheet "${file.name}" read kar li hai! ${extractRes.table.rowCount} rows aur columns (${cols}) parsed hain.`
           : `📊 Loaded "${file.name}": ${extractRes.table.rowCount} rows across columns: ${cols}.`;
@@ -8357,7 +8960,7 @@ if ($("pageContextToggle")) {
     toggleBtn.setAttribute("aria-pressed", String(enabled));
     if ($("pageContextStatus")) {
       $("pageContextStatus").textContent = enabled ? "Page Vision On" : "Detached";
-      $("pageContextStatus").style.color = enabled ? "var(--teal)" : "var(--muted)";
+      $("pageContextStatus").style.color = enabled ? "var(--accent-teal)" : "var(--text-muted)";
     } else {
       toggleBtn.textContent = enabled ? "👁️ Page Vision On" : "👁️ Page Detached";
     }
@@ -8743,7 +9346,11 @@ if ($("confirmApproveBtn")) {
         if (res.stateChange === "navigated") lastHighlightSelector = null;
         setRigEmotion(hasErrFb ? "concerned" : "happy", hasErrFb ? "Notice" : "Done");
         let doneText = res.message || "Action finished successfully.";
-        if (Array.isArray(res.pageFeedback) && res.pageFeedback.length > 0 && !doneText.includes(res.pageFeedback[0])) {
+        if (
+          Array.isArray(res.pageFeedback) &&
+          res.pageFeedback.length > 0 &&
+          !doneText.includes(res.pageFeedback[0])
+        ) {
           doneText += ` Page reported: "${res.pageFeedback[0]}"`;
         }
         recordSessionAction(doneText, hasErrFb ? "unconfirmed" : "confirmed");
@@ -8802,7 +9409,9 @@ if ($("connectBtn")) {
             break;
           }
           if (
-            (u.hostname.includes("run.app") || u.hostname === "localhost" || u.hostname === "127.0.0.1") &&
+            (u.hostname.includes("run.app") ||
+              u.hostname === "localhost" ||
+              u.hostname === "127.0.0.1") &&
             (await probeBuddyHealthOrigin(u.origin, 1200))
           ) {
             buddyTab = t;
@@ -8857,7 +9466,8 @@ if ($("connectBtn")) {
     }
 
     setRigEmotion("celebrate", "Connected!");
-    $("statusText").textContent = "✓ Connected in Guest Mode! Complete web sign-in on /connect anytime.";
+    $("statusText").textContent =
+      "✓ Connected in Guest Mode! Complete web sign-in on /connect anytime.";
     await render();
   };
 }
@@ -8962,7 +9572,7 @@ async function loadPageContextSummary() {
       const s = snap.snapshot;
       summaryBox.innerHTML = `
         <div style="font-weight: 700; color: var(--text); margin-bottom: 2px;">${escapeHtml(s.title || "Current Webpage")}</div>
-        <div style="font-size: 10px; color: var(--muted); margin-bottom: 5px; word-break: break-all;">${escapeHtml(s.url || "")}</div>
+        <div style="font-size: 10px; color: var(--text-muted); margin-bottom: 5px; word-break: break-all;">${escapeHtml(s.url || "")}</div>
         <div style="display: flex; gap: 8px; font-size: 10px; color: var(--accent);">
           <span>📝 Forms: ${s.forms?.length || 0}</span>
           <span>🔘 Controls: ${s.controls?.length || 0}</span>
@@ -9088,7 +9698,10 @@ if ($("resumeSavedTaskBtn")) {
       if (!Array.isArray(activePlan.extractedData)) activePlan.extractedData = [];
       isPlanPaused = false;
       pendingApprovalStep = null;
-      const idx = Math.min(Math.max(0, activePlan.currentStepIndex || 0), activePlan.steps.length - 1);
+      const idx = Math.min(
+        Math.max(0, activePlan.currentStepIndex || 0),
+        activePlan.steps.length - 1,
+      );
       activePlan.currentStepIndex = idx;
       const curStep = activePlan.steps[idx];
       if (curStep && (curStep.status === "failed" || curStep.status === "running")) {
@@ -9106,7 +9719,10 @@ if ($("resumeSavedTaskBtn")) {
       if (activePlan.extractedData.length > 0) renderExtractedDataUI();
       await runPlanLoop();
     } else if (savedCheckpoint?.originalInstruction || savedCheckpoint?.title) {
-      await startMultiActionPlan(savedCheckpoint.originalInstruction || savedCheckpoint.title, true);
+      await startMultiActionPlan(
+        savedCheckpoint.originalInstruction || savedCheckpoint.title,
+        true,
+      );
     } else {
       appendHistory("buddy", "No active checkpoint found to resume.");
     }
@@ -9123,11 +9739,11 @@ if ($("discardSavedTaskBtn")) {
 
 async function getLocalMemoriesStore() {
   try {
-    const { session, localMemories, scopedLocalMemories = {} } = await chrome.storage.local.get([
-      "session",
-      "localMemories",
-      "scopedLocalMemories",
-    ]);
+    const {
+      session,
+      localMemories,
+      scopedLocalMemories = {},
+    } = await chrome.storage.local.get(["session", "localMemories", "scopedLocalMemories"]);
     const scope = getActiveScopeKey(session);
     if (scope === "guest") {
       if (Array.isArray(localMemories)) return localMemories;
@@ -9181,7 +9797,7 @@ function renderMemoriesListUI(memories) {
       title.textContent = `${m.key || ""}${m.kind ? ` [${m.kind}]` : ""}`;
       const val = document.createElement("div");
       val.style.fontSize = "10px";
-      val.style.color = "var(--muted)";
+      val.style.color = "var(--text-muted)";
       val.textContent = m.value || "";
       left.append(title, val);
 
@@ -9198,7 +9814,7 @@ function renderMemoriesListUI(memories) {
     });
   } else {
     const empty = document.createElement("div");
-    empty.style.color = "var(--muted)";
+    empty.style.color = "var(--text-muted)";
     empty.style.fontSize = "10px";
     empty.textContent = "No custom memories saved yet. Click Add to save preferences.";
     list.appendChild(empty);
@@ -9209,7 +9825,8 @@ function renderMemoriesListUI(memories) {
 async function loadMemories() {
   const list = $("memoriesList");
   if (!list) return;
-  list.innerHTML = '<div style="color: var(--muted); font-size: 10px;">Loading memories…</div>';
+  list.innerHTML =
+    '<div style="color: var(--text-muted); font-size: 10px;">Loading memories…</div>';
   try {
     const { session } = await chrome.storage.local.get("session");
     const base = await getResolvedBackendBase();
@@ -9315,7 +9932,8 @@ if ($("saveMemoryBtn")) {
         if (!res.ok || data?.ok === false) {
           serverRejected = true;
           if (errEl) {
-            errEl.textContent = data?.message || data?.error || `Memory rejected (HTTP ${res.status}).`;
+            errEl.textContent =
+              data?.message || data?.error || `Memory rejected (HTTP ${res.status}).`;
             errEl.hidden = false;
           }
         }
@@ -9346,7 +9964,11 @@ if ($("saveMemoryBtn")) {
 }
 
 async function getScopedTaskHistoryStore() {
-  const { session, localTaskHistory = [], scopedTaskHistory = {} } = await chrome.storage.local
+  const {
+    session,
+    localTaskHistory = [],
+    scopedTaskHistory = {},
+  } = await chrome.storage.local
     .get(["session", "localTaskHistory", "scopedTaskHistory"])
     .catch(() => ({ localTaskHistory: [], scopedTaskHistory: {} }));
   const scope = getActiveScopeKey(session);
@@ -9410,7 +10032,7 @@ function renderTasksHistoryUI(tasks) {
       <div class="item-row">
         <div style="overflow: hidden; max-width: 80%;">
           <div style="font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(t.title)}</div>
-          <div style="font-size: 10px; color: var(--muted);">${t.created_at ? new Date(t.created_at).toLocaleTimeString() : ""} · ${escapeHtml(t.buddy_slug || t.buddySlug || "friendly")}</div>
+          <div style="font-size: 10px; color: var(--text-muted);">${t.created_at ? new Date(t.created_at).toLocaleTimeString() : ""} · ${escapeHtml(t.buddy_slug || t.buddySlug || "friendly")}</div>
         </div>
         <span class="step-status-tag ${escapeHtml(t.status || "completed")}">${escapeHtml(t.status || "completed")}</span>
       </div>
@@ -9419,7 +10041,7 @@ function renderTasksHistoryUI(tasks) {
       .join("");
   } else {
     list.innerHTML =
-      '<div style="color: var(--muted); font-size: 10px;">No recent tasks executed yet.</div>';
+      '<div style="color: var(--text-muted); font-size: 10px;">No recent tasks executed yet.</div>';
   }
 }
 
@@ -9427,7 +10049,8 @@ function renderTasksHistoryUI(tasks) {
 async function loadTasksHistory() {
   const list = $("tasksHistoryList");
   if (!list) return;
-  list.innerHTML = '<div style="color: var(--muted); font-size: 10px;">Loading task history…</div>';
+  list.innerHTML =
+    '<div style="color: var(--text-muted); font-size: 10px;">Loading task history…</div>';
   const { session, items: scopedHistory } = await getScopedTaskHistoryStore();
   try {
     const base = await getResolvedBackendBase();
@@ -9509,7 +10132,8 @@ function refreshPlanLogsBoxContent() {
   if (!box) return;
   const lines = [];
   if (latestOrchestrationMeta?.path) {
-    const agents = latestOrchestrationMeta.agentsAssigned || latestOrchestrationMeta.selectedAgents || [];
+    const agents =
+      latestOrchestrationMeta.agentsAssigned || latestOrchestrationMeta.selectedAgents || [];
     lines.push(
       `[Orchestrator] path=${latestOrchestrationMeta.path} | agents=${agents.join(", ") || "none"}`,
     );
@@ -9523,7 +10147,9 @@ function refreshPlanLogsBoxContent() {
   }
   if (Array.isArray(latestSessionContext?.decisions)) {
     latestSessionContext.decisions.slice(-6).forEach((dec) => {
-      lines.push(`[Decision:${dec.madeBy || dec.agentId || "agent"}] ${dec.summary || dec.decision || ""} — ${dec.rationale || ""}`);
+      lines.push(
+        `[Decision:${dec.madeBy || dec.agentId || "agent"}] ${dec.summary || dec.decision || ""} — ${dec.rationale || ""}`,
+      );
     });
   }
   if (Array.isArray(latestSessionContext?.executionHistory)) {
@@ -9549,7 +10175,8 @@ function updateLiveOrchestrationState(meta, sessionCtx, costTelemetry) {
   const summaryEl = $("agentDashboardSummary");
   const listEl = $("liveSubtaskDetailsList");
   const calls = latestCostTelemetry?.totalModelCalls ?? latestCostTelemetry?.totalAiCalls ?? 0;
-  const tok = latestCostTelemetry?.totalEstimatedTokens ?? latestCostTelemetry?.estimatedTokensUsed ?? 0;
+  const tok =
+    latestCostTelemetry?.totalEstimatedTokens ?? latestCostTelemetry?.estimatedTokensUsed ?? 0;
   const conc = meta?.dagSummary?.maxObservedConcurrency || 1;
   const assignedAgents = meta?.agentsAssigned || meta?.selectedAgents || [];
 
@@ -9563,10 +10190,9 @@ function updateLiveOrchestrationState(meta, sessionCtx, costTelemetry) {
       const msg = document.createElement("div");
       msg.style.color = "var(--text-muted)";
       msg.style.fontSize = "10px";
-      msg.textContent =
-        assignedAgents.length
-          ? `Fast path verified (${assignedAgents.join(", ")}).`
-          : "No active multi-agent subtasks yet.";
+      msg.textContent = assignedAgents.length
+        ? `Fast path verified (${assignedAgents.join(", ")}).`
+        : "No active multi-agent subtasks yet.";
       listEl.appendChild(msg);
     } else {
       subs.forEach((sub) => {
@@ -9581,7 +10207,7 @@ function updateLiveOrchestrationState(meta, sessionCtx, costTelemetry) {
         title.textContent = `${sub.agentName || sub.agentId}: ${sub.responsibility || sub.title || ""}`;
         const subMeta = document.createElement("div");
         subMeta.style.fontSize = "9px";
-        subMeta.style.color = "var(--muted)";
+        subMeta.style.color = "var(--text-muted)";
         const depList = Array.isArray(sub.dependencies)
           ? sub.dependencies
           : Array.isArray(sub.dependsOn)
@@ -9648,7 +10274,7 @@ function renderProactiveSuggestionsUI(suggestions) {
     title.textContent = s.title || s.category || "Suggestion";
     const reason = document.createElement("div");
     reason.style.fontSize = "9px";
-    reason.style.color = "var(--muted)";
+    reason.style.color = "var(--text-muted)";
     reason.textContent = s.message || s.reason || "";
     left.append(title, reason);
 
@@ -9677,7 +10303,7 @@ async function loadWorkspaceArtifacts() {
   if (!res?.ok) {
     list.textContent = "";
     const msg = document.createElement("div");
-    msg.style.color = "var(--muted)";
+    msg.style.color = "var(--text-muted)";
     msg.style.fontSize = "10px";
     msg.textContent = res?.message || "Workspace API offline.";
     list.appendChild(msg);
@@ -9687,7 +10313,7 @@ async function loadWorkspaceArtifacts() {
   list.textContent = "";
   if (cachedWorkspaceArtifacts.length === 0) {
     const empty = document.createElement("div");
-    empty.style.color = "var(--muted)";
+    empty.style.color = "var(--text-muted)";
     empty.style.fontSize = "10px";
     empty.textContent = "No files in workspace yet. Click Upload or Attach.";
     list.appendChild(empty);
@@ -9706,7 +10332,7 @@ async function loadWorkspaceArtifacts() {
     name.textContent = `${art.filename} (${Math.max(1, Math.round((art.sizeBytes || 0) / 1024))} KB)`;
     const summary = document.createElement("div");
     summary.style.fontSize = "9px";
-    summary.style.color = "var(--muted)";
+    summary.style.color = "var(--text-muted)";
     summary.textContent = art.summary || art.extension || "";
     left.append(name, summary);
 
@@ -9727,8 +10353,13 @@ async function loadWorkspaceArtifacts() {
       });
       if (insp?.ok && insp.artifact && $("extractedDataCard") && $("extractedContent")) {
         $("extractedDataCard").hidden = false;
-        if ($("extractedCountTitle")) $("extractedCountTitle").textContent = `📂 ${insp.artifact.filename}`;
-        $("extractedContent").textContent = JSON.stringify(insp.artifact.parsedPreview || insp.artifact, null, 2);
+        if ($("extractedCountTitle"))
+          $("extractedCountTitle").textContent = `📂 ${insp.artifact.filename}`;
+        $("extractedContent").textContent = JSON.stringify(
+          insp.artifact.parsedPreview || insp.artifact,
+          null,
+          2,
+        );
       }
     };
 
@@ -9759,7 +10390,11 @@ async function loadWorkspaceArtifacts() {
     delBtn.style.color = "var(--destructive)";
     delBtn.textContent = "🗑️";
     delBtn.onclick = async () => {
-      await sendRuntimeMessage({ type: "WORKSPACE_API", action: "delete", artifactId: art.artifactId });
+      await sendRuntimeMessage({
+        type: "WORKSPACE_API",
+        action: "delete",
+        artifactId: art.artifactId,
+      });
       loadWorkspaceArtifacts();
     };
 
@@ -9775,7 +10410,9 @@ if ($("workspaceUploadTriggerBtn")) {
 }
 if ($("workspaceCompareBtn")) {
   $("workspaceCompareBtn").onclick = async () => {
-    const sheets = cachedWorkspaceArtifacts.filter((a) => /^(xlsx|csv|tsv)$/i.test(a.extension || ""));
+    const sheets = cachedWorkspaceArtifacts.filter((a) =>
+      /^(xlsx|csv|tsv)$/i.test(a.extension || ""),
+    );
     const statusEl = $("workspaceStatusMsg");
     if (sheets.length < 2) {
       if (statusEl) {
@@ -9846,11 +10483,13 @@ if ($("workspaceExportReportBtn")) {
 async function loadConnectorsStatus() {
   const list = $("connectedAppsList");
   if (!list) return;
-  const res = await sendRuntimeMessage({ type: "CONNECTORS_API", action: "list" }).catch(() => null);
+  const res = await sendRuntimeMessage({ type: "CONNECTORS_API", action: "list" }).catch(
+    () => null,
+  );
   list.textContent = "";
   if (!res?.ok || !Array.isArray(res.connectors)) {
     const msg = document.createElement("div");
-    msg.style.color = "var(--muted)";
+    msg.style.color = "var(--text-muted)";
     msg.style.fontSize = "10px";
     msg.textContent = res?.message || "Connectors status unavailable.";
     list.appendChild(msg);
@@ -9876,7 +10515,7 @@ async function loadConnectorsStatus() {
     title.textContent = `${c.name} · ${c.operational ? "Connected" : c.authState || "Not Authorized"}`;
     const sub = document.createElement("div");
     sub.style.fontSize = "9px";
-    sub.style.color = "var(--muted)";
+    sub.style.color = "var(--text-muted)";
     sub.textContent =
       Array.isArray(c.missingRequirements) && c.missingRequirements.length > 0
         ? c.missingRequirements.join("; ")
@@ -9899,7 +10538,7 @@ async function loadConnectorsStatus() {
     tokIn.style.flex = "1";
     tokIn.style.fontSize = "10px";
     tokIn.style.padding = "4px";
-    tokIn.style.background = "#0b0f19";
+    tokIn.style.background = "var(--bg-inset)";
     tokIn.style.color = "var(--text)";
     tokIn.style.border = "1px solid var(--border)";
     tokIn.style.borderRadius = "var(--radius-sm)";
@@ -9922,7 +10561,11 @@ async function loadConnectorsStatus() {
 
     btn.onclick = async () => {
       if (c.operational) {
-        await sendRuntimeMessage({ type: "CONNECTORS_API", action: "disconnect", connectorId: c.id });
+        await sendRuntimeMessage({
+          type: "CONNECTORS_API",
+          action: "disconnect",
+          connectorId: c.id,
+        });
         loadConnectorsStatus();
       } else {
         tokenForm.hidden = !tokenForm.hidden;
@@ -9944,9 +10587,8 @@ function showWorkflowDraftPreview(draft) {
   if (!box || !summary || !draft) return;
   const r = draft.recipe || draft;
   const missingArr = draft.missingDetails || draft.missingRequirements || [];
-  const missing = Array.isArray(missingArr) && missingArr.length
-    ? ` | Missing: ${missingArr.join(", ")}`
-    : "";
+  const missing =
+    Array.isArray(missingArr) && missingArr.length ? ` | Missing: ${missingArr.join(", ")}` : "";
   const schedLabel =
     draft.scheduleSummary ||
     r.schedule?.humanReadable ||
@@ -10020,7 +10662,7 @@ async function loadWorkflowsList() {
   const wfs = Array.isArray(res?.workflows) ? res.workflows : [];
   if (wfs.length === 0) {
     const empty = document.createElement("div");
-    empty.style.color = "var(--muted)";
+    empty.style.color = "var(--text-muted)";
     empty.style.fontSize = "10px";
     empty.textContent = "No saved automated workflows yet.";
     list.appendChild(empty);
@@ -10038,7 +10680,7 @@ async function loadWorkflowsList() {
     title.textContent = `${wf.name} (${wf.enabled ? "Active" : "Paused"})`;
     const sub = document.createElement("div");
     sub.style.fontSize = "9px";
-    sub.style.color = "var(--muted)";
+    sub.style.color = "var(--text-muted)";
     const schedInfo =
       wf.schedule?.cronExpression ||
       wf.schedule?.timeOfDay ||
@@ -10101,7 +10743,8 @@ async function loadWorkflowsList() {
 // Models & Providers Handlers
 function updateProviderNoticeUI(providerId) {
   const pid = providerId || selectedProvider || "auto";
-  const info = cachedProviderStatuses[pid] || DEFAULT_PROVIDER_META[pid] || DEFAULT_PROVIDER_META.gemini;
+  const info =
+    cachedProviderStatuses[pid] || DEFAULT_PROVIDER_META[pid] || DEFAULT_PROVIDER_META.gemini;
   const badge = $("activeProviderStatusBadge");
   const notice = $("providerSelectionNotice");
 
@@ -10193,10 +10836,13 @@ async function loadModelHubStatus() {
   const list = $("providerStatusList");
   if (!list) return;
   list.innerHTML =
-    '<div style="color: var(--muted); font-size: 10px;">Checking provider statuses…</div>';
+    '<div style="color: var(--text-muted); font-size: 10px;">Checking provider statuses…</div>';
   try {
-    const { preferredModel, selectedProvider: storedProvider, userApiKey } =
-      await chrome.storage.local.get(["preferredModel", "selectedProvider", "userApiKey"]);
+    const {
+      preferredModel,
+      selectedProvider: storedProvider,
+      userApiKey,
+    } = await chrome.storage.local.get(["preferredModel", "selectedProvider", "userApiKey"]);
     selectedProvider = storedProvider || "auto";
 
     const base = await getResolvedBackendBase();
@@ -10248,7 +10894,7 @@ async function loadModelHubStatus() {
           <div class="item-row provider-row-item" data-provider="${escapeHtml(p.id)}" style="cursor: pointer; ${isSel ? "border-color: var(--accent-cyan); background: rgba(6, 182, 212, 0.08);" : ""}">
             <div>
               <span style="font-weight: 600; color: var(--text);">${escapeHtml(p.name)}</span>
-              <div style="font-size: 9px; color: var(--muted);">${escapeHtml(detailNote)}</div>
+              <div style="font-size: 9px; color: var(--text-muted);">${escapeHtml(detailNote)}</div>
             </div>
             <span class="step-status-tag ${info.configured ? "completed" : "pending"}">${escapeHtml(statusText)}</span>
           </div>
@@ -10323,7 +10969,7 @@ async function loadModelHubStatus() {
       <div class="item-row provider-row-item" data-provider="${escapeHtml(info.id)}" style="cursor: pointer; ${isSel ? "border-color: var(--accent-cyan); background: rgba(6, 182, 212, 0.08);" : ""}">
         <div>
           <span style="font-weight: 600; color: var(--text);">${escapeHtml(info.name)}</span>
-          <div style="font-size: 9px; color: var(--muted);">${escapeHtml(detailNote)}</div>
+          <div style="font-size: 9px; color: var(--text-muted);">${escapeHtml(detailNote)}</div>
         </div>
         <span class="step-status-tag ${info.configured ? "completed" : "pending"}">${escapeHtml(info.statusLabel)}</span>
       </div>
@@ -10372,9 +11018,7 @@ if ($("toggleModelComparisonBtn")) {
     const comp = $("modelComparisonView");
     if (comp) {
       comp.hidden = !comp.hidden;
-      $("toggleModelComparisonBtn").textContent = comp.hidden
-        ? "📊 Compare"
-        : "Hide Comparison";
+      $("toggleModelComparisonBtn").textContent = comp.hidden ? "📊 Compare" : "Hide Comparison";
     }
   };
 }
@@ -10396,11 +11040,15 @@ if ($("testActiveProviderBtn")) {
       if (targetProv === "gemini" && userApiKey) {
         bodyPayload.userApiKey = userApiKey;
       }
-      const res = await fetchWithTimeout(`${base}/api/public/extension/test-model`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(bodyPayload),
-      }, 8000);
+      const res = await fetchWithTimeout(
+        `${base}/api/public/extension/test-model`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(bodyPayload),
+        },
+        8000,
+      );
       const data = await res.json().catch(() => null);
       if (pingBox && data) {
         if (res.ok && data.ok) {
@@ -10469,6 +11117,43 @@ if ($("sizeSelect")) {
 }
 
 // ================= TAB 6: SETTINGS LOGIC =================
+let settingsHasSavedApiKey = false;
+let settingsApiKeyFeedbackTimer = null;
+
+function showSettingsApiKeyFeedback(message, isError = false) {
+  const fb = $("settingsApiKeyFeedback");
+  if (!fb) return;
+  fb.textContent = message;
+  fb.style.color = isError ? "var(--destructive-text)" : "var(--accent-cyan)";
+  fb.style.display = "block";
+  if (settingsApiKeyFeedbackTimer) clearTimeout(settingsApiKeyFeedbackTimer);
+  settingsApiKeyFeedbackTimer = setTimeout(() => {
+    if ($("settingsApiKeyFeedback")) $("settingsApiKeyFeedback").style.display = "none";
+  }, 3200);
+}
+
+function syncSettingsApiKeyUi(hasSavedKey, showInput = !hasSavedKey) {
+  settingsHasSavedApiKey = Boolean(hasSavedKey);
+  if ($("settingsApiKeyInput")) {
+    $("settingsApiKeyInput").value = "";
+  }
+  if ($("settingsApiKeySavedRow")) {
+    $("settingsApiKeySavedRow").hidden = !settingsHasSavedApiKey || showInput;
+  }
+  if ($("settingsClearApiKeyConfirmRow")) {
+    $("settingsClearApiKeyConfirmRow").hidden = true;
+  }
+  if ($("settingsApiKeyInputWrap")) {
+    $("settingsApiKeyInputWrap").hidden = settingsHasSavedApiKey && !showInput;
+  }
+  if ($("settingsCancelUpdateApiKeyBtn")) {
+    $("settingsCancelUpdateApiKeyBtn").hidden = !(settingsHasSavedApiKey && showInput);
+  }
+  if ($("settingsApiKeyMaskedLabel") && settingsHasSavedApiKey) {
+    $("settingsApiKeyMaskedLabel").textContent = "Saved locally (••••••••••••)";
+  }
+}
+
 async function loadSettingsTab() {
   const { session, lastBase, permissionLevel, requireConsent, userApiKey } =
     await chrome.storage.local.get([
@@ -10492,9 +11177,8 @@ async function loadSettingsTab() {
     const resolved = session?.apiBase || lastBase;
     $("settingsApiBaseInput").value = resolved || DEFAULT_BASE;
   }
-  if ($("settingsApiKeyInput")) {
-    $("settingsApiKeyInput").value = userApiKey || "";
-  }
+  const hasSavedKey = Boolean(typeof userApiKey === "string" && userApiKey.trim());
+  syncSettingsApiKeyUi(hasSavedKey, !hasSavedKey);
 
   if ($("settingsPermissionLevel")) {
     $("settingsPermissionLevel").value = permissionLevel || "assist";
@@ -10508,21 +11192,63 @@ async function loadSettingsTab() {
   }
 }
 
+if ($("settingsUpdateApiKeyBtn")) {
+  $("settingsUpdateApiKeyBtn").onclick = () => {
+    syncSettingsApiKeyUi(settingsHasSavedApiKey, true);
+    $("settingsApiKeyInput")?.focus();
+  };
+}
+
+if ($("settingsCancelUpdateApiKeyBtn")) {
+  $("settingsCancelUpdateApiKeyBtn").onclick = () => {
+    syncSettingsApiKeyUi(settingsHasSavedApiKey, false);
+  };
+}
+
+if ($("settingsClearApiKeyBtn")) {
+  $("settingsClearApiKeyBtn").onclick = () => {
+    if ($("settingsClearApiKeyConfirmRow")) {
+      $("settingsClearApiKeyConfirmRow").hidden = false;
+    }
+    if ($("settingsApiKeySavedRow")) {
+      $("settingsApiKeySavedRow").hidden = true;
+    }
+  };
+}
+
+if ($("settingsCancelClearApiKeyBtn")) {
+  $("settingsCancelClearApiKeyBtn").onclick = () => {
+    syncSettingsApiKeyUi(settingsHasSavedApiKey, false);
+  };
+}
+
+if ($("settingsConfirmClearApiKeyBtn")) {
+  $("settingsConfirmClearApiKeyBtn").onclick = async () => {
+    await chrome.storage.local.remove("userApiKey");
+    warnedMissingProviders.clear();
+    syncSettingsApiKeyUi(false, true);
+    loadModelHubStatus();
+    showSettingsApiKeyFeedback("✓ Key cleared. Buddy using configured backend or fallback.");
+  };
+}
+
 if ($("settingsSaveApiKeyBtn")) {
   $("settingsSaveApiKeyBtn").onclick = async () => {
     const val = $("settingsApiKeyInput")?.value?.trim() || "";
+    if (!val) {
+      showSettingsApiKeyFeedback(
+        settingsHasSavedApiKey
+          ? "Enter a new key to replace the saved one, or use Clear."
+          : "Please enter an API key first.",
+        true,
+      );
+      return;
+    }
     await chrome.storage.local.set({ userApiKey: val });
     warnedMissingProviders.clear();
+    syncSettingsApiKeyUi(true, false);
     loadModelHubStatus();
-    if ($("settingsApiKeyFeedback")) {
-      $("settingsApiKeyFeedback").textContent = val
-        ? "✓ Gemini API Key saved! Buddy is now 100% direct & serverless."
-        : "✓ Key cleared. Buddy using grounded companion engine.";
-      $("settingsApiKeyFeedback").style.display = "block";
-      setTimeout(() => {
-        if ($("settingsApiKeyFeedback")) $("settingsApiKeyFeedback").style.display = "none";
-      }, 3000);
-    }
+    showSettingsApiKeyFeedback("✓ Gemini API Key saved! Buddy is now 100% direct & serverless.");
   };
 }
 
@@ -10601,7 +11327,8 @@ if ($("settingsDetectHostBtn")) {
           feedbackEl.textContent = `✓ Verified AI Buddy server: ${verifiedOrigin}`;
         }
       } else if (feedbackEl) {
-        feedbackEl.textContent = "⚠️ No live AI Buddy backend responded cleanly. Keeping current server.";
+        feedbackEl.textContent =
+          "⚠️ No live AI Buddy backend responded cleanly. Keeping current server.";
       }
     } catch {
       if (feedbackEl) {
@@ -10817,8 +11544,7 @@ if ($("selfHealApplyBtn")) {
     dispatchSelfHealAction("apply_repair_and_test", "apply_repair_and_test");
 }
 if ($("selfHealPrBtn")) {
-  $("selfHealPrBtn").onclick = () =>
-    dispatchSelfHealAction("create_github_pr", "create_github_pr");
+  $("selfHealPrBtn").onclick = () => dispatchSelfHealAction("create_github_pr", "create_github_pr");
 }
 if ($("selfHealCancelBtn")) {
   $("selfHealCancelBtn").onclick = async () => {
@@ -10889,7 +11615,9 @@ window.addEventListener("unhandledrejection", (ev) => {
       type: "SELF_HEAL_REPORT",
       component: "unhandled_rejection",
       errorMessage:
-        reason instanceof Error ? reason.message : String(reason || "Sidepanel unhandled rejection"),
+        reason instanceof Error
+          ? reason.message
+          : String(reason || "Sidepanel unhandled rejection"),
       errorType: reason instanceof Error ? reason.name : "PromiseRejection",
       stackTrace: reason instanceof Error ? reason.stack : undefined,
       currentOperation: "sidepanel_unhandled_rejection",
@@ -10911,7 +11639,10 @@ document.addEventListener("visibilitychange", () => {
 
 chrome.storage?.onChanged?.addListener?.((changes, area) => {
   if (area !== "local") return;
-  if (changes.selectedBuddySlug?.newValue && changes.selectedBuddySlug.newValue !== selectedBuddySlug) {
+  if (
+    changes.selectedBuddySlug?.newValue &&
+    changes.selectedBuddySlug.newValue !== selectedBuddySlug
+  ) {
     switchBuddy(changes.selectedBuddySlug.newValue, { persist: false, silent: true });
   }
   if (

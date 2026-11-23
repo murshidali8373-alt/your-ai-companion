@@ -186,8 +186,14 @@ function Connect() {
   };
 
   const copyOrigin = () => {
-    navigator.clipboard.writeText(window.location.origin);
-    toast.success("Server URL copied to clipboard!");
+    if (!navigator.clipboard?.writeText) {
+      toast.error("Clipboard access unavailable in this browser.");
+      return;
+    }
+    navigator.clipboard
+      .writeText(window.location.origin)
+      .then(() => toast.success("Server URL copied to clipboard!"))
+      .catch(() => toast.error("Could not copy URL automatically."));
   };
 
   return (
@@ -207,8 +213,8 @@ function Connect() {
         />
 
         {status === "connected" && (
-          <div className="panel space-y-3 p-6 text-center border-emerald-500/40 bg-emerald-500/5">
-            <div className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+          <div className="panel space-y-3 p-6 text-center border-success/40 bg-success/5">
+            <div className="inline-flex items-center gap-1.5 rounded-full bg-success/15 px-3 py-1 text-xs font-medium text-success">
               <CheckCircle2 className="size-3.5" />
               Connected &amp; Synchronized
             </div>
@@ -225,7 +231,7 @@ function Connect() {
             <div className="flex flex-col gap-2 pt-2">
               <Button
                 size="sm"
-                className="gap-2 bg-teal-600 hover:bg-teal-500 text-white"
+                className="gap-2"
                 onClick={() => {
                   window.postMessage({ type: "AI_BUDDY_OPEN_PANEL" }, window.location.origin);
                   toast.info("Press Ctrl+Shift+P (or Cmd+Shift+P) to open side panel anytime.");
@@ -244,7 +250,7 @@ function Connect() {
         {(status === "searching" || status === "syncing") && (
           <div className="space-y-3">
             <div className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-              <RefreshCw className="size-4 animate-spin text-teal-500" />
+              <RefreshCw className="size-4 animate-spin text-primary" />
               <span>Looking for extension &amp; syncing session…</span>
             </div>
             <p className="text-xs text-muted-foreground">
@@ -254,8 +260,8 @@ function Connect() {
         )}
 
         {status === "detected" && (
-          <div className="panel space-y-4 p-6 border-teal-500/30">
-            <div className="inline-flex items-center gap-1.5 rounded-full bg-teal-500/10 px-3 py-1 text-xs font-medium text-teal-600 dark:text-teal-400">
+          <div className="panel space-y-4 p-6 border-primary/30">
+            <div className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
               <Sparkles className="size-3.5" />
               Extension Detected (v{extensionVersion})
             </div>
@@ -264,11 +270,7 @@ function Connect() {
               Click below to synchronize your session with the extension right now.
             </p>
             <div className="flex flex-col gap-2">
-              <Button
-                onClick={handleQuickConnect}
-                disabled={busy}
-                className="gap-2 bg-teal-600 hover:bg-teal-500 text-white font-medium"
-              >
+              <Button onClick={handleQuickConnect} disabled={busy} className="gap-2 font-medium">
                 <Zap className="size-4" />
                 {busy ? "Connecting…" : "1-Click Connect Account"}
               </Button>
@@ -299,7 +301,7 @@ function Connect() {
             </p>
 
             <div className="flex flex-col gap-2">
-              <Button asChild className="gap-2 bg-teal-600 hover:bg-teal-500 text-white">
+              <Button asChild className="gap-2">
                 <Link to="/download">
                   <ExternalLink className="size-4" />
                   Download &amp; Install Extension

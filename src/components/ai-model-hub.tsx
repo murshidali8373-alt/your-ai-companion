@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
@@ -60,6 +61,9 @@ export function AiModelHub({
 
   const [configProvider, setConfigProvider] = useState<ProviderId | null>(null);
   const [userKeyInput, setUserKeyInput] = useState("");
+  const [hasSavedKey, setHasSavedKey] = useState(false);
+  const [isEditingKey, setIsEditingKey] = useState(false);
+  const [confirmClearKey, setConfirmClearKey] = useState(false);
   const [baseUrlInput, setBaseUrlInput] = useState("");
   const [testingStatus, setTestingStatus] = useState<{
     ok?: boolean;
@@ -121,26 +125,47 @@ export function AiModelHub({
   }, [models, activeModelId]);
 
   const handleOpenConfig = (pId: ProviderId) => {
+    const savedExists = Boolean(localStorage.getItem(`buddy_key_${pId}`)?.trim());
     setConfigProvider(pId);
     setTestingStatus(null);
-    setUserKeyInput(localStorage.getItem(`buddy_key_${pId}`) || "");
+    setHasSavedKey(savedExists);
+    setIsEditingKey(!savedExists);
+    setConfirmClearKey(false);
+    setUserKeyInput("");
     setBaseUrlInput(
       localStorage.getItem(`buddy_url_${pId}`) || PROVIDERS[pId]?.defaultBaseUrl || "",
     );
   };
 
+  const handleClearSavedKey = () => {
+    if (!configProvider) return;
+    localStorage.removeItem(`buddy_key_${configProvider}`);
+    setHasSavedKey(false);
+    setIsEditingKey(true);
+    setConfirmClearKey(false);
+    setUserKeyInput("");
+    setTestingStatus(null);
+    toast.success(`${PROVIDERS[configProvider]?.name} saved key cleared.`);
+    void hubQuery.refetch();
+  };
+
   const handleSaveConfig = () => {
     if (!configProvider) return;
-    if (userKeyInput.trim()) {
-      localStorage.setItem(`buddy_key_${configProvider}`, userKeyInput.trim());
-    } else {
-      localStorage.removeItem(`buddy_key_${configProvider}`);
+    const trimmedKey = userKeyInput.trim();
+    if (trimmedKey) {
+      localStorage.setItem(`buddy_key_${configProvider}`, trimmedKey);
+      setHasSavedKey(true);
+      setIsEditingKey(false);
     }
+    setUserKeyInput("");
     if (baseUrlInput.trim()) {
       localStorage.setItem(`buddy_url_${configProvider}`, baseUrlInput.trim());
+    } else {
+      localStorage.removeItem(`buddy_url_${configProvider}`);
     }
     toast.success(`${PROVIDERS[configProvider]?.name} settings saved.`);
     setConfigProvider(null);
+    void hubQuery.refetch();
   };
 
   return (
@@ -148,14 +173,14 @@ export function AiModelHub({
       {/* Top Banner: Active Model & Hub Stats */}
       <div className="panel flex flex-col justify-between gap-4 p-5 sm:flex-row sm:items-center">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
+          <div className="flex flex-wrap items-center gap-2">
+            <Cpu className="size-4 text-primary" />
             <h2 className="text-base font-semibold text-foreground">AI Model Hub</h2>
-            <Badge variant="outline" className="font-mono text-xs">
-              {models.length || "100+"} Models
+            <Badge variant="outline" className="font-mono text-xs tabular-nums">
+              {hubQuery.isLoading ? "Loading…" : `${models.length} Models`}
             </Badge>
-            <Badge variant="secondary" className="text-xs">
-              8 Providers
+            <Badge variant="secondary" className="text-xs tabular-nums">
+              {hubQuery.isLoading ? "…" : `${providers.length || 8} Providers`}
             </Badge>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -189,39 +214,42 @@ export function AiModelHub({
           <span className="text-[11px]">Honest connection status</span>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
-          {providers.map((p) => {
-            const isLocal = p.config.supportsLocal;
-            const isConn = p.status === "connected";
-            const isFree = p.config.freeTierAvailable;
+          {hubQuery.isLoading
+            ? Array.from({ length: 8 }).map((_, idx) => (
+                <Skeleton key={idx} className="h-16 w-full rounded-xl" />
+              ))
+            : providers.map((p) => {
+                const isLocal = p.config.supportsLocal;
+                const isConn = p.status === "connected";
 
-            return (
-              <button
-                key={p.providerId}
-                type="button"
-                onClick={() => handleOpenConfig(p.providerId)}
-                className={`group flex flex-col items-start justify-between rounded-xl border p-2.5 text-left text-xs transition-all hover:border-ring/80 hover:bg-secondary/40 ${
-                  isConn ? "border-emerald-500/40 bg-emerald-500/5" : "border-border/60 bg-card/60"
-                }`}
-              >
-                <div className="flex w-full items-center justify-between">
-                  <span className="font-semibold truncate text-[11px]">{p.config.name}</span>
-                  {isConn ? (
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                  ) : isLocal ? (
-                    <HardDrive className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  ) : (
-                    <Key className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0" />
-                  )}
-                </div>
-                <div className="mt-2 flex w-full items-center justify-between text-[10px] text-muted-foreground">
-                  <span className="capitalize">{p.status.replace("_", " ")}</span>
-                  <span className="opacity-0 group-hover:opacity-100 text-primary transition-opacity">
-                    Configure →
-                  </span>
-                </div>
-              </button>
-            );
-          })}
+                return (
+                  <button
+                    key={p.providerId}
+                    type="button"
+                    onClick={() => handleOpenConfig(p.providerId)}
+                    className={`group flex flex-col items-start justify-between rounded-xl border p-2.5 text-left text-xs transition-all hover:border-ring/80 hover:bg-secondary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                      isConn ? "border-success/40 bg-success/5" : "border-border/60 bg-card/60"
+                    }`}
+                  >
+                    <div className="flex w-full items-center justify-between">
+                      <span className="font-semibold truncate text-[11px]">{p.config.name}</span>
+                      {isConn ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
+                      ) : isLocal ? (
+                        <HardDrive className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                      ) : (
+                        <Key className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0" />
+                      )}
+                    </div>
+                    <div className="mt-2 flex w-full items-center justify-between text-[10px] text-muted-foreground">
+                      <span className="capitalize">{p.status.replace("_", " ")}</span>
+                      <span className="opacity-0 group-hover:opacity-100 text-primary transition-opacity">
+                        Configure →
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
         </div>
       </div>
 
@@ -231,7 +259,7 @@ export function AiModelHub({
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search 100+ models (e.g. Gemini, Llama 3.3, DeepSeek, Claude, Whisper)..."
+              placeholder="Search models (e.g. Gemini, Llama 3.3, DeepSeek, Claude, Whisper)..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9 text-xs"
@@ -295,6 +323,10 @@ export function AiModelHub({
 
       {/* Model Catalog Grid */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {hubQuery.isLoading &&
+          Array.from({ length: 6 }).map((_, idx) => (
+            <Skeleton key={idx} className="h-40 w-full rounded-xl" />
+          ))}
         {filteredModels.map((m) => {
           const isActive = activeModelId === m.id || activeModelId === m.providerModelId;
           const hasVision = m.capabilities.includes("vision");
@@ -376,7 +408,7 @@ export function AiModelHub({
         })}
       </div>
 
-      {filteredModels.length === 0 && (
+      {!hubQuery.isLoading && filteredModels.length === 0 && (
         <div className="panel p-8 text-center text-muted-foreground">
           <p>No models matched your search or filters.</p>
           <Button
@@ -411,29 +443,127 @@ export function AiModelHub({
 
             <div className="space-y-4 py-2">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-foreground">API Key / Token</label>
-                <Input
-                  type="password"
-                  placeholder={
-                    configProvider === "ollama"
-                      ? "Not needed for local Ollama"
-                      : `Enter your ${PROVIDERS[configProvider]?.name} API Key`
-                  }
-                  value={userKeyInput}
-                  onChange={(e) => setUserKeyInput(e.target.value)}
-                  disabled={configProvider === "ollama"}
-                  className="text-xs"
-                />
+                <label
+                  htmlFor="provider-api-key-input"
+                  className="text-xs font-medium text-foreground"
+                >
+                  API Key / Token
+                </label>
+
+                {configProvider === "ollama" ? (
+                  <Input
+                    id="provider-api-key-input"
+                    type="password"
+                    placeholder="Not needed for local Ollama"
+                    value=""
+                    disabled
+                    className="text-xs"
+                  />
+                ) : hasSavedKey && !isEditingKey ? (
+                  <div className="space-y-2">
+                    {!confirmClearKey ? (
+                      <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs">
+                        <span className="font-medium text-success">
+                          Saved locally (••••••••••••)
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2.5 text-xs"
+                            onClick={() => {
+                              setIsEditingKey(true);
+                              setUserKeyInput("");
+                            }}
+                          >
+                            Update
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2.5 text-xs text-destructive hover:text-destructive"
+                            onClick={() => setConfirmClearKey(true)}
+                          >
+                            Clear
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs">
+                        <span className="font-medium text-destructive">Remove saved key?</span>
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="destructive"
+                            className="h-7 px-2.5 text-xs"
+                            onClick={handleClearSavedKey}
+                          >
+                            Confirm Clear
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2.5 text-xs"
+                            onClick={() => setConfirmClearKey(false)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="provider-api-key-input"
+                      type="password"
+                      autoComplete="off"
+                      spellCheck={false}
+                      placeholder={
+                        hasSavedKey
+                          ? `Enter new ${PROVIDERS[configProvider]?.name} API Key`
+                          : `Enter your ${PROVIDERS[configProvider]?.name} API Key`
+                      }
+                      value={userKeyInput}
+                      onChange={(e) => setUserKeyInput(e.target.value)}
+                      className="text-xs flex-1"
+                    />
+                    {hasSavedKey && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 px-2.5 text-xs shrink-0"
+                        onClick={() => {
+                          setIsEditingKey(false);
+                          setUserKeyInput("");
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    )}
+                  </div>
+                )}
+
                 <p className="text-[11px] text-muted-foreground">
-                  Stored securely in your local browser session and passed only for your explicit
-                  requests.
+                  Stored locally in your browser session and sent only for your explicit requests.
                 </p>
               </div>
 
               {PROVIDERS[configProvider]?.defaultBaseUrl && (
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-foreground">Base Endpoint URL</label>
+                  <label
+                    htmlFor="provider-base-url-input"
+                    className="text-xs font-medium text-foreground"
+                  >
+                    Base Endpoint URL
+                  </label>
                   <Input
+                    id="provider-base-url-input"
                     placeholder={PROVIDERS[configProvider]?.defaultBaseUrl}
                     value={baseUrlInput}
                     onChange={(e) => setBaseUrlInput(e.target.value)}
@@ -444,9 +574,11 @@ export function AiModelHub({
 
               {testingStatus && (
                 <div
+                  role="status"
+                  aria-live="polite"
                   className={`rounded-lg p-3 text-xs flex items-start gap-2 ${
                     testingStatus.ok
-                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                      ? "bg-success/10 text-success"
                       : "bg-destructive/10 text-destructive"
                   }`}
                 >
@@ -472,13 +604,18 @@ export function AiModelHub({
                   variant="outline"
                   size="sm"
                   disabled={testMutation.isPending}
-                  onClick={() =>
+                  onClick={() => {
+                    const keyForTest =
+                      userKeyInput.trim() ||
+                      (hasSavedKey && configProvider
+                        ? localStorage.getItem(`buddy_key_${configProvider}`) || undefined
+                        : undefined);
                     testMutation.mutate({
                       providerId: configProvider,
-                      apiKey: userKeyInput || undefined,
+                      apiKey: keyForTest,
                       baseUrl: baseUrlInput || undefined,
-                    })
-                  }
+                    });
+                  }}
                   className="text-xs gap-1.5"
                 >
                   <RefreshCw
@@ -488,7 +625,14 @@ export function AiModelHub({
                 </Button>
 
                 <div className="flex gap-2">
-                  <Button variant="ghost" size="sm" onClick={() => setConfigProvider(null)}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setUserKeyInput("");
+                      setConfigProvider(null);
+                    }}
+                  >
                     Cancel
                   </Button>
                   <Button size="sm" onClick={handleSaveConfig}>

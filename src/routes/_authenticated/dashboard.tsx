@@ -294,7 +294,7 @@ function Dashboard() {
             className="h-8 text-xs font-medium gap-1.5"
           >
             <Cpu className="h-3.5 w-3.5" />
-            AI Model Hub (100+)
+            AI Model Hub
           </Button>
           <Button
             variant={activeTab === "inspector" ? "secondary" : "ghost"}
