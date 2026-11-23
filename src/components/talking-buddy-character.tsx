@@ -18,11 +18,16 @@ export type TalkingBuddyState =
   | "scared"
   | "surprised"
   | "thinking"
+  | "planning"
+  | "analyzing"
   | "confused"
   | "listening"
   | "speaking"
   | "sleepy"
   | "working"
+  | "pointing"
+  | "verifying"
+  | "privacy"
   | "success"
   | "error"
   | "disconnected"
@@ -30,6 +35,7 @@ export type TalkingBuddyState =
 
 export interface TalkingBuddyProps {
   state?: TalkingBuddyState | Emotion | string;
+  stage?: string | undefined;
   buddyId?: string | null;
   slug?: string | null;
   size?: number;
@@ -53,6 +59,7 @@ export interface TalkingBuddyProps {
  */
 export function TalkingBuddyCharacter({
   state: rawState = "idle",
+  stage,
   buddyId,
   slug,
   size = 240,
@@ -80,11 +87,22 @@ export function TalkingBuddyCharacter({
       case "scared":
       case "surprised":
       case "thinking":
+      case "planning":
+      case "analyzing":
       case "confused":
+      case "curious":
+        return s === "curious" ? "confused" : (s as TalkingBuddyState);
       case "listening":
       case "speaking":
+      case "talking":
+        return s === "talking" ? "speaking" : (s as TalkingBuddyState);
       case "sleepy":
       case "working":
+      case "executing":
+        return s === "executing" ? "working" : (s as TalkingBuddyState);
+      case "pointing":
+      case "verifying":
+      case "privacy":
       case "success":
       case "celebrate":
         return s === "celebrate" ? "success" : (s as TalkingBuddyState);
@@ -210,19 +228,30 @@ export function TalkingBuddyCharacter({
       case "listening":
         return "scale(1.03) translateY(-1px)";
       case "thinking":
+      case "analyzing":
         return "rotate(3deg) translateY(-2px)";
+      case "planning":
+        return "rotate(-2deg) translateY(-2px)";
       case "speaking":
         return "translateY(-1px)";
       case "happy":
       case "success":
+      case "excited":
         return "translateY(-4px) rotate(1deg)";
       case "confused":
         return "rotate(-4deg)";
       case "error":
+      case "permission_required":
         return "rotate(-2deg) translateY(1px)";
+      case "pointing":
+        return "translateX(3px) rotate(3deg)";
+      case "privacy":
+        return "scaleX(-0.96) rotate(3deg)";
       case "sleepy":
+      case "disconnected":
         return "rotate(2deg) translateY(2px)";
       case "working":
+      case "verifying":
         return "translateY(-1px)";
       case "idle":
       default:
@@ -258,7 +287,12 @@ export function TalkingBuddyCharacter({
     if (state === "sad" || state === "error") {
       return "M45 53 Q50 49 55 53";
     }
-    if (state === "thinking") {
+    if (
+      state === "thinking" ||
+      state === "planning" ||
+      state === "analyzing" ||
+      state === "verifying"
+    ) {
       return "M46 51 Q50 50 54 51";
     }
     if (state === "surprised") {
@@ -270,12 +304,33 @@ export function TalkingBuddyCharacter({
 
   // Dynamic eye vertical radius for blinking and expression
   const eyeRy = useMemo(() => {
-    if (blinking) return 0.5;
-    if (state === "sleepy") return 1.2;
-    if (state === "thinking") return 2.2;
+    if (blinking || state === "privacy") return 0.5;
+    if (state === "sleepy" || state === "disconnected") return 1.2;
+    if (state === "thinking" || state === "analyzing" || state === "planning") return 2.2;
     if (state === "happy" || state === "success" || state === "laughing") return 2.6;
     return 3.7;
   }, [blinking, state]);
+
+  const activeStageLabel =
+    state === "listening"
+      ? "Listening"
+      : state === "thinking"
+        ? "Thinking…"
+        : state === "planning"
+          ? "Planning…"
+          : state === "analyzing"
+            ? "Analyzing…"
+            : state === "working"
+              ? "Working…"
+              : state === "pointing"
+                ? "Pointing"
+                : state === "verifying"
+                  ? "Verifying…"
+                  : state === "privacy"
+                    ? "Privacy"
+                    : state === "permission_required"
+                      ? "Approval needed"
+                      : null;
 
   return (
     <div
@@ -284,10 +339,14 @@ export function TalkingBuddyCharacter({
       onPointerLeave={handlePointerLeave}
       onClick={handleClick}
       className={cn(
-        "buddy-character-container relative inline-flex flex-col items-center justify-center select-none",
+        "buddy-avatar buddy-character-container relative inline-flex flex-col items-center justify-center select-none",
         interactive && "cursor-pointer",
         className,
       )}
+      data-buddy={visualId}
+      data-emotion={state}
+      data-stage={stage ?? state}
+      data-animated={avatarMotionEnabled(true, reducedMotion)}
       style={{
         width: size,
         height: size,
@@ -305,14 +364,14 @@ export function TalkingBuddyCharacter({
       }}
     >
       <div
-        className="w-full h-full relative flex items-center justify-center transition-transform duration-200 ease-out"
+        className="buddy-avatar-tilt w-full h-full relative flex items-center justify-center transition-transform duration-200 ease-out"
         style={{
           transform: !reducedMotion
             ? `perspective(800px) rotateX(${tilt.x}deg) rotateY(${tilt.y}deg) ${emotionTransform}`
             : undefined,
         }}
       >
-        {/* Floating wrapper matching global buddy-float animation */}
+        {/* Floating wrapper matching global CSS keyframes */}
         <span
           className={cn(
             "buddy-avatar-float block w-full h-full",
@@ -350,9 +409,13 @@ export function TalkingBuddyCharacter({
                 {/* Inner Shirt */}
                 <path d="M43 59h15l-1 27H44Z" fill="var(--buddy-shirt)" />
 
-                {/* Arms in specialist outfit */}
+                {/* Arms in specialist outfit (extended right arm when pointing) */}
                 <path
-                  d="m32 60 12 6-4 12-9-12m37-6-11 6 4 12 9-12"
+                  d={
+                    state === "pointing"
+                      ? "m32 60 12 6-4 12-9-12m37-6 14-6-2 9-12 3"
+                      : "m32 60 12 6-4 12-9-12m37-6-11 6 4 12 9-12"
+                  }
                   fill={`var(--buddy-${outfit})`}
                 />
 
@@ -425,8 +488,11 @@ export function TalkingBuddyCharacter({
                   {/* Laptop for Developer / Tech Buddy */}
                   {cue === "laptop" && (
                     <g>
-                      {/* Code screen glow when working or speaking */}
-                      {(state === "working" || state === "speaking") && (
+                      {/* Code screen glow when working, planning, or speaking */}
+                      {(state === "working" ||
+                        state === "planning" ||
+                        state === "verifying" ||
+                        state === "speaking") && (
                         <rect
                           x="58"
                           y="66"
@@ -484,17 +550,20 @@ export function TalkingBuddyCharacter({
         </span>
       </div>
 
-      {/* Subtle indicator when listening or working */}
-      {state === "listening" && (
-        <span className="absolute -bottom-2 flex items-center gap-1 rounded-full bg-primary/90 px-2 py-0.5 text-[9px] font-semibold text-primary-foreground shadow-sm">
-          <span className="size-1.5 rounded-full bg-emerald-400 animate-ping" />
-          Listening
-        </span>
-      )}
-      {state === "thinking" && (
-        <span className="absolute -bottom-2 flex items-center gap-1 rounded-full bg-secondary/90 px-2 py-0.5 text-[9px] font-medium text-foreground shadow-sm">
-          <span className="size-1.5 rounded-full bg-primary animate-pulse" />
-          Thinking…
+      {/* Concise active processing stage status text (tabular numerals / zero pill bloat) */}
+      {activeStageLabel && (
+        <span className="mt-1 inline-flex items-center gap-1.5 text-[10px] font-medium tracking-wide text-muted-foreground">
+          <span
+            className={cn(
+              "size-1.5 rounded-full",
+              state === "listening"
+                ? "bg-emerald-500"
+                : state === "permission_required"
+                  ? "bg-amber-500"
+                  : "bg-primary",
+            )}
+          />
+          {activeStageLabel}
         </span>
       )}
     </div>

@@ -72,8 +72,23 @@ export function Buddy3D({
       case "listening":
         return "listening";
       case "thinking":
-      case "pointing":
         return "thinking";
+      case "planning":
+        return "planning";
+      case "analyzing":
+        return "analyzing";
+      case "working":
+      case "executing":
+        return "working";
+      case "pointing":
+        return "pointing";
+      case "verifying":
+        return "verifying";
+      case "privacy":
+        return "privacy";
+      case "permission_required":
+      case "awaiting_approval":
+        return "permission_required";
       case "speaking":
       case "talking":
         return "speaking";
@@ -85,13 +100,14 @@ export function Buddy3D({
         return "excited";
       case "concerned":
       case "error":
-      case "privacy":
         return "error";
       case "curious":
       case "confused":
         return "confused";
       case "sleepy":
         return "sleepy";
+      case "disconnected":
+        return "disconnected";
       case "surprised":
         return "surprised";
       case "neutral":

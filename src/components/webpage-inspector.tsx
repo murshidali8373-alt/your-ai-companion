@@ -25,6 +25,7 @@ import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ChatMarkdown } from "@/components/chat-markdown";
 import {
   Dialog,
   DialogContent,
@@ -56,7 +57,97 @@ import {
 } from "@/shared/browser-action";
 import { findCatalogModel } from "@/lib/ai/model-hub";
 
-// Sample live mock pages for web dashboard demonstration
+export type InspectorSourceKind =
+  "live_webpage" | "captured_snapshot" | "sandbox_fixture" | "sample_data" | "unavailable";
+
+export interface ExtractedInspectorItem extends Record<string, unknown> {
+  orderId: string;
+  status: string;
+  details: string;
+}
+
+export const INSPECTOR_SOURCE_LABELS: Record<
+  InspectorSourceKind,
+  { badge: string; title: string; detail: string }
+> = {
+  live_webpage: {
+    badge: "Live Webpage",
+    title: "Connected to active browser tab",
+    detail: "Actions execute against the live DOM with re-grounding and verification.",
+  },
+  captured_snapshot: {
+    badge: "Captured Snapshot",
+    title: "Inspecting imported PageSnapshot JSON (Read-Only Analysis)",
+    detail:
+      "AI page analysis uses the supplied DOM snapshot; interactive clicks run as sandbox dry-runs because no live browser tab is attached.",
+  },
+  sandbox_fixture: {
+    badge: "Sandbox Dry-Run Fixture",
+    title: "Sandbox Dry-Run Fixture (Offline)",
+    detail:
+      "Steps simulate sequentially against a static fixture without touching a live browser tab.",
+  },
+  sample_data: {
+    badge: "Sample Data",
+    title: "Sample Data Preview (No Live Browser Tab Connected)",
+    detail:
+      "This web inspector is previewing built-in sample data. Multi-step executions are simulated dry-runs; use the Chrome Extension side panel for live webpage actions.",
+  },
+  unavailable: {
+    badge: "Unavailable",
+    title: "Unavailable — Live Browser Tab Not Connected",
+    detail:
+      "The web dashboard cannot directly inspect or mutate open Chrome tabs. Select Sample Data or paste a Captured PageSnapshot JSON to analyze a snapshot.",
+  },
+};
+
+export function deriveExtractedItemsFromSnapshot(
+  snapshot: PageSnapshot | null | undefined,
+): ExtractedInspectorItem[] {
+  if (!snapshot || !snapshot.text) return [];
+  const matches = snapshot.text.match(/\b[A-Z]{2,6}-\d{4,10}(?:-[A-Z]{2,4})?\b/g) || [];
+  const unique = Array.from(new Set(matches));
+  return unique.map((orderId) => ({
+    orderId,
+    status: /pending/i.test(snapshot.text) ? "pending (from snapshot)" : "detected",
+    details: `Parsed from "${snapshot.title}"`,
+  }));
+}
+
+export function parseCapturedSnapshotJson(rawJson: string): PageSnapshot {
+  const parsed = JSON.parse(rawJson) as Partial<PageSnapshot>;
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Snapshot JSON must be an object.");
+  }
+  const url = typeof parsed.url === "string" && parsed.url.trim() ? parsed.url.trim() : "";
+  const title = typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : "";
+  if (!url || !title) {
+    throw new Error('Snapshot JSON requires non-empty "url" and "title" fields.');
+  }
+  let origin = typeof parsed.origin === "string" ? parsed.origin : "";
+  if (!origin) {
+    try {
+      origin = new URL(url).origin;
+    } catch {
+      origin = url;
+    }
+  }
+  return {
+    url,
+    origin,
+    title,
+    capturedAt:
+      typeof parsed.capturedAt === "string" ? parsed.capturedAt : new Date().toISOString(),
+    headings: Array.isArray(parsed.headings) ? parsed.headings : [],
+    forms: Array.isArray(parsed.forms) ? parsed.forms : [],
+    controls: Array.isArray(parsed.controls) ? parsed.controls : [],
+    alerts: Array.isArray(parsed.alerts) ? parsed.alerts : [],
+    text: typeof parsed.text === "string" ? parsed.text : "",
+    truncated: Boolean(parsed.truncated),
+  };
+}
+
+// Built-in sample pages for web dashboard preview (explicitly labeled as Sample Data / Sandbox Fixture)
 const SAMPLE_PAGES: Record<string, PageSnapshot> = {
   meesho_supplier: {
     url: "https://supplier.meesho.com/panel/orders",
@@ -270,15 +361,18 @@ export function WebpageInspector({
 }) {
   const runAsk = useServerFn(askBuddy);
   const [selectedSampleKey, setSelectedSampleKey] = useState<string>("meesho_supplier");
+  const [sourceKind, setSourceKind] = useState<InspectorSourceKind>("sample_data");
   const [currentSnapshot, setCurrentSnapshot] = useState<PageSnapshot>(
     SAMPLE_PAGES["meesho_supplier"]!,
   );
+  const [snapshotJsonInput, setSnapshotJsonInput] = useState<string>("");
+  const [snapshotJsonError, setSnapshotJsonError] = useState<string | null>(null);
   const [plan, setPlan] = useState<TaskExecutionPlan | null>(null);
   const [explanation, setExplanation] = useState<string | null>(null);
   const [proposedNextStep, setProposedNextStep] = useState<string | null>(null);
   const [approvalModalAction, setApprovalModalAction] = useState<BrowserAction | null>(null);
 
-  // Multi-Action Browser Operator State
+  // Multi-Action Browser Operator State (Sandbox Dry-Run on web dashboard)
   const [multiTaskInstruction, setMultiTaskInstruction] = useState<string>(
     "Open Meesho Supplier Panel, go to Orders, open today's orders, find pending orders, copy their order IDs, and prepare a list of them",
   );
@@ -287,44 +381,73 @@ export function WebpageInspector({
   const [pendingApprovalMultiStep, setPendingApprovalMultiStep] = useState<MultiActionStep | null>(
     null,
   );
-  const [extractedItems, setExtractedItems] = useState<
-    Array<{ orderId: string; status: string; details: string }>
-  >([
-    { orderId: "MSH-982410-IN", status: "pending", details: "Today's Order — Pending Dispatch" },
-    { orderId: "MSH-982411-IN", status: "pending", details: "Today's Order — Pending Dispatch" },
-    { orderId: "MSH-982412-IN", status: "pending", details: "Today's Order — Ready to Pack" },
-    { orderId: "MSH-982415-IN", status: "pending", details: "Today's Order — New Order" },
-  ]);
+  const [extractedItems, setExtractedItems] = useState<ExtractedInspectorItem[]>(() =>
+    deriveExtractedItemsFromSnapshot(SAMPLE_PAGES["meesho_supplier"]),
+  );
+
+  const handleApplyCapturedSnapshot = () => {
+    try {
+      const parsed = parseCapturedSnapshotJson(snapshotJsonInput);
+      setSnapshotJsonError(null);
+      setCurrentSnapshot(parsed);
+      setSourceKind("captured_snapshot");
+      setExplanation(null);
+      setPlan(null);
+      setMultiActionPlan(null);
+      setExtractedItems(deriveExtractedItemsFromSnapshot(parsed));
+      toast.success(`Loaded captured snapshot: ${parsed.title}`);
+    } catch (err) {
+      setSnapshotJsonError(err instanceof Error ? err.message : "Invalid PageSnapshot JSON.");
+    }
+  };
 
   const handleGenerateMultiPlan = (instruction?: string) => {
+    if (sourceKind === "unavailable") {
+      toast.error("Unavailable: select a sample fixture or load a captured snapshot JSON first.");
+      return;
+    }
     const text = instruction || multiTaskInstruction;
     const p = createMultiActionPlan(text, currentSnapshot);
     setMultiActionPlan(p);
     setPendingApprovalMultiStep(null);
-    toast.success(`Generated ${p.steps.length}-step execution plan for Buddy.`);
+    if (sourceKind === "sample_data") {
+      setSourceKind("sandbox_fixture");
+    }
+    toast.success(`Generated ${p.steps.length}-step sandbox dry-run plan.`);
   };
 
   const executeSingleStep = async (step: MultiActionStep) => {
+    if (sourceKind === "unavailable") {
+      return {
+        success: false,
+        result: "Unavailable: no live browser tab or snapshot connected.",
+      };
+    }
     if (step.selector) {
       onHighlightElement?.(step.selector);
     }
-    await new Promise((r) => setTimeout(r, 550));
+    await new Promise((r) => setTimeout(r, 350));
 
     if (step.action === "extract") {
+      const parsed = deriveExtractedItemsFromSnapshot(currentSnapshot);
+      setExtractedItems(parsed);
       return {
         success: true,
-        result: `Extracted ${extractedItems.length} order IDs from page`,
-        extractedData: extractedItems,
+        result:
+          parsed.length > 0
+            ? `Sandbox dry-run parsed ${parsed.length} item(s) from snapshot text`
+            : "Sandbox dry-run finished (no structured order IDs present in this snapshot)",
+        extractedData: parsed,
       };
     }
     return {
       success: true,
-      result: `Action "${step.title}" verified on page.`,
+      result: `Sandbox dry-run simulated "${step.title}" against fixture (not executed on a live tab).`,
     };
   };
 
   const handleRunNextStep = async () => {
-    if (!multiActionPlan) return;
+    if (!multiActionPlan || sourceKind === "unavailable") return;
     const updated = await executeNextPlanStep(multiActionPlan, executeSingleStep);
     setMultiActionPlan(updated);
     if (updated.status === "awaiting_approval") {
@@ -332,11 +455,15 @@ export function WebpageInspector({
       setPendingApprovalMultiStep(step || null);
       toast.warning(`Approval required: ${step?.title}`);
     } else if (updated.status === "completed") {
-      toast.success("All steps completed and verified!");
+      toast.success("Sandbox dry-run completed.");
     }
   };
 
   const handleRunAllSteps = async () => {
+    if (sourceKind === "unavailable") {
+      toast.error("Unavailable: live browser tab is not connected.");
+      return;
+    }
     if (!multiActionPlan) {
       handleGenerateMultiPlan();
       return;
@@ -365,11 +492,11 @@ export function WebpageInspector({
 
       curPlan = await executeNextPlanStep(curPlan, executeSingleStep);
       setMultiActionPlan(curPlan);
-      await new Promise((r) => setTimeout(r, 400));
+      await new Promise((r) => setTimeout(r, 250));
     }
     setIsExecutingMultiPlan(false);
     if (curPlan.status === "completed") {
-      toast.success("Multi-action browser plan completed successfully!");
+      toast.success("Sandbox dry-run completed (fixture only).");
     }
   };
 
@@ -377,15 +504,7 @@ export function WebpageInspector({
     if (!multiActionPlan) return;
     setMultiActionPlan(pauseMultiActionPlan(multiActionPlan));
     setIsExecutingMultiPlan(false);
-    toast.info("Plan execution paused.");
-  };
-
-  const handleResumeMultiPlan = () => {
-    if (!multiActionPlan) return;
-    const resumed = resumeMultiActionPlan(multiActionPlan);
-    setMultiActionPlan(resumed);
-    toast.info("Resuming plan execution.");
-    handleRunAllSteps();
+    toast.info("Sandbox plan paused.");
   };
 
   const handleSkipMultiPlanStep = () => {
@@ -401,7 +520,7 @@ export function WebpageInspector({
     setPendingApprovalMultiStep(null);
     setIsExecutingMultiPlan(false);
     setMultiActionPlan(cancelMultiActionPlan(multiActionPlan));
-    toast.error("Multi-action execution stopped.");
+    toast.error("Sandbox execution stopped.");
   };
 
   const handleApproveConsequentialStep = async () => {
@@ -409,7 +528,7 @@ export function WebpageInspector({
     setPendingApprovalMultiStep(null);
     const approved = approveAndContinuePlan(multiActionPlan);
     setMultiActionPlan(approved);
-    toast.success("Consequential action approved. Continuing execution...");
+    toast.success("Consequential step approved for sandbox dry-run.");
     const nextPlan = await executeNextPlanStep(approved, executeSingleStep);
     setMultiActionPlan(nextPlan);
   };
@@ -420,7 +539,7 @@ export function WebpageInspector({
       .join("\n");
     if (typeof navigator !== "undefined" && navigator.clipboard) {
       navigator.clipboard.writeText(text);
-      toast.success("Order list copied to clipboard!");
+      toast.success("Parsed snapshot items copied to clipboard.");
     }
   };
 
@@ -514,11 +633,11 @@ export function WebpageInspector({
   };
 
   const runActionDirectly = async (action: BrowserAction) => {
-    if (!plan) return;
+    if (!plan || sourceKind === "unavailable") return;
 
     const updatedPlan = await executePlanStep(plan, action, async (act) => {
-      // Simulate real browser execution
-      await new Promise((r) => setTimeout(r, 600));
+      // Dry-run sandbox inspection against fixture (live execution requires extension bridge)
+      await new Promise((r) => setTimeout(r, 300));
       if (act.target.selector) {
         onHighlightElement?.(act.target.selector);
       }
@@ -527,9 +646,9 @@ export function WebpageInspector({
 
     setPlan(updatedPlan);
     if (updatedPlan.currentStage === "completed") {
-      toast.success(`Action verified: ${action.type}`);
+      toast.info(`Sandbox dry-run finished for "${action.type}" (fixture preview only).`);
     } else if (updatedPlan.currentStage === "failed") {
-      toast.error(updatedPlan.error || "Action could not be executed.");
+      toast.error(updatedPlan.error || "Sandbox dry-run step failed.");
     }
   };
 
@@ -562,32 +681,53 @@ export function WebpageInspector({
 
   return (
     <div className="space-y-6">
-      {/* Page Header & Sample Selector */}
+      {/* Page Header & Source State Selector */}
       <div className="panel p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Globe className="h-4 w-4 text-primary" />
               <h2 className="text-sm font-semibold text-foreground">
-                Webpage Context & Action Guide
+                Webpage Context & Action Inspector
               </h2>
+              <Badge
+                variant={sourceKind === "unavailable" ? "destructive" : "outline"}
+                className="text-[10px] font-mono"
+              >
+                {INSPECTOR_SOURCE_LABELS[sourceKind].badge}
+              </Badge>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Inspect DOM structure, detect form fields, formulate safe action plans, and request
-              confirmation for consequential tasks.
+              Analyze DOM snapshots, preview action plans, and test confirmation guardrails without
+              pretending to execute on live Chrome tabs.
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">Demo Page:</span>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-xs text-muted-foreground">Snapshot Source:</span>
             <select
+              aria-label="Snapshot Source"
               value={selectedSampleKey}
               onChange={(e) => {
                 const k = e.target.value;
                 setSelectedSampleKey(k);
-                setCurrentSnapshot(SAMPLE_PAGES[k] ?? SAMPLE_PAGES["meesho_supplier"]!);
                 setExplanation(null);
                 setPlan(null);
+                setMultiActionPlan(null);
+                setPendingApprovalMultiStep(null);
+                if (k === "unavailable") {
+                  setSourceKind("unavailable");
+                  setExtractedItems([]);
+                  return;
+                }
+                if (k === "captured_json") {
+                  setSourceKind("captured_snapshot");
+                  return;
+                }
+                const nextSnap = SAMPLE_PAGES[k] ?? SAMPLE_PAGES["meesho_supplier"]!;
+                setCurrentSnapshot(nextSnap);
+                setSourceKind("sample_data");
+                setExtractedItems(deriveExtractedItemsFromSnapshot(nextSnap));
                 if (k === "meesho_supplier") {
                   setMultiTaskInstruction(
                     "Open Meesho Supplier Panel, go to Orders, open today's orders, find pending orders, copy their order IDs, and prepare a list of them",
@@ -601,45 +741,83 @@ export function WebpageInspector({
                     "Update user bio to Senior Engineer and permanently delete account",
                   );
                 }
-                setMultiActionPlan(null);
               }}
               className="rounded-lg border border-border bg-background px-2.5 py-1 text-xs"
             >
-              <option value="meesho_supplier">Meesho Supplier Panel (Orders)</option>
-              <option value="flight_booking">Flight Booking Page</option>
-              <option value="account_settings">Account Settings (Danger Zone)</option>
+              <option value="meesho_supplier">Sample: Meesho Supplier Panel</option>
+              <option value="flight_booking">Sample: Flight Booking Page</option>
+              <option value="account_settings">Sample: Account Settings</option>
+              <option value="captured_json">Captured Snapshot JSON (Paste)</option>
+              <option value="unavailable">Unavailable (No Live Tab Connected)</option>
             </select>
           </div>
         </div>
 
-        {/* Current URL & Snapshot summary */}
-        <div className="mt-4 rounded-xl border border-border/80 bg-muted/20 p-3 text-xs">
-          <div className="flex items-center justify-between">
-            <span className="font-medium text-foreground truncate">{currentSnapshot.title}</span>
-            <Badge variant="outline" className="font-mono text-[10px]">
-              {currentSnapshot.origin}
-            </Badge>
-          </div>
-          <div className="mt-2 flex flex-wrap gap-2 text-muted-foreground text-[11px]">
-            <span>{currentSnapshot.forms.length} Form inputs</span>
-            <span>·</span>
-            <span>{currentSnapshot.controls.length} Clickable controls</span>
-            <span>·</span>
-            <span>{currentSnapshot.headings.length} Headings</span>
-          </div>
+        {/* Truthful Source State Banner */}
+        <div
+          className={`mt-4 rounded-xl border p-3 text-xs ${
+            sourceKind === "unavailable"
+              ? "border-destructive/40 bg-destructive/5 text-foreground"
+              : "border-border/80 bg-muted/30 text-foreground"
+          }`}
+        >
+          <p className="font-semibold">{INSPECTOR_SOURCE_LABELS[sourceKind].title}</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            {INSPECTOR_SOURCE_LABELS[sourceKind].detail}
+          </p>
         </div>
+
+        {/* Captured PageSnapshot JSON Input Panel */}
+        {selectedSampleKey === "captured_json" && (
+          <div className="mt-3 rounded-xl border border-border bg-muted/20 p-3 space-y-2">
+            <label htmlFor="captured-snapshot-json" className="block text-xs font-medium">
+              Paste PageSnapshot JSON (from extension GET_SNAPSHOT)
+            </label>
+            <textarea
+              id="captured-snapshot-json"
+              rows={4}
+              value={snapshotJsonInput}
+              onChange={(e) => setSnapshotJsonInput(e.target.value)}
+              placeholder='{"url":"https://example.com","title":"Example Page","headings":[],"forms":[],"controls":[],"alerts":[],"text":"..."}'
+              className="w-full rounded-lg border border-border bg-background p-2 font-mono text-[11px] text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            {snapshotJsonError && <p className="text-xs text-destructive">{snapshotJsonError}</p>}
+            <Button size="sm" variant="secondary" onClick={handleApplyCapturedSnapshot}>
+              Load Snapshot
+            </Button>
+          </div>
+        )}
+
+        {/* Current URL & Snapshot summary */}
+        {sourceKind !== "unavailable" && (
+          <div className="mt-4 rounded-xl border border-border/80 bg-muted/20 p-3 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-medium text-foreground truncate">{currentSnapshot.title}</span>
+              <Badge variant="outline" className="font-mono text-[10px] shrink-0">
+                {currentSnapshot.origin}
+              </Badge>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2 text-muted-foreground text-[11px]">
+              <span>{currentSnapshot.forms.length} Form inputs</span>
+              <span>·</span>
+              <span>{currentSnapshot.controls.length} Clickable controls</span>
+              <span>·</span>
+              <span>{currentSnapshot.headings.length} Headings</span>
+            </div>
+          </div>
+        )}
 
         <div className="mt-4 flex flex-wrap gap-2">
           <Button
             size="sm"
-            disabled={analyzeMutation.isPending}
+            disabled={analyzeMutation.isPending || sourceKind === "unavailable"}
             onClick={() => analyzeMutation.mutate("explain_page")}
             className="text-xs gap-1.5"
           >
             <Sparkles
               className={`h-3.5 w-3.5 ${analyzeMutation.isPending ? "animate-spin" : ""}`}
             />
-            {analyzeMutation.isPending ? "Analyzing Webpage…" : "Explain This Page & Next Step"}
+            {analyzeMutation.isPending ? "Analyzing Snapshot…" : "Analyze Snapshot with AI"}
           </Button>
 
           {explanation && (
@@ -656,69 +834,83 @@ export function WebpageInspector({
         </div>
       </div>
 
-      {/* MULTI-ACTION BROWSER OPERATOR DASHBOARD */}
-      <div className="panel p-5 space-y-4 border-primary/30 bg-primary/[0.02]">
+      {/* MULTI-ACTION SANDBOX OPERATOR PREVIEW */}
+      <div className="panel p-5 space-y-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
             <Layers className="h-4 w-4 text-primary" />
             <h3 className="text-sm font-semibold text-foreground">
-              Multi-Action Browser Operator Engine
+              Multi-Action Planner & Sandbox Dry-Run
             </h3>
           </div>
           <Badge variant="outline" className="text-[10px] uppercase font-mono w-fit">
-            Sequential Automation & Verification
+            {sourceKind === "unavailable"
+              ? "Unavailable (No Tab)"
+              : "Sandbox Dry-Run Fixture (Offline)"}
           </Badge>
         </div>
 
         <p className="text-xs text-muted-foreground">
-          Buddy decomposes multi-step instructions into verified actions, navigates between states,
-          clicks elements, fills forms, verifies each DOM transition, requests confirmation for
-          consequential steps, and extracts audit data.
+          Preview how Buddy decomposes instructions, flags consequential confirmation gates, and
+          parses data from a snapshot. Live DOM execution on active websites occurs inside the
+          Chrome Extension side panel.
         </p>
 
-        {/* Preset Task Buttons */}
+        {/* Preset Fixture Buttons */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[11px] text-muted-foreground">Presets:</span>
+          <span className="text-[11px] text-muted-foreground">Sample Fixtures:</span>
           <button
             type="button"
             onClick={() => {
               setSelectedSampleKey("meesho_supplier");
-              setCurrentSnapshot(SAMPLE_PAGES["meesho_supplier"]!);
+              setSourceKind("sandbox_fixture");
+              const snap = SAMPLE_PAGES["meesho_supplier"]!;
+              setCurrentSnapshot(snap);
+              setExtractedItems(deriveExtractedItemsFromSnapshot(snap));
               const instr =
                 "Open Meesho Supplier Panel, go to Orders, open today's orders, find pending orders, copy their order IDs, and prepare a list of them";
               setMultiTaskInstruction(instr);
-              handleGenerateMultiPlan(instr);
+              setMultiActionPlan(createMultiActionPlan(instr, snap));
+              setPendingApprovalMultiStep(null);
             }}
             className="rounded-md border border-border/70 bg-card px-2.5 py-1 text-[11px] hover:border-primary transition-colors text-foreground"
           >
-            📦 Meesho: Extract Pending Orders
+            Sample: Meesho Orders
           </button>
           <button
             type="button"
             onClick={() => {
               setSelectedSampleKey("flight_booking");
-              setCurrentSnapshot(SAMPLE_PAGES["flight_booking"]!);
+              setSourceKind("sandbox_fixture");
+              const snap = SAMPLE_PAGES["flight_booking"]!;
+              setCurrentSnapshot(snap);
+              setExtractedItems(deriveExtractedItemsFromSnapshot(snap));
               const instr =
                 "Choose Economy Seat, fill passenger full name, fill passport number, and confirm ticket purchase";
               setMultiTaskInstruction(instr);
-              handleGenerateMultiPlan(instr);
+              setMultiActionPlan(createMultiActionPlan(instr, snap));
+              setPendingApprovalMultiStep(null);
             }}
             className="rounded-md border border-border/70 bg-card px-2.5 py-1 text-[11px] hover:border-primary transition-colors text-foreground"
           >
-            ✈️ Flight Booking: Seat & Payment
+            Sample: Flight Booking
           </button>
           <button
             type="button"
             onClick={() => {
               setSelectedSampleKey("account_settings");
-              setCurrentSnapshot(SAMPLE_PAGES["account_settings"]!);
+              setSourceKind("sandbox_fixture");
+              const snap = SAMPLE_PAGES["account_settings"]!;
+              setCurrentSnapshot(snap);
+              setExtractedItems(deriveExtractedItemsFromSnapshot(snap));
               const instr = "Update profile bio to Senior Architect and permanently delete account";
               setMultiTaskInstruction(instr);
-              handleGenerateMultiPlan(instr);
+              setMultiActionPlan(createMultiActionPlan(instr, snap));
+              setPendingApprovalMultiStep(null);
             }}
             className="rounded-md border border-border/70 bg-card px-2.5 py-1 text-[11px] hover:border-primary transition-colors text-foreground"
           >
-            🛡️ Account: Settings & Danger Zone
+            Sample: Account Danger Zone
           </button>
         </div>
 
@@ -732,9 +924,14 @@ export function WebpageInspector({
             className="flex-1 rounded-xl border border-border bg-background p-3 text-xs text-foreground focus:border-primary focus:outline-none"
           />
           <div className="flex flex-col gap-1.5 shrink-0 justify-end">
-            <Button size="sm" onClick={() => handleGenerateMultiPlan()} className="text-xs gap-1.5">
+            <Button
+              size="sm"
+              disabled={sourceKind === "unavailable"}
+              onClick={() => handleGenerateMultiPlan()}
+              className="text-xs gap-1.5"
+            >
               <RotateCw className="h-3.5 w-3.5" />
-              Generate Plan
+              Generate Dry-Run Plan
             </Button>
           </div>
         </div>
@@ -746,8 +943,8 @@ export function WebpageInspector({
               <div>
                 <div className="font-semibold text-xs text-foreground">{multiActionPlan.title}</div>
                 <div className="text-[11px] text-muted-foreground">
-                  Target: {multiActionPlan.targetWebsite || "Active Webpage"} ·{" "}
-                  {multiActionPlan.totalSteps} steps total
+                  Snapshot Target: {multiActionPlan.targetWebsite || "Sample Fixture"} ·{" "}
+                  {multiActionPlan.totalSteps} steps total (Sandbox Dry-Run)
                 </div>
               </div>
 
@@ -911,18 +1108,28 @@ export function WebpageInspector({
               <div className="flex items-center gap-2">
                 <Button
                   size="sm"
-                  disabled={isExecutingMultiPlan || multiActionPlan.status === "completed"}
+                  disabled={
+                    sourceKind === "unavailable" ||
+                    isExecutingMultiPlan ||
+                    multiActionPlan.status === "completed" ||
+                    multiActionPlan.status === "cancelled"
+                  }
                   onClick={handleRunAllSteps}
                   className="text-xs gap-1.5 h-8"
                 >
                   <Play className="h-3.5 w-3.5" />
-                  {multiActionPlan.status === "paused" ? "Resume Execution" : "Execute All Steps"}
+                  {multiActionPlan.status === "paused" ? "Resume Dry-Run" : "Dry-Run All Steps"}
                 </Button>
 
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={isExecutingMultiPlan || multiActionPlan.status === "completed"}
+                  disabled={
+                    sourceKind === "unavailable" ||
+                    isExecutingMultiPlan ||
+                    multiActionPlan.status === "completed" ||
+                    multiActionPlan.status === "cancelled"
+                  }
                   onClick={handleRunNextStep}
                   className="text-xs gap-1.5 h-8"
                 >
@@ -946,7 +1153,9 @@ export function WebpageInspector({
                   size="sm"
                   variant="ghost"
                   onClick={handleSkipMultiPlanStep}
-                  disabled={multiActionPlan.status === "completed"}
+                  disabled={
+                    multiActionPlan.status === "completed" || multiActionPlan.status === "cancelled"
+                  }
                   className="text-xs gap-1.5 h-8"
                 >
                   <SkipForward className="h-3.5 w-3.5" />
@@ -967,42 +1176,53 @@ export function WebpageInspector({
           </div>
         )}
 
-        {/* Extracted Data Result & Audit Report */}
+        {/* Parsed Snapshot Data Panel (Explicitly Labeled) */}
         {multiActionPlan &&
           multiActionPlan.steps.some((s) => s.action === "extract" && s.status === "completed") && (
-            <div className="rounded-xl border border-sky-500/40 bg-sky-500/[0.04] p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sky-600 dark:text-sky-400 font-semibold text-xs">
-                  <FileText className="h-4 w-4" />
-                  <span>Extracted Web Data ({extractedItems.length} items)</span>
+            <div className="rounded-xl border border-border bg-muted/20 p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 font-semibold text-xs text-foreground">
+                  <FileText className="h-4 w-4 text-primary" />
+                  <span>
+                    Parsed Snapshot Data ({extractedItems.length} item(s)) ·{" "}
+                    {INSPECTOR_SOURCE_LABELS[sourceKind].badge}
+                  </span>
                 </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleCopyExtractedList}
-                  className="text-xs gap-1.5 h-7 px-2.5 border-sky-500/40 text-sky-600 hover:bg-sky-500/10"
-                >
-                  <Copy className="h-3 w-3" />
-                  Copy List
-                </Button>
+                {extractedItems.length > 0 && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleCopyExtractedList}
+                    className="text-xs gap-1.5 h-7 px-2.5"
+                  >
+                    <Copy className="h-3 w-3" />
+                    Copy List
+                  </Button>
+                )}
               </div>
 
-              <div className="rounded-lg border border-border bg-card p-3 font-mono text-xs max-h-40 overflow-y-auto space-y-1">
-                {extractedItems.map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between py-0.5 border-b border-border/40 last:border-0"
-                  >
-                    <span className="font-semibold text-foreground">{item.orderId}</span>
-                    <span className="text-[10px] text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded">
-                      {item.status}
-                    </span>
-                    <span className="text-muted-foreground text-[11px] truncate max-w-[200px]">
-                      {item.details}
-                    </span>
-                  </div>
-                ))}
-              </div>
+              {extractedItems.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No structured order IDs found in the current snapshot text.
+                </p>
+              ) : (
+                <div className="rounded-lg border border-border bg-card p-3 font-mono text-xs max-h-40 overflow-y-auto space-y-1">
+                  {extractedItems.map((item, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between gap-2 py-0.5 border-b border-border/40 last:border-0"
+                    >
+                      <span className="font-semibold text-foreground">{item.orderId}</span>
+                      <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                        {item.status}
+                      </span>
+                      <span className="text-muted-foreground text-[11px] truncate max-w-[200px]">
+                        {item.details}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
       </div>
@@ -1012,7 +1232,7 @@ export function WebpageInspector({
         <div className="panel p-5">
           <div className="mb-3 flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              7-Stage Task Lifecycle
+              7-Stage Sandbox Dry-Run Lifecycle
             </span>
             <Badge
               variant={
@@ -1032,7 +1252,6 @@ export function WebpageInspector({
             {stages.map((st, i) => {
               const isPast = stages.indexOf(plan.currentStage) > i;
               const isCurrent = plan.currentStage === st;
-              const isFailed = plan.currentStage === "failed";
 
               return (
                 <div
@@ -1059,7 +1278,7 @@ export function WebpageInspector({
           {/* Audit log steps */}
           <div className="mt-4 space-y-1.5 rounded-lg border border-border/60 bg-muted/10 p-3 text-xs font-mono">
             <div className="text-[10px] uppercase text-muted-foreground font-sans">
-              Execution Trace:
+              Dry-Run Trace:
             </div>
             {plan.steps.map((s, idx) => (
               <div key={idx} className="flex items-start gap-2 text-muted-foreground">
@@ -1074,73 +1293,71 @@ export function WebpageInspector({
       {/* Buddy's Explanation & Recommendations */}
       {explanation && (
         <div className="panel p-5 space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Buddy's Page Analysis
+              Buddy's Snapshot Analysis ({INSPECTOR_SOURCE_LABELS[sourceKind].badge})
             </h3>
             {proposedNextStep && (
-              <Badge variant="outline" className="text-[11px]">
-                Next: {proposedNextStep}
-              </Badge>
+              <span className="text-[11px] text-muted-foreground">Next: {proposedNextStep}</span>
             )}
           </div>
-          <p className="whitespace-pre-wrap text-sm text-foreground leading-relaxed">
-            {explanation}
-          </p>
+          <ChatMarkdown content={explanation} variant="assistant" />
         </div>
       )}
 
-      {/* Interactive Page Actions & Controls with Safety Gates */}
-      <div className="panel p-5">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-          Actionable Page Controls (Click to Execute with Guardrails)
-        </h3>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {currentSnapshot.controls.map((ctrl) => {
-            const isSensitiveAction =
-              ctrl.name.toLowerCase().includes("delete") ||
-              ctrl.name.toLowerCase().includes("purchase") ||
-              ctrl.name.toLowerCase().includes("confirm");
+      {/* Interactive Page Controls (Sandbox Fixture Preview) */}
+      {sourceKind !== "unavailable" && (
+        <div className="panel p-5">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+            Snapshot Controls (Sandbox Dry-Run Preview)
+          </h3>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {currentSnapshot.controls.map((ctrl) => {
+              const isSensitiveAction =
+                ctrl.name.toLowerCase().includes("delete") ||
+                ctrl.name.toLowerCase().includes("purchase") ||
+                ctrl.name.toLowerCase().includes("confirm");
 
-            return (
-              <button
-                key={ctrl.ref}
-                type="button"
-                onClick={() =>
-                  handleExecuteAction({
-                    id: `act_${ctrl.ref}`,
-                    type: isSensitiveAction ? "click_submit" : "click",
-                    target: { ref: ctrl.ref, selector: ctrl.selector, role: ctrl.role },
-                    description: `Click "${ctrl.name}"`,
-                  })
-                }
-                className={`flex items-center justify-between rounded-xl border p-3 text-left text-xs transition-colors hover:border-ring ${
-                  isSensitiveAction
-                    ? "border-amber-500/40 bg-amber-500/5 hover:bg-amber-500/10"
-                    : "border-border/80 bg-card hover:bg-secondary/40"
-                }`}
-              >
-                <div className="min-w-0 pr-2">
-                  <span className="block font-medium truncate text-foreground">{ctrl.name}</span>
-                  <span className="block font-mono text-[10px] text-muted-foreground truncate">
-                    {ctrl.selector}
-                  </span>
-                </div>
-                {isSensitiveAction ? (
-                  <Badge
-                    variant="outline"
-                    className="border-amber-500/50 text-amber-600 text-[10px] shrink-0"
-                  >
-                    High Impact
-                  </Badge>
-                ) : (
-                  <MousePointer className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                )}
-              </button>
-            );
-          })}
+              return (
+                <button
+                  key={ctrl.ref}
+                  type="button"
+                  onClick={() =>
+                    handleExecuteAction({
+                      id: `act_${ctrl.ref}`,
+                      type: isSensitiveAction ? "click_submit" : "click",
+                      target: { ref: ctrl.ref, selector: ctrl.selector, role: ctrl.role },
+                      description: `Click "${ctrl.name}"`,
+                    })
+                  }
+                  className={`flex items-center justify-between rounded-xl border p-3 text-left text-xs transition-colors hover:border-ring ${
+                    isSensitiveAction
+                      ? "border-amber-500/40 bg-amber-500/5 hover:bg-amber-500/10"
+                      : "border-border/80 bg-card hover:bg-secondary/40"
+                  }`}
+                >
+                  <div className="min-w-0 pr-2">
+                    <span className="block font-medium truncate text-foreground">{ctrl.name}</span>
+                    <span className="block font-mono text-[10px] text-muted-foreground truncate">
+                      {ctrl.selector}
+                    </span>
+                  </div>
+                  {isSensitiveAction ? (
+                    <Badge
+                      variant="outline"
+                      className="border-amber-500/50 text-amber-600 text-[10px] shrink-0"
+                    >
+                      High Impact
+                    </Badge>
+                  ) : (
+                    <MousePointer className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Confirmation Modal for Consequential Actions */}
       {approvalModalAction && (

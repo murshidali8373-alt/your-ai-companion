@@ -14,25 +14,44 @@ export type BuddyEmotion =
   | "neutral"
   | "listening"
   | "thinking"
+  | "planning"
+  | "analyzing"
+  | "working"
+  | "pointing"
+  | "verifying"
   | "speaking"
   | "happy"
   | "concerned"
   | "curious"
   | "celebrate"
+  | "error"
+  | "privacy"
+  | "permission_required"
+  | "disconnected"
   | "sleepy"
   | "surprised";
 
 export function normalizeBuddyEmotion(e?: string): BuddyEmotion {
   const clean = (e || "neutral").toLowerCase();
-  if (clean === "idle") return "neutral";
+  if (clean === "idle" || clean === "neutral") return "neutral";
   if (clean === "thinking") return "thinking";
-  if (clean === "speaking") return "speaking";
+  if (clean === "planning") return "planning";
+  if (clean === "analyzing") return "analyzing";
+  if (clean === "working" || clean === "executing") return "working";
+  if (clean === "pointing") return "pointing";
+  if (clean === "verifying") return "verifying";
+  if (clean === "speaking" || clean === "talking") return "speaking";
   if (clean === "listening") return "listening";
   if (clean === "happy" || clean === "excited" || clean === "laughing") return "happy";
-  if (clean === "sad" || clean === "error" || clean === "scared" || clean === "concerned")
+  if (clean === "sad" || clean === "scared" || clean === "concerned" || clean === "error") {
     return "concerned";
+  }
   if (clean === "confused" || clean === "curious") return "curious";
   if (clean === "success" || clean === "celebrate") return "celebrate";
+  if (clean === "privacy") return "privacy";
+  if (clean === "permission_required" || clean === "awaiting_approval")
+    return "permission_required";
+  if (clean === "disconnected") return "disconnected";
   if (clean === "sleepy") return "sleepy";
   if (clean === "surprised" || clean === "shocked") return "surprised";
   return "neutral";

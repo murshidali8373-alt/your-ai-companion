@@ -495,3 +495,678 @@ export const diagnose = createServerFn({ method: "GET" })
     });
     return { checks, ok: checks.every((c) => c.ok) };
   });
+
+type SerializablePrimitive = string | number | boolean | null;
+type SerializableRow = Record<string, SerializablePrimitive>;
+
+export interface SerializableDagSubtask {
+  id: string;
+  title: string;
+  agentId: string;
+  capabilityId: string;
+  dependencies: string[];
+  priority: number;
+  retryLimit: number;
+  retryCount: number;
+  status: string;
+  requiresApproval?: boolean;
+  approved?: boolean;
+  error?: string;
+}
+
+export interface SerializableDagRun {
+  runId: string;
+  userId: string;
+  objective: string;
+  status:
+    | "planned"
+    | "running"
+    | "paused"
+    | "awaiting_approval"
+    | "completed"
+    | "partially_completed"
+    | "failed"
+    | "cancelled";
+  selectedAgents: string[];
+  subtasks: SerializableDagSubtask[];
+  checkpoints: Array<{
+    checkpointId: string;
+    runId: string;
+    capturedAt: string;
+    completedIds: string[];
+    failedIds: string[];
+    pendingIds: string[];
+    awaitingApprovalIds: string[];
+  }>;
+  artifacts: Array<{
+    id: string;
+    kind: string;
+    title: string;
+    fileName?: string;
+    downloadUrl?: string;
+    summary?: string;
+    verified?: boolean;
+  }>;
+  verifications: Array<{
+    checkName: string;
+    passed: boolean;
+    detail: string;
+    provenance: string;
+  }>;
+  replanCount: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  finalSummary?: string;
+  unconfirmedStopNote?: string;
+}
+
+export interface SerializableWorkCenterOverview {
+  agents: Array<{
+    id: string;
+    name: string;
+    role: string;
+    capabilities: string[];
+    requiredPermission: string;
+    supportsParallelExecution: boolean;
+    requiresApprovalForSideEffects: boolean;
+  }>;
+  dagRuns: SerializableDagRun[];
+  files: Array<{ fileName: string; sizeBytes: number; updatedAt: string }>;
+  connectors: Array<{
+    id: string;
+    name: string;
+    category: string;
+    operational: boolean;
+    status: string;
+    requiredScopes: string[];
+    missingRequirements: string[];
+    supportsLiveHealthTest: boolean;
+    requiresApprovalForWrites: boolean;
+    documentationNotice: string;
+    reconnectUrl?: string;
+    lastCheckedAt: string;
+  }>;
+  connectorAuditLog: Array<{
+    id: string;
+    connectorId: string;
+    action: string;
+    status: string;
+    detail: string;
+    timestamp: string;
+  }>;
+  workflows: Array<{
+    id: string;
+    userId: string;
+    name: string;
+    description: string;
+    triggerType: "cron" | "interval" | "one_time" | "event" | "manual";
+    cronExpression?: string;
+    intervalMinutes?: number;
+    status: string;
+    approvedByUser: boolean;
+    runCount: number;
+    createdAt: string;
+    updatedAt: string;
+    nextRunAt?: string;
+  }>;
+  workflowLogs: Array<{
+    runId: string;
+    workflowId: string;
+    workflowName: string;
+    triggerSource: string;
+    status: string;
+    summary: string;
+    executedAt: string;
+  }>;
+  notifications: Array<{
+    id: string;
+    category: string;
+    title: string;
+    body: string;
+    read: boolean;
+    createdAt: string;
+  }>;
+  environmentNotice: string;
+  suggestions: Array<{
+    id: string;
+    category: string;
+    title: string;
+    reason: string;
+    recommendedAction: string;
+    confidence: number;
+    createdAt: string;
+  }>;
+  proactiveSuppressed: boolean;
+  drafts: Array<{
+    id: string;
+    userId: string;
+    channel: string;
+    recipient: string;
+    subject: string;
+    body: string;
+    status: string;
+    createdAt: string;
+  }>;
+  memoriesV2: Array<{
+    id: string;
+    key: string;
+    value: string;
+    category?: string;
+    scope?: string;
+    updatedAt: string;
+  }>;
+  memoryConflicts: Array<{
+    key: string;
+    reason: string;
+  }>;
+  staleMemoryCount: number;
+  optOut: {
+    globalDontRemember: boolean;
+    suppressedKeys: string[];
+  };
+}
+
+export interface SerializableParsedWorkspaceDoc {
+  fileName: string;
+  format: string;
+  sizeBytes: number;
+  rows?: SerializableRow[];
+  spreadsheetAnalysis?: { summary?: string };
+  textContent?: string;
+  warnings: string[];
+}
+
+export interface SerializableCompiledWorkflow {
+  draftRecipe: {
+    name: string;
+    description: string;
+    steps: Array<{
+      id: string;
+      action: string;
+      description: string;
+    }>;
+  };
+  triggerType: "cron" | "interval" | "one_time" | "event" | "manual";
+  cronExpression?: string;
+  missingParameters: string[];
+  previewSummary: string;
+}
+
+export const getPhase4WorkCenterOverview = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<SerializableWorkCenterOverview> => {
+    const { listSpecializedAgents } = await import("./agents/agent-registry");
+    const { listPersistedWorkflows } = await import("./workflows/scheduler.server");
+    const { MODULAR_CONNECTORS, getModularConnectorHealthSnapshot, listConnectorAuditTrail } =
+      await import("./integrations/connectors");
+    const { generateProactiveSuggestions } =
+      await import("./engines/communication-proactive.server");
+    const { detectMemoryConflicts, detectStaleMemories } = await import("./engines/memory-engine");
+    const { listWorkspaceFiles, readScopedCollection } = await import("./persistence/store.server");
+
+    const userId = context.userId;
+    const [wfData, proactive, auditLog, files, dagRuns, memoriesV2, drafts, optOut] =
+      await Promise.all([
+        listPersistedWorkflows(userId),
+        generateProactiveSuggestions({ userId }),
+        listConnectorAuditTrail(userId),
+        listWorkspaceFiles(userId),
+        readScopedCollection(userId, "dag_runs", []),
+        readScopedCollection(userId, "memories_v2", []),
+        readScopedCollection(userId, "pending_drafts", []),
+        readScopedCollection(userId, "memory_opt_outs", {
+          globalDontRemember: false,
+          suppressedKeys: [],
+        }),
+      ]);
+
+    const connectorIds = Object.keys(MODULAR_CONNECTORS) as Array<keyof typeof MODULAR_CONNECTORS>;
+    const connectors = connectorIds.map((id) => getModularConnectorHealthSnapshot(id));
+    const memoryConflicts = detectMemoryConflicts(memoriesV2);
+    const staleMemories = detectStaleMemories(memoriesV2);
+
+    return {
+      agents: listSpecializedAgents(),
+      dagRuns: dagRuns as unknown as SerializableDagRun[],
+      files,
+      connectors,
+      connectorAuditLog: auditLog as unknown as SerializableWorkCenterOverview["connectorAuditLog"],
+      workflows: wfData.workflows as unknown as SerializableWorkCenterOverview["workflows"],
+      workflowLogs: wfData.logs as unknown as SerializableWorkCenterOverview["workflowLogs"],
+      notifications:
+        wfData.notifications as unknown as SerializableWorkCenterOverview["notifications"],
+      environmentNotice: wfData.environmentNotice,
+      suggestions: proactive.suggestions,
+      proactiveSuppressed: proactive.suppressed,
+      drafts: drafts as unknown as SerializableWorkCenterOverview["drafts"],
+      memoriesV2: memoriesV2 as unknown as SerializableWorkCenterOverview["memoriesV2"],
+      memoryConflicts: memoryConflicts.map((c) => ({ key: c.key, reason: c.reason })),
+      staleMemoryCount: staleMemories.length,
+      optOut,
+    };
+  });
+
+export const runWebMultiAgentObjective = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        objective: z.string().min(2).max(2000),
+        fileName: z.string().optional(),
+        rows: z.array(z.record(z.unknown())).optional(),
+        comparisonFileName: z.string().optional(),
+        comparisonRows: z.array(z.record(z.unknown())).optional(),
+        outputFormats: z.array(z.enum(["xlsx", "docx", "pdf", "csv", "json"])).optional(),
+        asyncMode: z.boolean().optional(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }): Promise<SerializableDagRun> => {
+    const { buildObjectiveDagPlan, selectAgentsForObjective } =
+      await import("./agents/agent-registry");
+    const { executeAgentDag } = await import("./agents/dag-executor");
+    const { createSpecializedSubtaskRunner } = await import("./agents/specialized-agents");
+    const { updateScopedCollection } = await import("./persistence/store.server");
+
+    const runId = `dag_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const selectedAgents = selectAgentsForObjective(data.objective, {
+      hasFiles: Boolean(data.fileName),
+      hasSpreadsheet: Boolean(data.rows?.length || /\.(xlsx|csv)$/i.test(data.fileName || "")),
+      hasComparisonFiles: Boolean(data.comparisonRows?.length),
+    });
+    const subtasks = buildObjectiveDagPlan({
+      runId,
+      objective: data.objective,
+      selectedAgents,
+      fileName: data.fileName,
+      comparisonFileName: data.comparisonFileName,
+      outputFormats: data.outputFormats?.filter(
+        (f): f is "xlsx" | "docx" | "pdf" => f === "xlsx" || f === "docx" || f === "pdf",
+      ),
+    });
+    const runner = createSpecializedSubtaskRunner({
+      userId: context.userId,
+      objective: data.objective,
+      rows: data.rows,
+      comparisonRows: data.comparisonRows,
+      fileName: data.fileName,
+      comparisonFileName: data.comparisonFileName,
+      outputFormats: data.outputFormats,
+    });
+
+    const persistState = async (state: import("./agents/types").AgentDagRunState) => {
+      await updateScopedCollection<(typeof state)[]>(context.userId, "dag_runs", [], (runs) => {
+        const idx = runs.findIndex((r) => r.runId === state.runId);
+        if (idx >= 0) {
+          const copy = [...runs];
+          copy[idx] = state;
+          return copy;
+        }
+        return [state, ...runs.slice(0, 29)];
+      });
+    };
+
+    if (data.asyncMode) {
+      const now = new Date().toISOString();
+      const initialRun: import("./agents/types").AgentDagRunState = {
+        runId,
+        userId: context.userId,
+        objective: data.objective,
+        status: "running",
+        selectedAgents,
+        subtasks,
+        checkpoints: [],
+        artifacts: [],
+        verifications: [],
+        replanCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await persistState(initialRun);
+      void executeAgentDag({
+        runId,
+        userId: context.userId,
+        objective: data.objective,
+        subtasks,
+        runner,
+        existingRunState: initialRun,
+        onCheckpoint: persistState,
+      }).catch(() => {});
+      return initialRun as unknown as SerializableDagRun;
+    }
+
+    const result = await executeAgentDag({
+      runId,
+      userId: context.userId,
+      objective: data.objective,
+      subtasks,
+      runner,
+      onCheckpoint: persistState,
+    });
+    return result as unknown as SerializableDagRun;
+  });
+
+export const controlWebDagRun = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        runId: z.string().min(1),
+        action: z.enum(["pause", "resume", "cancel", "retry_failed", "approve_step", "skip_step"]),
+        subtaskId: z.string().optional(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }): Promise<SerializableDagRun> => {
+    const { executeAgentDag, getDagController, skipDagSubtask } =
+      await import("./agents/dag-executor");
+    const { createSpecializedSubtaskRunner } = await import("./agents/specialized-agents");
+    const { readScopedCollection, updateScopedCollection } =
+      await import("./persistence/store.server");
+
+    const runs = await readScopedCollection<Array<import("./agents/types").AgentDagRunState>>(
+      context.userId,
+      "dag_runs",
+      [],
+    );
+    const existing = runs.find((r) => r.runId === data.runId);
+    if (!existing) throw new Error("DAG run not found.");
+
+    const persist = async (state: import("./agents/types").AgentDagRunState) => {
+      await updateScopedCollection<typeof runs>(context.userId, "dag_runs", [], (list) =>
+        list.map((r) => (r.runId === state.runId ? state : r)),
+      );
+    };
+
+    const ctrl = getDagController(data.runId);
+    if (data.action === "pause") {
+      ctrl?.pause();
+      existing.status = "paused";
+      existing.updatedAt = new Date().toISOString();
+      await persist(existing);
+      return existing as unknown as SerializableDagRun;
+    }
+    if (data.action === "cancel") {
+      ctrl?.cancel();
+      if (existing.subtasks.some((s) => s.status === "running")) {
+        existing.unconfirmedStopNote =
+          "Cancelled while in-flight step(s) were active; external actions already dispatched cannot be rolled back automatically.";
+      }
+      existing.status = "cancelled";
+      for (const st of existing.subtasks) {
+        if (
+          st.status === "pending" ||
+          st.status === "ready" ||
+          st.status === "paused" ||
+          st.status === "awaiting_approval"
+        ) {
+          st.status = "cancelled";
+        }
+      }
+      existing.updatedAt = new Date().toISOString();
+      await persist(existing);
+      return existing as unknown as SerializableDagRun;
+    }
+    if (data.action === "skip_step") {
+      if (!data.subtaskId) {
+        throw new Error("subtaskId is required for skip_step.");
+      }
+      const skipOutcome = ctrl
+        ? ctrl.skipStep(data.subtaskId)
+        : skipDagSubtask(existing, data.subtaskId);
+      if (!skipOutcome.ok) {
+        throw new Error(skipOutcome.reason || "Cannot skip this subtask.");
+      }
+      // Also mirror onto persisted copy if controller operated on a different reference
+      if (ctrl) {
+        const persistedTarget = existing.subtasks.find((s) => s.id === data.subtaskId);
+        if (persistedTarget) {
+          persistedTarget.status = "skipped";
+          persistedTarget.error = "Skipped by user.";
+        }
+      }
+      await persist(existing);
+      if (skipOutcome.completedRun || existing.status !== "running") {
+        return existing as unknown as SerializableDagRun;
+      }
+    }
+
+    if (data.action === "retry_failed") {
+      for (const st of existing.subtasks) {
+        if (st.status === "failed") {
+          st.status = "pending";
+          st.retryCount = 0;
+          st.error = undefined;
+        }
+      }
+    } else if (data.action === "approve_step" && data.subtaskId) {
+      ctrl?.approveStep(data.subtaskId);
+      for (const st of existing.subtasks) {
+        if (st.id === data.subtaskId) {
+          st.approved = true;
+          st.status = "pending";
+        }
+      }
+    } else if (data.action === "resume") {
+      ctrl?.resume();
+      for (const st of existing.subtasks) {
+        if (st.status === "paused") st.status = "pending";
+      }
+    }
+
+    const runner = createSpecializedSubtaskRunner({
+      userId: context.userId,
+      objective: existing.objective,
+    });
+    const res = await executeAgentDag({
+      runId: existing.runId,
+      userId: context.userId,
+      objective: existing.objective,
+      subtasks: existing.subtasks,
+      runner,
+      existingRunState: existing,
+      onCheckpoint: persist,
+    });
+    return res as unknown as SerializableDagRun;
+  });
+
+export const uploadAndAnalyzeWorkspaceFile = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        fileName: z.string().min(1),
+        base64Data: z.string().min(1),
+        mimeType: z.string().optional(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }): Promise<SerializableParsedWorkspaceDoc> => {
+    const { parseWorkspaceBuffer } = await import("./workspace/file-processor.server");
+    const { saveWorkspaceBinaryFile } = await import("./persistence/store.server");
+
+    const buf = Buffer.from(data.base64Data.replace(/^data:[^;]+;base64,/, ""), "base64");
+    const parsed = await parseWorkspaceBuffer({
+      fileName: data.fileName,
+      mimeType: data.mimeType,
+      buffer: buf,
+    });
+    await saveWorkspaceBinaryFile(context.userId, data.fileName, buf);
+    return {
+      fileName: parsed.fileName,
+      format: parsed.format,
+      sizeBytes: parsed.sizeBytes,
+      rows: parsed.rows as SerializableRow[] | undefined,
+      spreadsheetAnalysis: parsed.spreadsheetAnalysis
+        ? { summary: parsed.spreadsheetAnalysis.summary }
+        : undefined,
+      textContent: parsed.textContent,
+      warnings: parsed.warnings,
+    };
+  });
+
+export const generateWebReportArtifact = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        format: z.enum(["xlsx", "docx", "pdf", "csv", "json"]),
+        title: z.string().min(1).max(200),
+        summary: z.string().optional(),
+        rows: z.array(z.record(z.unknown())).optional(),
+        sections: z
+          .array(z.object({ heading: z.string(), bullets: z.array(z.string()) }))
+          .optional(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { generateWorkspaceArtifact } = await import("./workspace/file-processor.server");
+    const res = await generateWorkspaceArtifact({
+      format: data.format,
+      title: data.title,
+      summary: data.summary,
+      rows: data.rows,
+      sections: data.sections,
+      scopeId: context.userId,
+    });
+    return {
+      fileName: res.fileName,
+      format: res.format,
+      sizeBytes: res.sizeBytes,
+      verified: res.verified,
+      verificationDetail: res.verificationDetail,
+      base64Output: res.buffer.toString("base64"),
+      mimeType: res.mimeType,
+    };
+  });
+
+export type SerializableWorkflowActionResult =
+  | { mode: "compile"; compiled: SerializableCompiledWorkflow }
+  | { mode: "save"; workflow: SerializableWorkCenterOverview["workflows"][number] }
+  | { mode: "run"; log: SerializableWorkCenterOverview["workflowLogs"][number] }
+  | { mode: "toggle"; workflow: SerializableWorkCenterOverview["workflows"][number] | null }
+  | { mode: "delete"; deleted: boolean };
+
+export const compileOrSaveWebWorkflow = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        mode: z.enum(["compile", "save", "run", "toggle", "delete"]),
+        instruction: z.string().optional(),
+        workflowId: z.string().optional(),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        triggerType: z.enum(["cron", "interval", "one_time", "event", "manual"]).optional(),
+        cronExpression: z.string().optional(),
+        steps: z.array(z.any()).optional(),
+        approvedByUser: z.boolean().optional(),
+        nextStatus: z.enum(["active", "paused"]).optional(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }): Promise<SerializableWorkflowActionResult> => {
+    const { compileNaturalLanguageWorkflow } = await import("./engines/workflow-recipe-engine");
+    const {
+      deletePersistedWorkflow,
+      runPersistedWorkflowNow,
+      savePersistedWorkflow,
+      updateWorkflowStatusOrFields,
+    } = await import("./workflows/scheduler.server");
+
+    if (data.mode === "compile") {
+      return {
+        mode: "compile",
+        compiled: compileNaturalLanguageWorkflow(
+          data.instruction || "",
+        ) as unknown as SerializableCompiledWorkflow,
+      };
+    }
+    if (data.mode === "save") {
+      if (!data.approvedByUser) throw new Error("Explicit user confirmation is required.");
+      const wf = await savePersistedWorkflow(context.userId, {
+        id: data.workflowId || `wf_${Date.now().toString(36)}`,
+        name: data.name || "Scheduled Workflow",
+        description: data.description || "",
+        triggerType: data.triggerType || "manual",
+        cronExpression: data.cronExpression,
+        steps: (data.steps || []) as never,
+        status: "active",
+        approvedByUser: true,
+        retryLimit: 2,
+      });
+      return {
+        mode: "save",
+        workflow: wf as unknown as SerializableWorkCenterOverview["workflows"][number],
+      };
+    }
+    if (data.mode === "run" && data.workflowId) {
+      return {
+        mode: "run",
+        log: (await runPersistedWorkflowNow({
+          userId: context.userId,
+          workflowId: data.workflowId,
+          triggerSource: "manual",
+        })) as unknown as SerializableWorkCenterOverview["workflowLogs"][number],
+      };
+    }
+    if (data.mode === "toggle" && data.workflowId && data.nextStatus) {
+      return {
+        mode: "toggle",
+        workflow: (await updateWorkflowStatusOrFields(context.userId, data.workflowId, {
+          status: data.nextStatus,
+        })) as unknown as SerializableWorkCenterOverview["workflows"][number] | null,
+      };
+    }
+    if (data.mode === "delete" && data.workflowId) {
+      return {
+        mode: "delete",
+        deleted: await deletePersistedWorkflow(context.userId, data.workflowId),
+      };
+    }
+    throw new Error("Unsupported workflow action.");
+  });
+
+export const testWebConnector = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        connectorId: z.enum([
+          "gmail",
+          "google_drive",
+          "google_sheets",
+          "google_calendar",
+          "slack",
+          "microsoft_excel",
+          "github",
+          "meesho_supplier",
+        ]),
+        userToken: z.string().optional(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { testModularConnectorConnection } = await import("./integrations/connectors");
+    return testModularConnectorConnection({
+      connectorId: data.connectorId,
+      userId: context.userId,
+      userToken: data.userToken,
+    });
+  });
+
+export const approveWebDraft = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z.object({ draftId: z.string().min(1), confirmedByUser: z.boolean() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { sendApprovedDraft } = await import("./engines/communication-proactive.server");
+    return sendApprovedDraft({
+      userId: context.userId,
+      draftId: data.draftId,
+      confirmedByUser: data.confirmedByUser,
+    });
+  });

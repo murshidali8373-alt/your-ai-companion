@@ -364,3 +364,122 @@ export function detectMemoryContradictions(
   }
   return alerts;
 }
+
+export const PHASE4_MEMORY_CATEGORIES = [
+  "user_preference",
+  "communication_preference",
+  "business_context",
+  "active_project",
+  "frequent_workflow",
+  "completed_task",
+  "reusable_instruction",
+  "automation_preference",
+] as const;
+
+export type Phase4MemoryCategory = (typeof PHASE4_MEMORY_CATEGORIES)[number];
+
+export interface Phase4MemoryEntry {
+  id: string;
+  key: string;
+  value: string;
+  category?: string | undefined;
+  kind?: MemoryKind | undefined;
+  scope?: string | undefined;
+  updatedAt: string;
+  outdated?: boolean | undefined;
+  doNotRemember?: boolean | undefined;
+}
+
+export function validatePhase4MemoryWrite(params: {
+  key: string;
+  value: string;
+  category?: string | undefined;
+  privacyMode?: boolean | undefined;
+  rawInstruction?: string | undefined;
+}): { allowed: boolean; reason?: string | undefined } {
+  if (params.privacyMode) {
+    return { allowed: false, reason: "Privacy mode is active — memory persistence suppressed." };
+  }
+  if (
+    detectDoNotRememberCommand(params.rawInstruction || "") ||
+    detectDoNotRememberCommand(params.value)
+  ) {
+    return { allowed: false, reason: "User requested not to remember this information." };
+  }
+  const check = validateMemoryEntry(params.key, params.value);
+  if (!check.valid) {
+    return { allowed: false, reason: check.reason };
+  }
+  return { allowed: true };
+}
+
+export function detectMemoryConflicts(
+  entries: Array<{ id: string; key: string; value: string; updatedAt: string; outdated?: boolean }>,
+): Array<{ key: string; values: string[]; reason: string }> {
+  const byKey = new Map<string, { displayKey: string; values: Set<string> }>();
+  for (const item of entries) {
+    if (item.outdated) continue;
+    const normKey = item.key.trim().toLowerCase();
+    const val = item.value.trim();
+    if (!normKey || !val) continue;
+    const bucket = byKey.get(normKey) ?? { displayKey: item.key.trim(), values: new Set() };
+    bucket.values.add(val);
+    byKey.set(normKey, bucket);
+  }
+
+  const conflicts: Array<{ key: string; values: string[]; reason: string }> = [];
+  for (const bucket of byKey.values()) {
+    if (bucket.values.size > 1) {
+      const vals = Array.from(bucket.values);
+      conflicts.push({
+        key: bucket.displayKey,
+        values: vals,
+        reason: `Conflicting values stored for "${bucket.displayKey}": ${vals.join(" vs ")}.`,
+      });
+    }
+  }
+  return conflicts;
+}
+
+export function detectStaleMemories<
+  T extends { id: string; key: string; value: string; updatedAt: string },
+>(entries: T[], maxAgeDays = 30, nowMs = Date.now()): Array<T & { ageDays: number }> {
+  const thresholdMs = maxAgeDays * 86_400_000;
+  const stale: Array<T & { ageDays: number }> = [];
+  for (const item of entries) {
+    const ts = Date.parse(item.updatedAt);
+    if (Number.isNaN(ts)) continue;
+    const ageMs = nowMs - ts;
+    if (ageMs >= thresholdMs) {
+      stale.push({
+        ...item,
+        ageDays: Math.floor(ageMs / 86_400_000),
+      });
+    }
+  }
+  return stale;
+}
+
+export function mergeDuplicateMemories<
+  T extends { id: string; key: string; value: string; updatedAt: string },
+>(entries: T[]): { merged: T[]; mergedCount: number } {
+  const bestByPair = new Map<string, T>();
+  let mergedCount = 0;
+
+  for (const item of entries) {
+    const sig = `${item.key.trim().toLowerCase()}::${item.value.trim().toLowerCase()}`;
+    const existing = bestByPair.get(sig);
+    if (!existing) {
+      bestByPair.set(sig, item);
+    } else {
+      mergedCount++;
+      const existingTs = Date.parse(existing.updatedAt) || 0;
+      const itemTs = Date.parse(item.updatedAt) || 0;
+      if (itemTs > existingTs) {
+        bestByPair.set(sig, item);
+      }
+    }
+  }
+
+  return { merged: Array.from(bestByPair.values()), mergedCount };
+}

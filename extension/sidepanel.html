@@ -455,37 +455,274 @@
         filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.4));
       }
 
-      /* ================= CONVERSATION BOX ================= */
+      /* Avatar Emotion State Animations */
+      #buddyAvatar {
+        transition:
+          transform 0.25s ease,
+          opacity 0.25s ease,
+          filter 0.25s ease;
+        transform-origin: center bottom;
+      }
+      @keyframes sp-idle {
+        0%,
+        100% {
+          transform: translateY(0);
+        }
+        50% {
+          transform: translateY(-2px);
+        }
+      }
+      @keyframes sp-listen {
+        0%,
+        100% {
+          transform: rotate(0deg) scale(1);
+        }
+        50% {
+          transform: rotate(-2.5deg) scale(1.03);
+        }
+      }
+      @keyframes sp-think {
+        0%,
+        100% {
+          transform: rotate(-2deg);
+        }
+        50% {
+          transform: rotate(2deg) translateY(-2px);
+        }
+      }
+      @keyframes sp-plan {
+        0%,
+        100% {
+          transform: translateY(0) scale(1);
+        }
+        50% {
+          transform: translateY(-3px) scale(1.02);
+        }
+      }
+      @keyframes sp-work {
+        0%,
+        100% {
+          transform: translateY(0);
+        }
+        50% {
+          transform: translateY(-2.5px) scale(1.02);
+        }
+      }
+      @keyframes sp-speak {
+        0%,
+        100% {
+          transform: scale(1);
+        }
+        50% {
+          transform: translateY(-2px) scale(1.03, 0.98);
+        }
+      }
+      @keyframes sp-shake {
+        0%,
+        100% {
+          transform: translateX(0);
+        }
+        25% {
+          transform: translateX(-3px);
+        }
+        75% {
+          transform: translateX(3px);
+        }
+      }
+      #buddyAvatar[data-emotion="idle"] {
+        animation: sp-idle 4s ease-in-out infinite;
+      }
+      #buddyAvatar[data-emotion="listening"] {
+        animation: sp-listen 1.2s ease-in-out infinite;
+      }
+      #buddyAvatar[data-emotion="thinking"] {
+        animation: sp-think 2s ease-in-out infinite;
+      }
+      #buddyAvatar[data-emotion="planning"] {
+        animation: sp-plan 1.8s ease-in-out infinite;
+      }
+      #buddyAvatar[data-emotion="analyzing"] {
+        animation: sp-think 1.6s ease-in-out infinite;
+      }
+      #buddyAvatar[data-emotion="working"] {
+        animation: sp-work 1.1s ease-in-out infinite;
+      }
+      #buddyAvatar[data-emotion="pointing"] {
+        transform: translateX(3px) rotate(3deg);
+      }
+      #buddyAvatar[data-emotion="verifying"] {
+        animation: sp-plan 1.4s ease-in-out infinite;
+      }
+      #buddyAvatar[data-emotion="speaking"] {
+        animation: sp-speak 0.55s ease-in-out infinite;
+      }
+      #buddyAvatar[data-emotion="privacy"] {
+        transform: scaleX(-0.94);
+        filter: grayscale(0.2);
+      }
+      #buddyAvatar[data-emotion="success"] {
+        animation: sp-plan 0.9s ease-in-out 2;
+      }
+      #buddyAvatar[data-emotion="confused"] {
+        transform: rotate(4deg);
+      }
+      #buddyAvatar[data-emotion="error"] {
+        animation: sp-shake 0.45s ease-in-out 2;
+      }
+      #buddyAvatar[data-emotion="permission_required"] {
+        transform: rotate(-2deg) translateY(1px);
+      }
+
+      /* ================= CONVERSATION BOX & MARKDOWN ================= */
+      .history-container {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
       .history-box {
         display: flex;
         flex-direction: column;
-        gap: 8px;
-        min-height: 110px;
-        max-height: 310px;
+        gap: 10px;
+        min-height: 120px;
+        max-height: 320px;
         overflow-y: auto;
-        padding: 4px 2px;
+        overflow-x: hidden;
+        padding: 8px 4px 12px;
+        min-width: 0;
+      }
+      .history-jump-btn {
+        position: absolute;
+        bottom: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 4;
+        padding: 4px 10px;
+        border-radius: var(--radius-md);
+        background: var(--surface-card);
+        color: var(--text);
+        border: 1px solid var(--border-accent);
+        font-size: 11px;
+        font-weight: 600;
+        cursor: pointer;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+      }
+      .history-jump-btn:hover {
+        background: var(--surface-hover);
       }
       .msg-bubble {
-        padding: 8px 10px;
+        padding: 9px 12px;
         border-radius: var(--radius-md);
-        font-size: 12px;
-        line-height: 1.5;
-        max-width: 90%;
+        font-size: 12.5px;
+        line-height: 1.55;
+        max-width: 92%;
+        min-width: 0;
+        overflow-wrap: anywhere;
         word-break: break-word;
       }
       .msg-user {
         align-self: flex-end;
+        max-width: 86%;
         background: var(--surface-user);
         color: var(--text);
-        border: 1px solid var(--border-hover);
-        border-bottom-right-radius: 2px;
+        border: 1px solid var(--border-accent);
+        border-bottom-right-radius: 3px;
+        white-space: pre-wrap;
       }
       .msg-buddy {
         align-self: flex-start;
         background: var(--surface);
         color: var(--text);
         border: 1px solid var(--border);
-        border-bottom-left-radius: 2px;
+        border-bottom-left-radius: 3px;
+      }
+      .msg-md-root {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-width: 0;
+      }
+      .msg-md-p {
+        margin: 0;
+      }
+      .msg-md-h {
+        margin: 2px 0 0;
+        font-size: 12.5px;
+        font-weight: 700;
+        color: var(--text);
+      }
+      .msg-md-list {
+        margin: 0;
+        padding-left: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .msg-md-quote {
+        margin: 0;
+        padding: 5px 8px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--text-muted);
+      }
+      .msg-md-code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        padding: 1px 4px;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.08);
+        overflow-wrap: anywhere;
+      }
+      .msg-md-pre {
+        margin: 0;
+        padding: 8px 10px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border);
+        background: var(--bg-inset);
+        overflow-x: auto;
+        max-width: 100%;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        line-height: 1.45;
+      }
+      .msg-md-pre-lang {
+        font-size: 9px;
+        color: var(--text-dim);
+        text-transform: uppercase;
+        margin-bottom: 4px;
+      }
+      .msg-md-table-wrap {
+        width: 100%;
+        overflow-x: auto;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+      }
+      .msg-md-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 11px;
+      }
+      .msg-md-table th,
+      .msg-md-table td {
+        padding: 4px 6px;
+        border-bottom: 1px solid var(--border);
+        text-align: left;
+      }
+      .msg-md-table th {
+        background: var(--surface-card);
+        font-weight: 600;
+      }
+      .msg-md-link {
+        color: #7dd3fc;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+        overflow-wrap: anywhere;
+      }
+      .msg-md-hr {
+        border: 0;
+        border-top: 1px solid var(--border);
+        margin: 2px 0;
       }
       .msg-loading {
         align-self: flex-start;
@@ -495,7 +732,7 @@
         background: rgba(99, 102, 241, 0.08);
         border: 1px dashed var(--border-accent);
         color: var(--text-muted);
-        border-bottom-left-radius: 2px;
+        border-bottom-left-radius: 3px;
         font-size: 11px;
         padding: 8px 12px;
       }
@@ -563,6 +800,10 @@
         }
       }
       @media (prefers-reduced-motion: reduce) {
+        #buddyAvatar {
+          animation: none !important;
+          transition: none !important;
+        }
         .loading-spinner-ring,
         .btn-spinner {
           animation-duration: 2s;
@@ -1145,11 +1386,22 @@
         </div>
 
         <!-- CONVERSATION HISTORY -->
-        <div id="historyBox" class="history-box">
-          <div class="msg-bubble msg-buddy">
-            Hey! I am your AI Buddy. Ask me anything, or instruct me to take action across this
-            webpage and your files.
+        <div class="history-container">
+          <div id="historyBox" class="history-box">
+            <div class="msg-bubble msg-buddy">
+              Hey! I am your AI Buddy. Ask me anything, or instruct me to take action across this
+              webpage and your files.
+            </div>
           </div>
+          <button
+            id="historyJumpBtn"
+            type="button"
+            class="history-jump-btn"
+            aria-label="Jump to latest message"
+            hidden
+          >
+            ↓ Jump to latest
+          </button>
         </div>
 
         <!-- SMART MODE SELECTOR (HIDDEN FOR STREAMLINED ZERO-PILL UI) -->

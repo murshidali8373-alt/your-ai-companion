@@ -1004,3 +1004,116 @@ export function instantiateBusinessTemplate(
 
   return { recipe };
 }
+
+export interface CompiledNaturalLanguageWorkflow {
+  draftRecipe: WorkflowRecipe;
+  triggerType: "cron" | "interval" | "one_time" | "event" | "manual";
+  cronExpression?: string | undefined;
+  intervalMinutes?: number | undefined;
+  runAtIso?: string | undefined;
+  missingParameters: string[];
+  clarificationPrompt?: string | undefined;
+  previewSummary: string;
+}
+
+/**
+ * Compiles a natural-language automation instruction into a safety-gated draft workflow
+ * (always initialized approvedByUser=false) with cron expression extraction and missing parameter detection.
+ */
+export function compileNaturalLanguageWorkflow(
+  instruction: string,
+  options?: {
+    targetUrl?: string | undefined;
+    sourceDomain?: string | undefined;
+    availableFiles?: string[] | undefined;
+    availableConnectors?: string[] | undefined;
+  },
+): CompiledNaturalLanguageWorkflow {
+  const clean = instruction.trim();
+  const lower = clean.toLowerCase();
+  const parsed = parseNaturalLanguageWorkflow(clean, {
+    availableFiles: options?.availableFiles,
+    availableConnectors: options?.availableConnectors,
+  });
+
+  const missingParameters = [...parsed.missingDetails];
+  const hasConcreteTarget =
+    /\b(?:order|orders|meesho|amazon|flipkart|spreadsheet|excel|xlsx|csv|report|summary|invoice|gst|email|gmail|slack|github|table|portal|inventory|sku|backup)\b/i.test(
+      lower,
+    );
+  const hasScheduleSignal =
+    /\b(?:every\s+(?:morning|evening|night|day|hour|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d+\s*(?:min|minute|hour))|daily|weekly|hourly|har\s+roz|rozana|tomorrow|once)\b/i.test(
+      lower,
+    );
+  const isVague =
+    /\bsomething\b/i.test(lower) ||
+    (!hasConcreteTarget && clean.split(/\s+/).length < 6) ||
+    (!hasScheduleSignal && /\bschedule\b/i.test(lower));
+
+  if (isVague && missingParameters.length === 0) {
+    if (!hasConcreteTarget) {
+      missingParameters.push("Specify the target portal, file, or report action.");
+    }
+    if (!hasScheduleSignal) {
+      missingParameters.push("Specify schedule cadence or time (e.g., every morning at 9 AM).");
+    }
+  }
+
+  // Normalize "every morning at 9" / "daily" schedules to cron
+  const timeOfDay = parseTimeOfDay(lower);
+  let triggerType: CompiledNaturalLanguageWorkflow["triggerType"] = "manual";
+  let cronExpression = parsed.recipe.schedule?.cronExpression;
+  const intervalMinutes = parsed.recipe.schedule?.intervalMinutes;
+  const runAtIso = parsed.recipe.schedule?.runAtIso;
+
+  if (parsed.scheduleType === "recurring" && cronExpression) {
+    triggerType = "cron";
+  } else if (/\bevery\s+(?:morning|evening|night|afternoon)\b/i.test(lower)) {
+    const t = timeOfDay ?? (/evening|night/i.test(lower) ? "18:00" : "09:00");
+    const [hh, mm] = t.split(":");
+    triggerType = "cron";
+    cronExpression = `${Number(mm ?? 0)} ${Number(hh ?? 9)} * * *`;
+    parsed.recipe.schedule = {
+      type: "recurring",
+      frequency: "daily",
+      timeOfDay: t,
+      cronExpression,
+    };
+  } else if (parsed.scheduleType === "once") {
+    triggerType = "one_time";
+  } else if (parsed.scheduleType === "condition_trigger") {
+    triggerType = "event";
+  }
+
+  if (options?.sourceDomain) {
+    parsed.recipe.origin = options.sourceDomain;
+  }
+
+  const clarificationPrompt =
+    missingParameters.length > 0
+      ? `Please clarify before activating: ${missingParameters.join(" ")}`
+      : undefined;
+
+  const previewSummary = [
+    `Workflow: ${parsed.name}`,
+    `Trigger: ${triggerType}${cronExpression ? ` (${cronExpression})` : ""}`,
+    `Steps: ${parsed.steps.map((s) => `${s.order}. ${s.label}`).join(" -> ")}`,
+    missingParameters.length > 0
+      ? `Missing details: ${missingParameters.join("; ")}`
+      : "Approval required before activation.",
+  ].join("\n");
+
+  return {
+    draftRecipe: {
+      ...parsed.recipe,
+      approvedByUser: false,
+    },
+    triggerType,
+    cronExpression,
+    intervalMinutes,
+    runAtIso,
+    missingParameters,
+    clarificationPrompt,
+    previewSummary,
+  };
+}

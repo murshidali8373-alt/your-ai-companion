@@ -5,6 +5,8 @@ export const BUDDY_EMOTION_STATES = {
   IDLE: "idle",
   LISTENING: "listening",
   THINKING: "thinking",
+  PLANNING: "planning",
+  ANALYZING: "analyzing",
   SPEAKING: "speaking",
   HAPPY: "happy",
   EXCITED: "excited",
@@ -15,6 +17,9 @@ export const BUDDY_EMOTION_STATES = {
   CONFUSED: "confused",
   SLEEPY: "sleepy",
   WORKING: "working",
+  POINTING: "pointing",
+  VERIFYING: "verifying",
+  PRIVACY: "privacy",
   SUCCESS: "success",
   ERROR: "error",
   DISCONNECTED: "disconnected",
@@ -23,6 +28,77 @@ export const BUDDY_EMOTION_STATES = {
 
 export type BuddyEmotionState = TalkingBuddyState;
 export type BuddyEmotionInput = BuddyEmotionState | keyof typeof BUDDY_EMOTION_STATES | string;
+
+export type AIProcessingStage =
+  | "idle"
+  | "listening"
+  | "observing"
+  | "understanding"
+  | "thinking"
+  | "planning"
+  | "analyzing"
+  | "executing"
+  | "browsing"
+  | "working"
+  | "pointing"
+  | "verifying"
+  | "speaking"
+  | "awaiting_approval"
+  | "permission_required"
+  | "privacy"
+  | "completed"
+  | "success"
+  | "confused"
+  | "curious"
+  | "error"
+  | "disconnected";
+
+export const STAGE_TO_EMOTION: Record<AIProcessingStage, BuddyEmotionState> = {
+  idle: "idle",
+  listening: "listening",
+  observing: "thinking",
+  understanding: "thinking",
+  thinking: "thinking",
+  planning: "planning",
+  analyzing: "analyzing",
+  executing: "working",
+  browsing: "working",
+  working: "working",
+  pointing: "pointing",
+  verifying: "verifying",
+  speaking: "speaking",
+  awaiting_approval: "permission_required",
+  permission_required: "permission_required",
+  privacy: "privacy",
+  completed: "success",
+  success: "success",
+  confused: "confused",
+  curious: "confused",
+  error: "error",
+  disconnected: "disconnected",
+};
+
+export function mapStageToEmotion(stage: AIProcessingStage | string): BuddyEmotionState {
+  const clean = String(stage || "idle")
+    .trim()
+    .toLowerCase() as AIProcessingStage;
+  if (clean in STAGE_TO_EMOTION) {
+    return STAGE_TO_EMOTION[clean];
+  }
+  return normalizeEmotion(clean);
+}
+
+export function applyEmotionAttributesToElement(
+  el: HTMLElement | null | undefined,
+  emotion: BuddyEmotionState,
+  stage?: AIProcessingStage | string,
+  animated = true,
+): void {
+  if (!el) return;
+  el.setAttribute("data-emotion", emotion);
+  el.setAttribute("data-stage", String(stage || emotion));
+  el.setAttribute("data-animated", animated ? "true" : "false");
+}
 
 export interface SetEmotionOptions {
   /** Automatically revert to a baseline state after duration in milliseconds */
@@ -344,16 +420,24 @@ export interface BuddyStateManagerValue {
   // --- Emotion Engine & Visual State ---
   /** Current canonical emotion state (lowercase, e.g. "idle", "speaking", "thinking") */
   emotion: BuddyEmotionState;
+  /** Current AI processing stage */
+  stage: AIProcessingStage;
   /** Alias for emotion */
   state: BuddyEmotionState;
   /** Alias for emotion */
   currentEmotion: BuddyEmotionState;
   /** Current canonical emotion state in UPPERCASE (e.g. "IDLE", "SPEAKING", "THINKING") */
   emotionUpper: string;
+  /** Live mutable ref containing the latest emotion (prevents stale closures) */
+  emotionRef: React.MutableRefObject<BuddyEmotionState>;
   /** Descriptive status message corresponding to current emotion */
   statusMessage: string;
   /** Set emotion with optional auto-reset duration and context */
   setEmotion: (emotion: BuddyEmotionInput, options?: SetEmotionOptions) => void;
+  /** Set AI processing stage and automatically drive data-emotion + CSS animation */
+  setProcessingStage: (stage: AIProcessingStage, options?: SetEmotionOptions) => void;
+  /** Attach an avatar container DOM element so data-emotion/data-stage sync immediately */
+  bindAvatarElement: (el: HTMLElement | null) => void;
   /** Reset emotion back to idle */
   resetEmotion: (reason?: string) => void;
 
@@ -415,7 +499,15 @@ export function normalizeEmotion(input: BuddyEmotionInput): BuddyEmotionState {
       return "listening";
     case "thinking":
     case "think":
+    case "observing":
+    case "understanding":
       return "thinking";
+    case "planning":
+    case "plan":
+      return "planning";
+    case "analyzing":
+    case "analysis":
+      return "analyzing";
     case "speaking":
     case "speak":
     case "talking":
@@ -444,11 +536,21 @@ export function normalizeEmotion(input: BuddyEmotionInput): BuddyEmotionState {
       return "sleepy";
     case "working":
     case "executing":
+    case "browsing":
     case "task":
       return "working";
+    case "pointing":
+    case "point":
+      return "pointing";
+    case "verifying":
+    case "verify":
+      return "verifying";
+    case "privacy":
+      return "privacy";
     case "success":
     case "celebrate":
     case "done":
+    case "completed":
       return "success";
     case "error":
     case "concerned":
@@ -459,6 +561,7 @@ export function normalizeEmotion(input: BuddyEmotionInput): BuddyEmotionState {
       return "disconnected";
     case "permission_required":
     case "permission":
+    case "awaiting_approval":
     case "confirm":
       return "permission_required";
     default:
@@ -472,6 +575,10 @@ function getDefaultStatus(state: BuddyEmotionState): string {
       return "Listening to your voice…";
     case "thinking":
       return "Thinking and observing…";
+    case "planning":
+      return "Planning multi-step execution…";
+    case "analyzing":
+      return "Analyzing data and page context…";
     case "speaking":
       return "Speaking…";
     case "happy":
@@ -482,6 +589,12 @@ function getDefaultStatus(state: BuddyEmotionState): string {
       return "Hehe!";
     case "working":
       return "Working on your page task…";
+    case "pointing":
+      return "Pointing to the target element…";
+    case "verifying":
+      return "Verifying completion and results…";
+    case "privacy":
+      return "Privacy mode active (shielded).";
     case "success":
       return "Task completed successfully!";
     case "error":
@@ -548,17 +661,38 @@ export function useBuddyStateManager(
   const [isReady, setIsReady] = React.useState<boolean>(false);
 
   // Emotion Engine State
-  const [emotion, setRawEmotion] = React.useState<BuddyEmotionState>(() =>
-    normalizeEmotion(initialEmotion),
+  const initialCanonical = normalizeEmotion(initialEmotion);
+  const [emotion, setRawEmotion] = React.useState<BuddyEmotionState>(initialCanonical);
+  const [stage, setStageState] = React.useState<AIProcessingStage>(
+    () => (initialCanonical as AIProcessingStage) || "idle",
   );
   const [statusMessage, setStatusMessage] = React.useState<string>(() =>
-    getDefaultStatus(normalizeEmotion(initialEmotion)),
+    getDefaultStatus(initialCanonical),
   );
   const [history, setHistory] = React.useState<StateHistoryEntry[]>(() => [
-    { emotion: normalizeEmotion(initialEmotion), timestamp: 0 },
+    {
+      emotion: initialCanonical,
+      timestamp: typeof window === "undefined" ? 0 : Date.now(),
+    },
   ]);
 
   const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const selectedSlugRef = React.useRef<string>(selectedSlug);
+  const emotionRef = React.useRef<BuddyEmotionState>(initialCanonical);
+  const avatarElementsRef = React.useRef<Set<HTMLElement>>(new Set());
+
+  React.useEffect(() => {
+    selectedSlugRef.current = selectedSlug;
+  }, [selectedSlug]);
+
+  const bindAvatarElement = React.useCallback(
+    (el: HTMLElement | null) => {
+      if (!el) return;
+      avatarElementsRef.current.add(el);
+      applyEmotionAttributesToElement(el, emotionRef.current, stage);
+    },
+    [stage],
+  );
 
   // Helper to safely get active buddy
   const resolveActiveBuddy = React.useCallback(
@@ -582,6 +716,7 @@ export function useBuddyStateManager(
       const newSlug = target.slug;
       const customId = target.isCustom ? target.id || target.slug.replace("custom:", "") : null;
 
+      selectedSlugRef.current = newSlug;
       setSelectedSlugState(newSlug);
       setSelectedCustomId(customId);
 
@@ -622,23 +757,25 @@ export function useBuddyStateManager(
     [buddies, resolveActiveBuddy],
   );
 
-  // Tab switch synchronization and blank state avoidance
+  // Tab switch synchronization and blank state avoidance (uses ref to avoid re-binding listeners)
   const syncTabState = React.useCallback(() => {
     const currentSaved = getSavedSlug();
-    if (currentSaved && currentSaved !== selectedSlug) {
+    if (currentSaved && currentSaved !== selectedSlugRef.current) {
       const valid = resolveActiveBuddy(currentSaved, buddies);
+      selectedSlugRef.current = valid.slug;
       setSelectedSlugState(valid.slug);
     }
-  }, [buddies, resolveActiveBuddy, selectedSlug]);
+  }, [buddies, resolveActiveBuddy]);
 
   const ensureNonBlankState = React.useCallback((): ActiveBuddyCharacter => {
-    const active = resolveActiveBuddy(selectedSlug, buddies);
+    const active = resolveActiveBuddy(selectedSlugRef.current, buddies);
     if (!active) {
+      selectedSlugRef.current = "friendly";
       setSelectedSlugState("friendly");
       return BUDDY_CHARACTERS[0] as ActiveBuddyCharacter;
     }
     return active;
-  }, [buddies, resolveActiveBuddy, selectedSlug]);
+  }, [buddies, resolveActiveBuddy]);
 
   // Synchronize on hydration and listen for cross-tab storage changes and visibility changes
   React.useEffect(() => {
@@ -646,7 +783,8 @@ export function useBuddyStateManager(
 
     // Initial check from localStorage after hydration
     const saved = getSavedSlug();
-    if (saved && saved !== selectedSlug) {
+    if (saved && saved !== selectedSlugRef.current) {
+      selectedSlugRef.current = saved;
       setSelectedSlugState(saved);
     }
     const savedCustom = getSavedCustomId();
@@ -674,6 +812,7 @@ export function useBuddyStateManager(
     const handleStorage = (e: StorageEvent) => {
       if (e.key === STORAGE_KEY_SLUG || e.key === "selectedBuddySlug") {
         if (e.newValue && e.newValue.trim()) {
+          selectedSlugRef.current = e.newValue.trim();
           setSelectedSlugState(e.newValue.trim());
         }
       }
@@ -683,6 +822,7 @@ export function useBuddyStateManager(
     const handleCustomSync = (e: Event) => {
       const customEvent = e as CustomEvent<{ slug?: string; customId?: string }>;
       if (customEvent.detail?.slug) {
+        selectedSlugRef.current = customEvent.detail.slug;
         setSelectedSlugState(customEvent.detail.slug);
       }
     };
@@ -711,7 +851,7 @@ export function useBuddyStateManager(
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("focus", handleWindowFocus);
     };
-  }, [syncTabState, ensureNonBlankState, selectedSlug]);
+  }, [syncTabState, ensureNonBlankState]);
 
   // Register Custom Buddy
   const registerCustomBuddy = React.useCallback(
@@ -757,6 +897,22 @@ export function useBuddyStateManager(
     };
   }, []);
 
+  const syncAllBoundElements = React.useCallback(
+    (canonical: BuddyEmotionState, nextStage: AIProcessingStage) => {
+      const reducedMotion =
+        typeof window !== "undefined" &&
+        window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+      avatarElementsRef.current.forEach((el) => {
+        if (!el.isConnected) {
+          avatarElementsRef.current.delete(el);
+          return;
+        }
+        applyEmotionAttributesToElement(el, canonical, nextStage, !reducedMotion);
+      });
+    },
+    [],
+  );
+
   const setEmotion = React.useCallback(
     (nextInput: BuddyEmotionInput, options?: SetEmotionOptions) => {
       const canonical = normalizeEmotion(nextInput);
@@ -766,8 +922,11 @@ export function useBuddyStateManager(
         timerRef.current = null;
       }
 
+      emotionRef.current = canonical;
       setRawEmotion(canonical);
+      setStageState(canonical as AIProcessingStage);
       setStatusMessage(options?.reason || getDefaultStatus(canonical));
+      syncAllBoundElements(canonical, canonical as AIProcessingStage);
 
       setHistory((prev) => [
         ...prev.slice(-25),
@@ -778,8 +937,11 @@ export function useBuddyStateManager(
       if (options?.durationMs && options.durationMs > 0) {
         const revertState = normalizeEmotion(options.revertTo || "idle");
         timerRef.current = setTimeout(() => {
+          emotionRef.current = revertState;
           setRawEmotion(revertState);
+          setStageState(revertState as AIProcessingStage);
           setStatusMessage(getDefaultStatus(revertState));
+          syncAllBoundElements(revertState, revertState as AIProcessingStage);
           setHistory((prev) => [
             ...prev.slice(-25),
             {
@@ -791,7 +953,40 @@ export function useBuddyStateManager(
         }, options.durationMs);
       }
     },
-    [],
+    [syncAllBoundElements],
+  );
+
+  const setProcessingStage = React.useCallback(
+    (nextStage: AIProcessingStage, options?: SetEmotionOptions) => {
+      const mapped = mapStageToEmotion(nextStage);
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+
+      emotionRef.current = mapped;
+      setRawEmotion(mapped);
+      setStageState(nextStage);
+      setStatusMessage(options?.reason || getDefaultStatus(mapped));
+      syncAllBoundElements(mapped, nextStage);
+
+      setHistory((prev) => [
+        ...prev.slice(-25),
+        { emotion: mapped, timestamp: Date.now(), reason: options?.reason || `stage:${nextStage}` },
+      ]);
+
+      if (options?.durationMs && options.durationMs > 0) {
+        const revertState = normalizeEmotion(options.revertTo || "idle");
+        timerRef.current = setTimeout(() => {
+          emotionRef.current = revertState;
+          setRawEmotion(revertState);
+          setStageState("idle");
+          setStatusMessage(getDefaultStatus(revertState));
+          syncAllBoundElements(revertState, "idle");
+        }, options.durationMs);
+      }
+    },
+    [syncAllBoundElements],
   );
 
   // Conversation & Task Lifecycle Triggers
@@ -925,11 +1120,15 @@ export function useBuddyStateManager(
 
     // Emotion & Visual State
     emotion,
+    stage,
     state: emotion,
     currentEmotion: emotion,
     emotionUpper: emotion.toUpperCase(),
+    emotionRef,
     statusMessage,
     setEmotion,
+    setProcessingStage,
+    bindAvatarElement,
     resetEmotion,
 
     startListening,
@@ -946,9 +1145,9 @@ export function useBuddyStateManager(
 
     isIdle: emotion === "idle",
     isListening: emotion === "listening",
-    isThinking: emotion === "thinking",
+    isThinking: emotion === "thinking" || emotion === "planning" || emotion === "analyzing",
     isSpeaking: emotion === "speaking",
-    isWorking: emotion === "working",
+    isWorking: emotion === "working" || emotion === "verifying" || emotion === "pointing",
     isError: emotion === "error",
     isSuccess: emotion === "success",
     isHappy: emotion === "happy" || emotion === "excited" || emotion === "laughing",

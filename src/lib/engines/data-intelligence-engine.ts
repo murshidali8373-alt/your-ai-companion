@@ -976,3 +976,165 @@ export function compareBusinessPeriods(
     summary: `Compared ${deltas.length} metric(s) between previous (${previous.rowCount} rows) and current (${current.rowCount} rows) periods.`,
   };
 }
+
+export interface DatasetValidationResult {
+  normalizedRows: Array<Record<string, unknown>>;
+  duplicateKeys: string[];
+  missingValues: Array<{ rowIndex: number; column: string }>;
+  outliers: StatisticalOutlier[];
+  provenance: "calculated";
+  totalInputRows: number;
+  dedupedCount: number;
+}
+
+/**
+ * Normalizes formatted numbers/currencies (e.g. "Rs. 1,200"), detects duplicate keys,
+ * missing required fields, and statistical outliers without altering original inputs.
+ */
+export function normalizeAndValidateDataset(
+  rows: Array<Record<string, unknown>>,
+  options?: { dedupeKey?: string | undefined; requiredColumns?: string[] | undefined },
+): DatasetValidationResult {
+  if (!rows || rows.length === 0) {
+    return {
+      normalizedRows: [],
+      duplicateKeys: [],
+      missingValues: [],
+      outliers: [],
+      provenance: "calculated",
+      totalInputRows: 0,
+      dedupedCount: 0,
+    };
+  }
+
+  const allColumns = Array.from(
+    new Set([...(options?.requiredColumns ?? []), ...rows.flatMap((r) => Object.keys(r))]),
+  );
+
+  const normalizeCell = (val: unknown): unknown => {
+    if (typeof val !== "string") return val;
+    const trimmed = val.trim();
+    if (!trimmed) return "";
+    // Normalize formatted currencies like "Rs. 1,200", "₹1,200.50", "$ 450"
+    if (/^(?:rs\.?|inr|usd|eur|gbp|[₹$€£])\s*[-+]?[\d,]+(?:\.\d+)?$/i.test(trimmed)) {
+      const stripped = trimmed
+        .replace(/^(?:rs\.?|inr|usd|eur|gbp|[₹$€£])\s*/i, "")
+        .replace(/,/g, "");
+      const n = Number(stripped);
+      if (Number.isFinite(n)) return n;
+    }
+    if (/^[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(trimmed)) {
+      const n = Number(trimmed.replace(/,/g, ""));
+      if (Number.isFinite(n)) return n;
+    }
+    if (/^[-+]?\d+(?:\.\d+)?$/.test(trimmed)) {
+      const n = Number(trimmed);
+      if (Number.isFinite(n)) return n;
+    }
+    return trimmed;
+  };
+
+  const normalizedAll = rows.map((row) => {
+    const next: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(row)) {
+      next[k] = normalizeCell(v);
+    }
+    return next;
+  });
+
+  const duplicateKeys: string[] = [];
+  const dedupedRows: Array<Record<string, unknown>> = [];
+  if (options?.dedupeKey) {
+    const seen = new Set<string>();
+    for (const row of normalizedAll) {
+      const rawKey = row[options.dedupeKey];
+      const keyStr = rawKey === undefined || rawKey === null ? "" : String(rawKey).trim();
+      if (keyStr && seen.has(keyStr)) {
+        if (!duplicateKeys.includes(keyStr)) duplicateKeys.push(keyStr);
+        continue;
+      }
+      if (keyStr) seen.add(keyStr);
+      dedupedRows.push(row);
+    }
+  } else {
+    dedupedRows.push(...normalizedAll);
+  }
+
+  const missingValues: Array<{ rowIndex: number; column: string }> = [];
+  dedupedRows.forEach((row, rowIndex) => {
+    for (const col of options?.requiredColumns ?? allColumns) {
+      const val = row[col];
+      if (val === undefined || val === null || (typeof val === "string" && val.trim() === "")) {
+        missingValues.push({ rowIndex, column: col });
+      }
+    }
+  });
+
+  const outliers: StatisticalOutlier[] = [];
+  for (const col of allColumns) {
+    const numericCount = dedupedRows.filter((r) => typeof r[col] === "number").length;
+    if (numericCount >= 4) {
+      outliers.push(
+        ...detectStatisticalOutliers(dedupedRows, col, {
+          idKey: options?.dedupeKey || "id",
+        }),
+      );
+    }
+  }
+
+  return {
+    normalizedRows: dedupedRows,
+    duplicateKeys,
+    missingValues,
+    outliers,
+    provenance: "calculated",
+    totalInputRows: rows.length,
+    dedupedCount: rows.length - dedupedRows.length,
+  };
+}
+
+export interface GroupedDatasetRow {
+  group: string;
+  count: number;
+  sum: number;
+  avg: number;
+  provenance: "calculated";
+}
+
+export function groupDatasetByColumn(
+  rows: Array<Record<string, unknown>>,
+  groupColumn: string,
+  numericColumn?: string,
+): GroupedDatasetRow[] {
+  const buckets = new Map<string, Array<Record<string, unknown>>>();
+  for (const row of rows) {
+    const key = String(row[groupColumn] ?? "unknown");
+    const arr = buckets.get(key) ?? [];
+    arr.push(row);
+    buckets.set(key, arr);
+  }
+
+  const results: GroupedDatasetRow[] = [];
+  for (const [group, items] of buckets.entries()) {
+    let sum = 0;
+    let numCount = 0;
+    if (numericColumn) {
+      for (const item of items) {
+        const parsed = parseNumericCell(item[numericColumn]);
+        if (parsed !== null) {
+          sum += parsed;
+          numCount++;
+        }
+      }
+    }
+    const roundedSum = Number(sum.toFixed(2));
+    results.push({
+      group,
+      count: items.length,
+      sum: roundedSum,
+      avg: numCount > 0 ? Number((roundedSum / numCount).toFixed(2)) : 0,
+      provenance: "calculated",
+    });
+  }
+  return results;
+}

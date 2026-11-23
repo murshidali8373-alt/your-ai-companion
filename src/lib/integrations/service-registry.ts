@@ -214,6 +214,7 @@ export const KNOWN_SERVICE_CONNECTORS: Record<string, ServiceConnector> = {
     description: "Read and update Excel workbooks stored in Microsoft 365 via Microsoft Graph.",
     authType: "oauth2",
     requiredScopes: ["Files.ReadWrite"],
+    envTokenKeys: ["MICROSOFT_GRAPH_TOKEN"],
     capabilities: [
       {
         id: "read_workbook",
@@ -226,14 +227,24 @@ export const KNOWN_SERVICE_CONNECTORS: Record<string, ServiceConnector> = {
         consequential: true,
       },
     ],
-    isConfigured: () => false,
-    getStatus: () => ({
-      operational: false,
-      authState: "not_authorized",
-      missingRequirements: ["Microsoft Graph OAuth (Files.ReadWrite) not authorized"],
-      documentationNotice:
-        "Local .xlsx workbooks work directly via File Workspace; cloud sync needs Microsoft OAuth.",
-    }),
+    isConfigured: () => hasServerEnvToken(["MICROSOFT_GRAPH_TOKEN"]),
+    getStatus: () => {
+      const ok = hasServerEnvToken(["MICROSOFT_GRAPH_TOKEN"]);
+      return ok
+        ? {
+            operational: true,
+            authState: "connected",
+            missingRequirements: [],
+            documentationNotice: "Connected via server-side MICROSOFT_GRAPH_TOKEN.",
+          }
+        : {
+            operational: false,
+            authState: "not_authorized",
+            missingRequirements: ["Microsoft Graph OAuth (Files.ReadWrite) not authorized"],
+            documentationNotice:
+              "Local .xlsx workbooks work directly via File Workspace; cloud sync needs Microsoft OAuth.",
+          };
+    },
   },
   microsoft_onedrive: {
     id: "microsoft_onedrive",
@@ -242,17 +253,28 @@ export const KNOWN_SERVICE_CONNECTORS: Record<string, ServiceConnector> = {
     description: "Access and export files stored in OneDrive via Microsoft Graph.",
     authType: "oauth2",
     requiredScopes: ["Files.ReadWrite"],
+    envTokenKeys: ["MICROSOFT_GRAPH_TOKEN"],
     capabilities: [
       { id: "list_drive_items", description: "List OneDrive items", consequential: false },
       { id: "upload_drive_item", description: "Upload file to OneDrive", consequential: true },
     ],
-    isConfigured: () => false,
-    getStatus: () => ({
-      operational: false,
-      authState: "not_authorized",
-      missingRequirements: ["Microsoft OneDrive OAuth not authorized"],
-      documentationNotice: "Connect Microsoft Graph OAuth to browse or export to OneDrive.",
-    }),
+    isConfigured: () => hasServerEnvToken(["MICROSOFT_GRAPH_TOKEN"]),
+    getStatus: () => {
+      const ok = hasServerEnvToken(["MICROSOFT_GRAPH_TOKEN"]);
+      return ok
+        ? {
+            operational: true,
+            authState: "connected",
+            missingRequirements: [],
+            documentationNotice: "Connected via server-side MICROSOFT_GRAPH_TOKEN.",
+          }
+        : {
+            operational: false,
+            authState: "not_authorized",
+            missingRequirements: ["Microsoft OneDrive OAuth not authorized"],
+            documentationNotice: "Connect Microsoft Graph OAuth to browse or export to OneDrive.",
+          };
+    },
   },
   github: {
     id: "github",
@@ -261,7 +283,7 @@ export const KNOWN_SERVICE_CONNECTORS: Record<string, ServiceConnector> = {
     description:
       "Inspect repositories, commits, and files, and open isolated fix PRs with explicit approval.",
     authType: "token",
-    requiredScopes: ["repo"],
+    requiredScopes: ["repo", "read:user"],
     envTokenKeys: ["GITHUB_TOKEN"],
     capabilities: [
       {
@@ -320,6 +342,37 @@ export const KNOWN_SERVICE_CONNECTORS: Record<string, ServiceConnector> = {
     }),
   },
 };
+
+export interface ConnectorAuditEntry {
+  id: string;
+  connectorId: string;
+  action: string;
+  status: "ok" | "blocked" | "awaiting_confirmation" | "error";
+  detail: string;
+  timestamp: string;
+}
+
+export async function recordConnectorAudit(
+  userId: string,
+  entry: Omit<ConnectorAuditEntry, "id" | "timestamp">,
+): Promise<ConnectorAuditEntry> {
+  const { updateScopedCollection } = await import("@/lib/persistence/store.server");
+  const full: ConnectorAuditEntry = {
+    id: `caud_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+    timestamp: new Date().toISOString(),
+    ...entry,
+  };
+  await updateScopedCollection<ConnectorAuditEntry[]>(userId, "connector_audits", [], (list) => [
+    full,
+    ...list.slice(0, 99),
+  ]);
+  return full;
+}
+
+export async function readConnectorAuditLog(userId: string): Promise<ConnectorAuditEntry[]> {
+  const { readScopedCollection } = await import("@/lib/persistence/store.server");
+  return readScopedCollection<ConnectorAuditEntry[]>(userId, "connector_audits", []);
+}
 
 export function getAvailableServiceConnectors(): ServiceConnector[] {
   // Deduplicate cloud_drive alias in primary UI listings while preserving direct lookup

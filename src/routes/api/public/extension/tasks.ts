@@ -48,8 +48,12 @@ const postSchema = z.object({
     .optional(),
 });
 
-// In-memory guest store for temporary recent tasks during unauthenticated sessions
-const guestTasksStore: Array<{
+import {
+  readScopedCollection,
+  updateScopedCollection,
+} from "@/lib/persistence/store.server";
+
+interface StoredGuestTask {
   id: string;
   title: string;
   intent: string;
@@ -65,7 +69,7 @@ const guestTasksStore: Array<{
   attentionReason?: string;
   idempotencyKey?: string;
   created_at: string;
-}> = [];
+}
 
 export const Route = createFileRoute("/api/public/extension/tasks")({
   server: {
@@ -111,9 +115,10 @@ export const Route = createFileRoute("/api/public/extension/tasks")({
           return extensionJsonResponse(request, { ok: true, tasks: data || [], isGuest: false });
         }
 
-        // Guest handling
+        // Durable guest handling
+        const guestTasks = await readScopedCollection<StoredGuestTask[]>("guest", "tasks", []);
         if (requestedTaskId) {
-          const match = guestTasksStore.find((t) => t.id === requestedTaskId);
+          const match = guestTasks.find((t) => t.id === requestedTaskId);
           if (!match) {
             return extensionJsonResponse(request, { ok: false, error: "Task not found" }, 404);
           }
@@ -122,7 +127,7 @@ export const Route = createFileRoute("/api/public/extension/tasks")({
 
         return extensionJsonResponse(request, {
           ok: true,
-          tasks: guestTasksStore.slice(0, 20),
+          tasks: guestTasks.slice(0, 20),
           isGuest: true,
         });
       },
@@ -185,9 +190,8 @@ export const Route = createFileRoute("/api/public/extension/tasks")({
           return extensionJsonResponse(request, { ok: true, taskId, status: body.status, checkpoint: body.checkpoint });
         }
 
-        // Guest handling
-        const existingIdx = guestTasksStore.findIndex((t) => t.id === taskId);
-        const taskEntry = {
+        // Durable guest handling
+        const taskEntry: StoredGuestTask = {
           id: taskId,
           title: body.title,
           intent: body.intent,
@@ -205,12 +209,15 @@ export const Route = createFileRoute("/api/public/extension/tasks")({
           created_at: new Date().toISOString(),
         };
 
-        if (existingIdx >= 0) {
-          guestTasksStore[existingIdx] = taskEntry;
-        } else {
-          guestTasksStore.unshift(taskEntry);
-          if (guestTasksStore.length > 50) guestTasksStore.pop();
-        }
+        await updateScopedCollection<StoredGuestTask[]>("guest", "tasks", [], (list) => {
+          const existingIdx = list.findIndex((t) => t.id === taskId);
+          if (existingIdx >= 0) {
+            const next = [...list];
+            next[existingIdx] = taskEntry;
+            return next;
+          }
+          return [taskEntry, ...list.slice(0, 49)];
+        });
 
         return extensionJsonResponse(request, {
           ok: true,
@@ -223,3 +230,4 @@ export const Route = createFileRoute("/api/public/extension/tasks")({
     },
   },
 });
+

@@ -51,16 +51,19 @@ export function LivingBuddyCompanion({
   compact = false,
   onActionRequest,
 }: LivingBuddyCompanionProps) {
-  const buddy = useBuddyStateManager("idle");
+  const buddy = useBuddyStateManager("idle", initialBuddySlug);
   const state = buddy.emotion;
   const setState = buddy.setEmotion;
   const [muted, setMuted] = useState(false);
   const [minimized, setMinimized] = useState(false);
   const [lowGraphics, setLowGraphics] = useState(false);
-  const [speechSupported, setSpeechSupported] = useState(true);
+  const [, setSpeechSupported] = useState(true);
   const [mouthIntensity, setMouthIntensity] = useState(0);
   const statusMessage = buddy.statusMessage;
-  const setStatusMessage = (msg: string) => buddy.setEmotion(buddy.emotion, { reason: msg });
+  const setStatusMessage = useCallback(
+    (msg: string) => buddy.setEmotion(buddy.emotionRef.current, { reason: msg }),
+    [buddy],
+  );
   const [inputText, setInputText] = useState("");
   const [history, setHistory] = useState<Array<{ role: "user" | "buddy"; text: string }>>([
     {
@@ -140,8 +143,7 @@ export function LivingBuddyCompanion({
 
     setInputText("");
     const id = ++reqId.current;
-    setState("thinking");
-    setStatusMessage("Thinking and observing…");
+    buddy.setProcessingStage("thinking", { reason: "Thinking and observing…" });
 
     const updated = [...history, { role: "user" as const, text }];
     setHistory(updated);
@@ -159,16 +161,17 @@ export function LivingBuddyCompanion({
       if (res.ok) {
         const replyText = res.reply;
         setHistory((prev) => [...prev, { role: "buddy", text: replyText }]);
-        setStatusMessage("Buddy is replying");
 
-        // Inspect intent for simulated browser action demonstration
+        // Inspect intent for confirmation gate on consequential actions
         if (
           text.toLowerCase().includes("submit") ||
           text.toLowerCase().includes("pay") ||
           text.toLowerCase().includes("buy") ||
           text.toLowerCase().includes("delete")
         ) {
-          setState("permission_required");
+          buddy.setProcessingStage("awaiting_approval", {
+            reason: "Approval required before proceeding",
+          });
           setPendingConfirmation({
             action: "Consequential Page Action",
             description: `Buddy identified a high-impact operation based on "${text}". Please confirm approval.`,
@@ -177,22 +180,29 @@ export function LivingBuddyCompanion({
         } else {
           speakText(replyText, () => {
             if (id === reqId.current) {
-              setState("happy");
-              setTimeout(() => setState("idle"), 2000);
+              setState("happy", {
+                durationMs: 2000,
+                revertTo: "idle",
+                reason: "Buddy replied",
+              });
             }
           });
         }
       } else {
-        setState("error");
+        setState("error", {
+          durationMs: 3000,
+          revertTo: "idle",
+          reason: "Could not complete request. Try again.",
+        });
         setHistory((prev) => [...prev, { role: "buddy", text: res.reply }]);
-        setStatusMessage("Could not complete request. Try again.");
-        setTimeout(() => setState("idle"), 3000);
       }
-    } catch (err) {
+    } catch {
       if (id !== reqId.current) return;
-      setState("error");
-      setStatusMessage("Network issue. Reconnecting…");
-      setTimeout(() => setState("idle"), 3000);
+      setState("error", {
+        durationMs: 3000,
+        revertTo: "idle",
+        reason: "Network issue. Reconnecting…",
+      });
     }
   };
 
@@ -219,8 +229,7 @@ export function LivingBuddyCompanion({
     rec.lang = "en-IN";
 
     rec.onstart = () => {
-      setState("listening");
-      setStatusMessage("Listening… speak clearly into your mic");
+      buddy.setProcessingStage("listening", { reason: "Listening… speak clearly into your mic" });
     };
 
     rec.onresult = (e: { results?: ArrayLike<ArrayLike<{ transcript: string }>> }) => {
@@ -228,25 +237,25 @@ export function LivingBuddyCompanion({
       if (transcript.trim()) {
         handleSend(transcript);
       } else {
-        setState("idle");
-        setStatusMessage("Didn't catch that. Tap mic to try again.");
+        setState("idle", { reason: "Didn't catch that. Tap mic to try again." });
       }
     };
 
     rec.onerror = (e: { error: string }) => {
       if (e.error !== "no-speech") {
-        setState("confused");
-        setStatusMessage(`Microphone: ${e.error || "error"}`);
-        setTimeout(() => setState("idle"), 2500);
+        setState("confused", {
+          durationMs: 2500,
+          revertTo: "idle",
+          reason: `Microphone: ${e.error || "error"}`,
+        });
       } else {
-        setState("idle");
-        setStatusMessage("No speech heard. Try again.");
+        setState("idle", { reason: "No speech heard. Try again." });
       }
     };
 
     rec.onend = () => {
-      if (state === "listening") {
-        setState("idle");
+      if (buddy.emotionRef.current === "listening") {
+        setState("idle", { reason: "Ready" });
       }
     };
 
@@ -259,8 +268,7 @@ export function LivingBuddyCompanion({
     recognitionRef.current?.abort?.();
     speaker.current?.cancel();
     setMouthIntensity(0);
-    setState("idle");
-    setStatusMessage("Idle");
+    setState("idle", { reason: "Idle" });
   };
 
   const confirmAction = () => {
@@ -271,16 +279,17 @@ export function LivingBuddyCompanion({
         details: pendingConfirmation.description,
       });
       setPendingConfirmation(null);
-      setState("success");
-      setStatusMessage("Action confirmed and executed safely.");
-      setTimeout(() => setState("idle"), 2500);
+      setState("success", {
+        durationMs: 2500,
+        revertTo: "idle",
+        reason: "Action confirmed and executed safely.",
+      });
     }
   };
 
   const cancelAction = () => {
     setPendingConfirmation(null);
-    setState("idle");
-    setStatusMessage("Action cancelled per user choice.");
+    setState("idle", { reason: "Action cancelled per user choice." });
   };
 
   return (
@@ -356,14 +365,14 @@ export function LivingBuddyCompanion({
       <div className="flex flex-col items-center justify-center py-4 relative">
         <TalkingBuddyCharacter
           state={state}
-          slug={initialBuddySlug}
+          stage={buddy.stage}
+          slug={buddy.selectedBuddySlug || initialBuddySlug}
           size={minimized ? 120 : 220}
           lowGraphics={lowGraphics}
           mouthIntensity={mouthIntensity}
           onTap={() => {
-            if (state === "idle") {
-              setState("happy");
-              setTimeout(() => setState("idle"), 1200);
+            if (buddy.emotionRef.current === "idle") {
+              setState("happy", { durationMs: 1200, revertTo: "idle" });
             }
           }}
         />

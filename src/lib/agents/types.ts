@@ -82,6 +82,164 @@ export interface AgentExecutionResult {
   error?: string;
 }
 
+export type { DataProvenance } from "@/shared/task-context";
+
+export const SPECIALIZED_AGENT_IDS = [
+  "planning",
+  "browser",
+  "research",
+  "data_intelligence",
+  "spreadsheet",
+  "document",
+  "file_workspace",
+  "form_filling",
+  "navigation",
+  "visual_intelligence",
+  "workflow_automation",
+  "verification",
+  "memory",
+  "communication",
+  "self_healing",
+] as const;
+
+export type Phase3AgentId = (typeof SPECIALIZED_AGENT_IDS)[number];
+
+export interface SpecializedAgentDefinition {
+  id: Phase3AgentId;
+  name: string;
+  role: string;
+  capabilities: string[];
+  requiredPermission: PermissionLevel;
+  supportsParallelExecution: boolean;
+  requiresApprovalForSideEffects: boolean;
+}
+
+export interface AgentArtifact {
+  id: string;
+  kind: "xlsx" | "docx" | "pdf" | "csv" | "json" | "draft_message" | "report" | string;
+  title: string;
+  fileName?: string | undefined;
+  downloadUrl?: string | undefined;
+  summary?: string | undefined;
+  verified?: boolean | undefined;
+  content?: unknown | undefined;
+}
+
+export interface AgentVerificationCheck {
+  checkName: string;
+  passed: boolean;
+  detail: string;
+  provenance: DataProvenance;
+}
+
+export interface AgentCitation {
+  title: string;
+  url: string;
+  domain: string;
+  quote?: string | undefined;
+}
+
+export interface AgentSubtaskResult {
+  ok: boolean;
+  summary: string;
+  provenance: DataProvenance;
+  data?: unknown | undefined;
+  artifacts?: AgentArtifact[] | undefined;
+  verifications?: AgentVerificationCheck[] | undefined;
+  citations?: AgentCitation[] | undefined;
+  requiresApproval?:
+    | boolean
+    | {
+        actionLabel: string;
+        reason: string;
+        preview?: string | undefined;
+      }
+    | undefined;
+  error?: string | undefined;
+}
+
+export type AgentSubtaskStatus =
+  | "pending"
+  | "ready"
+  | "running"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "skipped"
+  | "cancelled"
+  | "awaiting_approval";
+
+export interface AgentSubtaskSpec {
+  id: string;
+  title: string;
+  agentId: Phase3AgentId;
+  capabilityId: string;
+  dependencies: string[];
+  priority: number;
+  retryLimit: number;
+  retryCount: number;
+  status: AgentSubtaskStatus;
+  fileOwnership?: string | null | undefined;
+  tabOwnership?: number | string | null | undefined;
+  requiresApproval?: boolean | undefined;
+  approved?: boolean | undefined;
+  output?: AgentSubtaskResult | undefined;
+  error?: string | undefined;
+  startedAt?: string | undefined;
+  completedAt?: string | undefined;
+  durationMs?: number | undefined;
+}
+
+export interface DagCheckpointSnapshot {
+  checkpointId: string;
+  runId: string;
+  capturedAt: string;
+  completedIds: string[];
+  failedIds: string[];
+  pendingIds: string[];
+  awaitingApprovalIds: string[];
+  partialOutputs: Record<string, unknown>;
+}
+
+export type AgentDagRunStatus =
+  | "planned"
+  | "running"
+  | "paused"
+  | "completed"
+  | "partially_completed"
+  | "failed"
+  | "cancelled"
+  | "awaiting_approval";
+
+export interface AgentDagRunState {
+  runId: string;
+  userId: string;
+  objective: string;
+  status: AgentDagRunStatus;
+  selectedAgents: Phase3AgentId[];
+  subtasks: AgentSubtaskSpec[];
+  checkpoints: DagCheckpointSnapshot[];
+  artifacts: AgentArtifact[];
+  verifications: AgentVerificationCheck[];
+  replanCount: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | undefined;
+  finalSummary?: string | undefined;
+  unconfirmedStopNote?: string | undefined;
+}
+
+export const dagControlActionSchema = z.enum([
+  "pause",
+  "resume",
+  "cancel",
+  "retry_failed",
+  "approve_step",
+  "skip_step",
+]);
+
+export type DagControlAction = z.infer<typeof dagControlActionSchema>;
+
 export interface AgentDefinition {
   id: CanonicalAgentId;
   name: string;

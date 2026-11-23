@@ -8,17 +8,20 @@ import {
   Trash2,
   Cpu,
   RotateCcw,
+  ArrowDown,
 } from "lucide-react";
 import { useEffect, useRef, useState, useCallback } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { BuddyAvatar, type BuddyEmotion } from "@/components/buddy-avatar";
+import { ChatMarkdown } from "@/components/chat-markdown";
 import {
   TalkingBuddyCharacter,
   type TalkingBuddyState,
 } from "@/components/talking-buddy-character";
 import { useBuddyStateManager, BUDDY_EMOTION_STATES } from "@/hooks/use-buddy-state-manager";
+import { useSmartAutoScroll } from "@/hooks/use-smart-auto-scroll";
 import { quickTalk } from "@/lib/talk.functions";
 import { endpointDelayMs, isFillerOnly, SingleSpeaker } from "@/shared/voice-turn";
 import { BUDDY_PRESETS, getBuddyPreset } from "@/lib/ai/buddy-personas";
@@ -111,7 +114,9 @@ export function VoiceDemo() {
   const turnsRef = useRef<ChatTurn[]>(turns);
   turnsRef.current = turns;
   const reqId = useRef(0);
-  const chatScrollRef = useRef<HTMLDivElement>(null);
+  const smartScroll = useSmartAutoScroll({
+    depKey: `${turns.length}:${transcript}:${isSubmitting}:${selectedSlug}`,
+  });
 
   // Initialize speech recognition & synthesis
   useEffect(() => {
@@ -135,13 +140,6 @@ export function VoiceDemo() {
       }
     }
   }, [turns, selectedSlug]);
-
-  // Auto-scroll chat to bottom
-  useEffect(() => {
-    if (chatScrollRef.current) {
-      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-    }
-  }, [turns, transcript]);
 
   // Switch Buddy persona
   const handleSelectBuddy = useCallback(
@@ -206,6 +204,7 @@ export function VoiceDemo() {
       reason: `${activePreset.name} is thinking…`,
     });
 
+    smartScroll.notifyUserMessageSent();
     const userTurn: ChatTurn = { role: "user", text: cleanText, timestamp: Date.now() };
     const updatedTurns = [...turnsRef.current, userTurn];
     setTurns(updatedTurns);
@@ -371,6 +370,7 @@ export function VoiceDemo() {
 
   const clearChat = () => {
     stopAll();
+    smartScroll.notifyUserMessageSent();
     const welcomeTurn: ChatTurn = {
       role: "buddy",
       text: `Chat reset. I am ${activePreset.name}. How can I assist you?`,
@@ -548,56 +548,75 @@ export function VoiceDemo() {
 
         {/* Right Column: Chat History and Text Input */}
         <div className="flex-1 space-y-4 text-sm min-w-0">
-          {/* Scrollable conversation history */}
-          <div
-            ref={chatScrollRef}
-            className="max-h-80 min-h-[190px] space-y-3 overflow-y-auto rounded-2xl bg-muted/20 p-4 border border-border/50"
-          >
-            {turns.length === 0 && !transcript && (
-              <div className="text-muted-foreground space-y-1">
-                <p className="font-medium text-foreground">Ask {activePreset.name} anything:</p>
-                <p>• “Explain this page to me in simple terms”</p>
-                <p>• “What should I check before submitting?”</p>
-                <p>• “Help me draft a plan for this task”</p>
-              </div>
-            )}
-            {turns.map((t, i) => (
-              <div
-                key={i}
-                className={
-                  t.role === "user"
-                    ? "ml-auto w-fit max-w-[85%] rounded-2xl bg-primary px-4 py-2.5 text-primary-foreground font-medium text-xs sm:text-sm shadow-sm"
-                    : "max-w-[92%] rounded-2xl bg-card border border-border/70 p-3.5 text-foreground shadow-sm text-xs sm:text-sm leading-relaxed"
-                }
-              >
-                {t.role === "buddy" && (
-                  <div className="flex items-center justify-between text-[11px] font-semibold text-primary mb-1">
-                    <span>{t.buddyName || activePreset.name}</span>
-                    {t.model && (
-                      <span className="font-mono text-[10px] text-muted-foreground">{t.model}</span>
-                    )}
-                  </div>
-                )}
-                <div className="whitespace-pre-wrap">{t.text}</div>
-              </div>
-            ))}
-
-            {/* Hearing live transcription */}
-            {transcript && (
-              <p className="ml-auto w-fit max-w-[85%] rounded-xl bg-muted px-3.5 py-2 text-muted-foreground text-xs italic">
-                Hearing: {transcript}…
-              </p>
-            )}
-
-            {/* In-flight loading animation */}
-            {isSubmitting && (
-              <div className="max-w-[80%] rounded-2xl bg-card border border-border/70 p-3 text-muted-foreground text-xs flex items-center gap-2">
-                <div className="flex gap-1">
-                  <span className="size-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]" />
-                  <span className="size-1.5 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]" />
-                  <span className="size-1.5 rounded-full bg-primary animate-bounce" />
+          {/* Scrollable conversation history with smart sticky auto-scroll */}
+          <div className="relative">
+            <div
+              ref={smartScroll.containerRef}
+              onScroll={smartScroll.handleScroll}
+              className="max-h-80 min-h-[190px] space-y-3 overflow-y-auto rounded-2xl bg-muted/20 p-4 border border-border/60"
+            >
+              {turns.length === 0 && !transcript && (
+                <div className="text-muted-foreground space-y-1">
+                  <p className="font-medium text-foreground">Ask {activePreset.name} anything:</p>
+                  <p>• “Explain this page to me in simple terms”</p>
+                  <p>• “What should I check before submitting?”</p>
+                  <p>• “Help me draft a plan for this task”</p>
                 </div>
-                <span>{activePreset.name} is consulting Gemini…</span>
+              )}
+              {turns.map((t, i) => (
+                <div
+                  key={i}
+                  className={
+                    t.role === "user"
+                      ? "ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-sm bg-primary px-4 py-2.5 text-primary-foreground text-xs sm:text-sm min-w-0 break-words"
+                      : "mr-auto max-w-[92%] rounded-2xl rounded-bl-sm bg-card border border-border/80 px-4 py-3 text-card-foreground text-xs sm:text-sm min-w-0 break-words"
+                  }
+                >
+                  {t.role === "buddy" && (
+                    <div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-primary mb-1.5 pb-1 border-b border-border/40">
+                      <span className="truncate">{t.buddyName || activePreset.name}</span>
+                      {t.model && (
+                        <span className="font-mono text-[10px] font-normal text-muted-foreground shrink-0">
+                          {t.model}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <ChatMarkdown
+                    content={t.text}
+                    variant={t.role === "user" ? "user" : "assistant"}
+                  />
+                </div>
+              ))}
+
+              {/* Hearing live transcription */}
+              {transcript && (
+                <p className="ml-auto w-fit max-w-[85%] rounded-xl bg-muted px-3.5 py-2 text-muted-foreground text-xs italic break-words">
+                  Hearing: {transcript}…
+                </p>
+              )}
+
+              {/* In-flight loading indicator */}
+              {isSubmitting && (
+                <div className="mr-auto max-w-[80%] rounded-2xl rounded-bl-sm bg-card border border-border/80 px-3.5 py-2.5 text-muted-foreground text-xs flex items-center gap-2">
+                  <span className="size-2 rounded-full bg-primary/70" aria-hidden="true" />
+                  <span>{activePreset.name} is consulting Gemini…</span>
+                </div>
+              )}
+            </div>
+
+            {!smartScroll.isAtBottom && (
+              <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={smartScroll.jumpToLatest}
+                  className="pointer-events-auto h-7 rounded-lg border border-border bg-card/95 px-3 text-xs font-medium text-foreground shadow-sm hover:bg-muted"
+                >
+                  <ArrowDown className="mr-1.5 size-3.5 text-primary" />
+                  {smartScroll.hasUnread ? "New messages" : "Jump to latest"}
+                </Button>
               </div>
             )}
           </div>

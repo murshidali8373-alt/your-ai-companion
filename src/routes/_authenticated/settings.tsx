@@ -31,6 +31,7 @@ function Settings() {
   const [language, setLanguage] = useState<"english" | "hindi" | "hinglish">("hinglish");
   const [graphics, setGraphics] = useState<"low" | "balanced" | "high">("balanced");
   const [blocked, setBlocked] = useState("");
+  const [savingPerm, setSavingPerm] = useState(false);
 
   useEffect(() => {
     if (!data) return;
@@ -49,12 +50,16 @@ function Settings() {
     allow_memory?: boolean;
     blocked_domains?: string[];
   }) => {
+    if (savingPerm) return;
+    setSavingPerm(true);
     try {
       await savePerms({ data: p });
       toast.success("Saved.");
       qc.invalidateQueries({ queryKey: ["dashboard"] });
     } catch {
       toast.error("Could not save that setting.");
+    } finally {
+      setSavingPerm(false);
     }
   };
 
@@ -90,6 +95,7 @@ function Settings() {
           <Row
             label="Always confirm high-impact actions"
             checked={perms?.confirm_high_impact ?? true}
+            disabled={savingPerm}
             onChange={(v) => patch({ confirm_high_impact: v })}
           />
         </section>
@@ -99,16 +105,19 @@ function Settings() {
           <Row
             label="Privacy mode (no memory, minimal page capture)"
             checked={perms?.privacy_mode ?? false}
+            disabled={savingPerm}
             onChange={(v) => patch({ privacy_mode: v })}
           />
           <Row
             label="Use my approved memory"
             checked={perms?.allow_memory ?? true}
+            disabled={savingPerm}
             onChange={(v) => patch({ allow_memory: v })}
           />
           <Row
             label="Allow screenshots when I ask"
             checked={perms?.allow_screenshots ?? false}
+            disabled={savingPerm}
             onChange={(v) => patch({ allow_screenshots: v })}
           />
           <div className="space-y-1.5">
@@ -122,6 +131,7 @@ function Settings() {
             <Button
               size="sm"
               variant="secondary"
+              disabled={savingPerm}
               onClick={() =>
                 patch({
                   blocked_domains: blocked
@@ -149,8 +159,9 @@ function Settings() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Language</Label>
+              <Label htmlFor="lang">Language</Label>
               <select
+                id="lang"
                 className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
                 value={language}
                 onChange={(e) => setLanguage(e.target.value as typeof language)}
@@ -161,8 +172,9 @@ function Settings() {
               </select>
             </div>
             <div className="space-y-1.5">
-              <Label>3D graphics</Label>
+              <Label htmlFor="gfx">3D graphics</Label>
               <select
+                id="gfx"
                 className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
                 value={graphics}
                 onChange={(e) => setGraphics(e.target.value as typeof graphics)}
@@ -197,16 +209,18 @@ function Settings() {
 function Row({
   label,
   checked,
+  disabled,
   onChange,
 }: {
   label: string;
   checked: boolean;
+  disabled?: boolean;
   onChange: (v: boolean) => void;
 }) {
   return (
     <div className="flex items-center justify-between gap-4">
       <span className="text-sm">{label}</span>
-      <Switch checked={checked} onCheckedChange={onChange} aria-label={label} />
+      <Switch checked={checked} disabled={disabled} onCheckedChange={onChange} aria-label={label} />
     </div>
   );
 }

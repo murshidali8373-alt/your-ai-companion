@@ -711,6 +711,32 @@ function ensureNonBlankState() {
   return active;
 }
 
+// Stage -> Emotion map aligned with web BuddyStateManager
+const AI_STAGE_TO_EMOTION = {
+  idle: "idle",
+  listening: "listening",
+  observing: "thinking",
+  understanding: "thinking",
+  thinking: "thinking",
+  planning: "planning",
+  analyzing: "analyzing",
+  executing: "working",
+  browsing: "working",
+  working: "working",
+  pointing: "pointing",
+  verifying: "verifying",
+  speaking: "speaking",
+  awaiting_approval: "permission_required",
+  permission_required: "permission_required",
+  privacy: "privacy",
+  completed: "success",
+  success: "success",
+  confused: "confused",
+  curious: "confused",
+  error: "error",
+  disconnected: "disconnected",
+};
+
 // Centralized BuddyStateManager for side panel
 const BuddyStateManager = {
   get buddies() {
@@ -755,6 +781,19 @@ const BuddyStateManager = {
   },
   setEmotion(emotion, label) {
     setRigEmotion(emotion, label);
+  },
+  setProcessingStage(stage, opts = {}) {
+    const cleanStage = String(stage || "idle")
+      .trim()
+      .toLowerCase();
+    const mappedEmotion = AI_STAGE_TO_EMOTION[cleanStage] || cleanStage || "idle";
+    const avatarWrap = $("buddyAvatar");
+    if (avatarWrap) {
+      avatarWrap.setAttribute("data-stage", cleanStage);
+      avatarWrap.setAttribute("data-emotion", mappedEmotion);
+    }
+    setRigEmotion(mappedEmotion, opts.label || mappedEmotion.toUpperCase(), opts.extra || {});
+    return mappedEmotion;
   },
 };
 window.BuddyStateManager = BuddyStateManager;
@@ -1475,14 +1514,414 @@ function mapBackendEmotion(rawEmotion, hasHighlight) {
 const MAX_CONVERSATION_TURNS = 3;
 const conversationBuffer = [];
 
+function sanitizeHttpUrl(rawUrl) {
+  const trimmed = String(rawUrl || "").trim();
+  if (!/^https?:\/\/[^\s<>"'`]+$/i.test(trimmed)) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function appendAutoLinkedText(parent, text) {
+  const bareUrlRe = /(https?:\/\/[^\s<>"')\]`]+)/g;
+  let lastIdx = 0;
+  let match;
+  while ((match = bareUrlRe.exec(text)) !== null) {
+    if (match.index > lastIdx) {
+      parent.appendChild(document.createTextNode(text.slice(lastIdx, match.index)));
+    }
+    const raw = match[1];
+    const safeHref = sanitizeHttpUrl(raw);
+    if (safeHref) {
+      const a = document.createElement("a");
+      a.className = "msg-md-link";
+      a.href = safeHref;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = raw;
+      parent.appendChild(a);
+    } else {
+      parent.appendChild(document.createTextNode(raw));
+    }
+    lastIdx = match.index + raw.length;
+  }
+  if (lastIdx < text.length) {
+    parent.appendChild(document.createTextNode(text.slice(lastIdx)));
+  }
+}
+
+function appendSafeInlineNodes(parent, line) {
+  const src = String(line || "");
+  const tokenRe =
+    /(`[^`\n]+`)|(\[[^\]]+\]\([^)]+\))|(\*\*[^*\n]+\*\*|__[^_\n]+__)|(\*[^*\n]+\*)|(\~\~[^~\n]+\~\~)/g;
+  let lastIdx = 0;
+  let match;
+  while ((match = tokenRe.exec(src)) !== null) {
+    if (match.index > lastIdx) {
+      appendAutoLinkedText(parent, src.slice(lastIdx, match.index));
+    }
+    const raw = match[0];
+    if (match[1]) {
+      const code = document.createElement("code");
+      code.className = "msg-md-code";
+      code.textContent = raw.slice(1, -1);
+      parent.appendChild(code);
+    } else if (match[2]) {
+      const linkMatch = raw.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+      if (linkMatch) {
+        const label = linkMatch[1];
+        const safeHref = sanitizeHttpUrl(linkMatch[2]);
+        if (safeHref) {
+          const a = document.createElement("a");
+          a.className = "msg-md-link";
+          a.href = safeHref;
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          a.textContent = label;
+          parent.appendChild(a);
+        } else {
+          parent.appendChild(document.createTextNode(label));
+        }
+      } else {
+        parent.appendChild(document.createTextNode(raw));
+      }
+    } else if (match[3]) {
+      const strong = document.createElement("strong");
+      appendSafeInlineNodes(strong, raw.slice(2, -2));
+      parent.appendChild(strong);
+    } else if (match[4]) {
+      const em = document.createElement("em");
+      em.textContent = raw.slice(1, -1);
+      parent.appendChild(em);
+    } else if (match[5]) {
+      const del = document.createElement("del");
+      del.textContent = raw.slice(2, -2);
+      parent.appendChild(del);
+    }
+    lastIdx = match.index + raw.length;
+  }
+  if (lastIdx < src.length) {
+    appendAutoLinkedText(parent, src.slice(lastIdx));
+  }
+}
+
+function isMdTableSeparator(line) {
+  const trimmed = String(line || "").trim();
+  if (!trimmed.includes("|")) return false;
+  const cells = trimmed
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((c) => c.trim());
+  return cells.length >= 1 && cells.every((c) => /^:?-{2,}:?$/.test(c));
+}
+
+function splitMdTableRow(line) {
+  return String(line || "")
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((c) => c.trim());
+}
+
+function renderSafeMarkdownFragment(text) {
+  const root = document.createElement("div");
+  root.className = "msg-md-root";
+  const lines = String(text || "")
+    .replace(/\r\n/g, "\n")
+    .split("\n");
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // 1. Fenced code block
+    const fenceMatch = line.match(/^```([a-zA-Z0-9_+-]*)\s*$/);
+    if (fenceMatch) {
+      const lang = fenceMatch[1]?.trim() || "";
+      const codeLines = [];
+      i++;
+      while (i < lines.length && !/^```\s*$/.test(lines[i])) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      if (i < lines.length) i++;
+      const pre = document.createElement("pre");
+      pre.className = "msg-md-pre";
+      if (lang) {
+        const langEl = document.createElement("div");
+        langEl.className = "msg-md-pre-lang";
+        langEl.textContent = lang;
+        pre.appendChild(langEl);
+      }
+      const codeEl = document.createElement("code");
+      codeEl.textContent = codeLines.join("\n");
+      pre.appendChild(codeEl);
+      root.appendChild(pre);
+      continue;
+    }
+
+    if (line.trim() === "") {
+      i++;
+      continue;
+    }
+
+    // 2. Horizontal rule
+    if (/^\s*(?:[-*_]){3,}\s*$/.test(line)) {
+      const hr = document.createElement("hr");
+      hr.className = "msg-md-hr";
+      root.appendChild(hr);
+      i++;
+      continue;
+    }
+
+    // 3. Markdown Table
+    if (line.includes("|") && i + 1 < lines.length && isMdTableSeparator(lines[i + 1])) {
+      const headers = splitMdTableRow(line);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim() !== "") {
+        rows.push(splitMdTableRow(lines[i]));
+        i++;
+      }
+      const wrap = document.createElement("div");
+      wrap.className = "msg-md-table-wrap";
+      const table = document.createElement("table");
+      table.className = "msg-md-table";
+      const thead = document.createElement("thead");
+      const headTr = document.createElement("tr");
+      headers.forEach((h) => {
+        const th = document.createElement("th");
+        appendSafeInlineNodes(th, h);
+        headTr.appendChild(th);
+      });
+      thead.appendChild(headTr);
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        headers.forEach((_, ci) => {
+          const td = document.createElement("td");
+          appendSafeInlineNodes(td, row[ci] ?? "");
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      wrap.appendChild(table);
+      root.appendChild(wrap);
+      continue;
+    }
+
+    // 4. Heading
+    const headingMatch = line.match(/^(#{1,4})\s+(.+)$/);
+    if (headingMatch) {
+      const h = document.createElement("p");
+      h.className = "msg-md-h";
+      appendSafeInlineNodes(h, headingMatch[2].trim());
+      root.appendChild(h);
+      i++;
+      continue;
+    }
+
+    // 5. Blockquote
+    if (/^\s*>\s?/.test(line)) {
+      const bq = document.createElement("blockquote");
+      bq.className = "msg-md-quote";
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+        const p = document.createElement("p");
+        p.className = "msg-md-p";
+        appendSafeInlineNodes(p, lines[i].replace(/^\s*>\s?/, ""));
+        bq.appendChild(p);
+        i++;
+      }
+      root.appendChild(bq);
+      continue;
+    }
+
+    // 6. Unordered List
+    if (/^\s*(?:[-*•])\s+/.test(line)) {
+      const ul = document.createElement("ul");
+      ul.className = "msg-md-list";
+      while (i < lines.length && /^\s*(?:[-*•])\s+/.test(lines[i])) {
+        const li = document.createElement("li");
+        appendSafeInlineNodes(li, lines[i].replace(/^\s*(?:[-*•])\s+/, ""));
+        ul.appendChild(li);
+        i++;
+      }
+      root.appendChild(ul);
+      continue;
+    }
+
+    // 7. Ordered List
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const ol = document.createElement("ol");
+      ol.className = "msg-md-list";
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+        const li = document.createElement("li");
+        appendSafeInlineNodes(li, lines[i].replace(/^\s*\d+\.\s+/, ""));
+        ol.appendChild(li);
+        i++;
+      }
+      root.appendChild(ol);
+      continue;
+    }
+
+    // 8. Paragraph
+    const paraLines = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() !== "" &&
+      !/^```/.test(lines[i]) &&
+      !/^\s*(?:[-*_]){3,}\s*$/.test(lines[i]) &&
+      !/^(#{1,4})\s+/.test(lines[i]) &&
+      !/^\s*>\s?/.test(lines[i]) &&
+      !/^\s*(?:[-*•])\s+/.test(lines[i]) &&
+      !/^\s*\d+\.\s+/.test(lines[i]) &&
+      !(lines[i].includes("|") && i + 1 < lines.length && isMdTableSeparator(lines[i + 1]))
+    ) {
+      paraLines.push(lines[i]);
+      i++;
+    }
+    if (paraLines.length > 0) {
+      const p = document.createElement("p");
+      p.className = "msg-md-p";
+      p.style.whiteSpace = "pre-wrap";
+      paraLines.forEach((pl, idx) => {
+        if (idx > 0) p.appendChild(document.createTextNode("\n"));
+        appendSafeInlineNodes(p, pl);
+      });
+      root.appendChild(p);
+    }
+  }
+
+  return root;
+}
+
+const BuddyChatScroll = {
+  isPinnedToBottom: true,
+  hasUnread: false,
+  _boundBox: null,
+  _boundBtn: null,
+  _onScrollHandler: null,
+  _resizeObserver: null,
+
+  isNearBottom(box) {
+    if (!box) return true;
+    if (box.scrollHeight <= box.clientHeight) return true;
+    return box.scrollHeight - box.scrollTop - box.clientHeight <= 36;
+  },
+
+  scrollToBottom(opts = {}) {
+    const box = $("historyBox");
+    if (!box) return;
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+    const behavior = opts.smooth && !reduced ? "smooth" : "auto";
+    if (typeof box.scrollTo === "function") {
+      box.scrollTo({ top: box.scrollHeight, behavior });
+    } else {
+      box.scrollTop = box.scrollHeight;
+    }
+    this.isPinnedToBottom = true;
+    this.hasUnread = false;
+    const btn = $("historyJumpBtn");
+    if (btn) {
+      btn.textContent = "↓ Jump to latest";
+      btn.hidden = true;
+    }
+  },
+
+  init() {
+    const box = $("historyBox");
+    const btn = $("historyJumpBtn");
+    if (!box) return;
+
+    if (this._boundBox !== box) {
+      if (this._boundBox && this._onScrollHandler) {
+        this._boundBox.removeEventListener("scroll", this._onScrollHandler);
+      }
+      if (this._resizeObserver) {
+        this._resizeObserver.disconnect();
+        this._resizeObserver = null;
+      }
+
+      this._onScrollHandler = () => {
+        const pinned = this.isNearBottom(box);
+        this.isPinnedToBottom = pinned;
+        const jumpBtn = $("historyJumpBtn");
+        if (pinned) {
+          this.hasUnread = false;
+          if (jumpBtn) {
+            jumpBtn.textContent = "↓ Jump to latest";
+            jumpBtn.hidden = true;
+          }
+        } else if (jumpBtn && box.scrollHeight > box.clientHeight + 24) {
+          jumpBtn.textContent = this.hasUnread ? "↓ New messages" : "↓ Jump to latest";
+          jumpBtn.hidden = false;
+        }
+      };
+
+      box.addEventListener("scroll", this._onScrollHandler, { passive: true });
+      if (typeof ResizeObserver !== "undefined") {
+        this._resizeObserver = new ResizeObserver(() => {
+          if (this.isPinnedToBottom) {
+            box.scrollTop = box.scrollHeight;
+          }
+        });
+        this._resizeObserver.observe(box);
+      }
+      this._boundBox = box;
+    }
+
+    if (btn && this._boundBtn !== btn) {
+      btn.onclick = () => this.scrollToBottom({ smooth: true });
+      this._boundBtn = btn;
+    }
+  },
+
+  afterAppend(opts = {}) {
+    this.init();
+    if (opts.forceScroll || opts.isUser || this.isPinnedToBottom) {
+      this.scrollToBottom({ smooth: false });
+    } else {
+      this.hasUnread = true;
+      const btn = $("historyJumpBtn");
+      if (btn) {
+        btn.textContent = "↓ New messages";
+        btn.hidden = false;
+      }
+    }
+  },
+
+  reset() {
+    this.isPinnedToBottom = true;
+    this.hasUnread = false;
+    const btn = $("historyJumpBtn");
+    if (btn) {
+      btn.textContent = "↓ Jump to latest";
+      btn.hidden = true;
+    }
+  },
+};
+
 function appendHistory(role, text) {
   const box = $("historyBox");
   if (!box) return;
   const bubble = document.createElement("div");
   bubble.className = `msg-bubble ${role === "user" ? "msg-user" : "msg-buddy"}`;
-  bubble.textContent = text;
+  if (role === "user") {
+    bubble.textContent = text;
+  } else {
+    bubble.appendChild(renderSafeMarkdownFragment(text));
+  }
   box.appendChild(bubble);
-  box.scrollTop = box.scrollHeight;
+  BuddyChatScroll.afterAppend({ isUser: role === "user" });
 }
 
 function appendProviderWarningNotice(warning, providerFailure = null) {
@@ -1518,7 +1957,7 @@ function appendProviderWarningNotice(warning, providerFailure = null) {
     Boolean(providerFailure);
   notice.textContent = `${isRuntimeErr ? "⚠️" : "ℹ️"} ${effectiveWarning.message}`;
   box.appendChild(notice);
-  box.scrollTop = box.scrollHeight;
+  BuddyChatScroll.afterAppend();
 }
 
 function getLocalModeRecommendation(question, activeSlug, language) {
@@ -1627,7 +2066,7 @@ function appendModeRecommendationNotice(rec) {
   wrap.appendChild(btnRow);
 
   box.appendChild(wrap);
-  box.scrollTop = box.scrollHeight;
+  BuddyChatScroll.afterAppend();
 }
 
 function showChatLoadingSpinner(customText) {
@@ -1659,7 +2098,7 @@ function showChatLoadingSpinner(customText) {
   bubble.appendChild(dots);
 
   box.appendChild(bubble);
-  box.scrollTop = box.scrollHeight;
+  BuddyChatScroll.afterAppend();
   return bubble;
 }
 
@@ -6634,7 +7073,7 @@ async function sendQuery(question, intent, options = {}) {
 
   showChatLoadingSpinner("Buddy is thinking & analyzing…");
 
-  setRigEmotion("thinking", "Thinking…");
+  BuddyStateManager.setProcessingStage("thinking", { label: "Thinking…" });
   $("statusText").textContent = "Inspecting active webpage & reasoning…";
   $("highlightBtn").hidden = true;
   $("speakAnswerBtn").hidden = true;
@@ -6724,7 +7163,7 @@ async function sendQuery(question, intent, options = {}) {
     hideChatLoadingSpinner();
 
     if (!res || res.error || res.activeProvider === "error") {
-      setRigEmotion("error", "Unavailable");
+      BuddyStateManager.setProcessingStage("error", { label: "Unavailable" });
       const errMsg =
         res?.pageReadable === false && !isGeneralChatQuery
           ? "I cannot read the current webpage right now. Please refresh or allow page access."
@@ -7853,10 +8292,13 @@ function renderTaskPlanUI() {
   $("planStatusBadge").className = `status-badge ${activePlan.status}`;
 
   const completedCount = activePlan.steps.filter((s) => s.status === "completed").length;
+  const skippedCount = activePlan.steps.filter((s) => s.status === "skipped").length;
+  const resolvedCount = completedCount + skippedCount;
   const total = activePlan.steps.length;
-  const pct = total > 0 ? Math.round((completedCount / total) * 100) : 0;
+  const pct = total > 0 ? Math.round((resolvedCount / total) * 100) : 0;
 
-  $("progressStepsLabel").textContent = `${completedCount} of ${total} steps completed`;
+  $("progressStepsLabel").textContent =
+    `${completedCount} of ${total} completed${skippedCount > 0 ? ` (${skippedCount} skipped)` : ""}`;
   $("progressPercentLabel").textContent = `${pct}%`;
   $("progressBarFill").style.width = `${pct}%`;
 
@@ -8188,7 +8630,11 @@ async function startMultiActionPlan(instruction, isExplicitPlan = false) {
     "buddy",
     `🎯 Created ${plan.steps.length}-step execution plan for: "${plan.title}"`,
   );
-  setRigEmotion("working", "Planning");
+  if (typeof BuddyStateManager !== "undefined") {
+    BuddyStateManager.setProcessingStage("planning", { label: "Planning" });
+  } else {
+    setRigEmotion("working", "Planning");
+  }
   renderTaskPlanUI();
   await persistPlanCheckpoint(plan);
 
@@ -8294,14 +8740,24 @@ async function runPlanLoop() {
             currentStep.approvalPrompt ||
             `Buddy needs your confirmation to execute "${currentStep.title}". This step performs changes.`;
         }
-        setRigEmotion("concerned", "Approval");
+        if (typeof BuddyStateManager !== "undefined") {
+          BuddyStateManager.setProcessingStage("awaiting_approval", { label: "Approval" });
+        } else {
+          setRigEmotion("concerned", "Approval");
+        }
         return; // Wait for user approval click
       }
 
       currentStep.status = "running";
       plan.status = "running";
       renderTaskPlanUI();
-      setRigEmotion("working", `Step ${currentStep.stepNumber}`);
+      if (typeof BuddyStateManager !== "undefined") {
+        BuddyStateManager.setProcessingStage("working", {
+          label: `Step ${currentStep.stepNumber}`,
+        });
+      } else {
+        setRigEmotion("working", `Step ${currentStep.stepNumber}`);
+      }
       await persistPlanCheckpoint(plan);
       if (isStaleRun()) return;
 
@@ -8317,7 +8773,11 @@ async function runPlanLoop() {
         await persistPlanCheckpoint(plan);
         if (isStaleRun()) return;
         renderTaskPlanUI();
-        setRigEmotion("concerned", "Login / OTP");
+        if (typeof BuddyStateManager !== "undefined") {
+          BuddyStateManager.setProcessingStage("permission_required", { label: "Login / OTP" });
+        } else {
+          setRigEmotion("concerned", "Login / OTP");
+        }
         const active = getActiveBuddy();
         const isHindi = active?.defaultLanguage !== "english";
         appendHistory(
@@ -8491,7 +8951,11 @@ async function runPlanLoop() {
         recordTaskExecution(plan).catch(() => {});
         if (isStaleRun()) return;
         renderTaskPlanUI();
-        setRigEmotion("error", "Failed");
+        if (typeof BuddyStateManager !== "undefined") {
+          BuddyStateManager.setProcessingStage("error", { label: "Failed" });
+        } else {
+          setRigEmotion("error", "Failed");
+        }
         appendHistory("buddy", `⚠️ Step ${currentStep.stepNumber} failed: ${currentStep.error}`);
         if ($("planRetryBtn")) $("planRetryBtn").hidden = false;
         return;
@@ -8507,11 +8971,17 @@ async function runPlanLoop() {
     await clearPlanCheckpoints();
     if (isStaleRun()) return;
     renderTaskPlanUI();
-    setRigEmotion("celebrate", "Done");
+    if (typeof BuddyStateManager !== "undefined") {
+      BuddyStateManager.setProcessingStage("completed", { label: "Done" });
+    } else {
+      setRigEmotion("celebrate", "Done");
+    }
     const extractedCount = Array.isArray(plan.extractedData) ? plan.extractedData.length : 0;
+    const completedTotal = plan.steps.filter((s) => s.status === "completed").length;
+    const skippedTotal = plan.steps.filter((s) => s.status === "skipped").length;
     appendHistory(
       "buddy",
-      `✅ Multi-action workflow completed! Executed and verified all ${plan.steps.length} steps.${extractedCount > 0 ? ` Extracted ${extractedCount} items.` : ""}`,
+      `✅ Multi-action workflow completed (${completedTotal} executed${skippedTotal > 0 ? `, ${skippedTotal} skipped` : ""}).${extractedCount > 0 ? ` Extracted ${extractedCount} items.` : ""}`,
     );
   } finally {
     if (myRunToken === planRunToken || activePlan !== plan) {
@@ -9114,10 +9584,31 @@ if ($("planSkipBtn")) {
     const st = activePlan.steps[activePlan.currentStepIndex];
     st.status = "skipped";
     activePlan.currentStepIndex++;
-    activePlan.status = "running";
     pendingApprovalStep = null;
     if ($("consequentialApprovalCard")) $("consequentialApprovalCard").hidden = true;
     if ($("planRetryBtn")) $("planRetryBtn").hidden = true;
+
+    if (activePlan.currentStepIndex >= activePlan.steps.length) {
+      activePlan.status = "completed";
+      await persistPlanCheckpoint(activePlan);
+      recordTaskExecution(activePlan).catch(() => {});
+      await clearPlanCheckpoints();
+      renderTaskPlanUI();
+      if (typeof BuddyStateManager !== "undefined") {
+        BuddyStateManager.setProcessingStage("completed", { label: "Done" });
+      } else {
+        setRigEmotion("celebrate", "Done");
+      }
+      const completedTotal = activePlan.steps.filter((s) => s.status === "completed").length;
+      const skippedTotal = activePlan.steps.filter((s) => s.status === "skipped").length;
+      appendHistory(
+        "buddy",
+        `⏭️ Skipped final step ("${st.title}"). Plan finished (${completedTotal} executed, ${skippedTotal} skipped).`,
+      );
+      return;
+    }
+
+    activePlan.status = "running";
     await persistPlanCheckpoint(activePlan);
     renderTaskPlanUI();
     runPlanLoop();
@@ -9127,9 +9618,16 @@ if ($("planSkipBtn")) {
 if ($("planStopBtn")) {
   $("planStopBtn").onclick = () => {
     if (!activePlan) return;
+    const hadInFlight =
+      planLoopRunning || (activePlan.steps || []).some((s) => s.status === "running");
     planRunToken++;
     planLoopRunning = false;
     activePlan.status = "cancelled";
+    (activePlan.steps || []).forEach((s) => {
+      if (s.status === "pending" || s.status === "running" || s.status === "awaiting_approval") {
+        s.status = "cancelled";
+      }
+    });
     isPlanPaused = false;
     pendingApprovalStep = null;
     sendRuntimeMessage({ type: "ORCHESTRATION_CONTROL", action: "cancel" }).catch(() => {});
@@ -9137,8 +9635,17 @@ if ($("planStopBtn")) {
     if ($("planRetryBtn")) $("planRetryBtn").hidden = true;
     clearPlanCheckpoints();
     renderTaskPlanUI();
-    setRigEmotion("idle", "Stopped");
-    appendHistory("buddy", "⏹️ Multi-action execution plan stopped by user.");
+    if (typeof BuddyStateManager !== "undefined") {
+      BuddyStateManager.setProcessingStage("idle", { label: "Stopped" });
+    } else {
+      setRigEmotion("idle", "Stopped");
+    }
+    appendHistory(
+      "buddy",
+      hadInFlight
+        ? "⏹️ Multi-action execution stopped. Remaining steps were cancelled; an already-dispatched browser action cannot be automatically rolled back."
+        : "⏹️ Multi-action execution plan stopped by user.",
+    );
   };
 }
 
@@ -9484,7 +9991,10 @@ if ($("signoutBtn")) {
     isPlanPaused = false;
     pendingApprovalStep = null;
     clearActiveUploadedDocument();
-    if ($("historyBox")) $("historyBox").innerHTML = "";
+    if ($("historyBox")) {
+      $("historyBox").textContent = "";
+      BuddyChatScroll.reset();
+    }
     if ($("taskPlanCard")) $("taskPlanCard").hidden = true;
     await sendRuntimeMessage({ type: "SIGN_OUT" });
     render();
@@ -9553,8 +10063,9 @@ if ($("clearChatBtn")) {
     if ($("highlightBtn")) $("highlightBtn").hidden = true;
     if ($("speakAnswerBtn")) $("speakAnswerBtn").hidden = true;
     if ($("historyBox")) {
-      $("historyBox").innerHTML =
-        '<div class="msg-bubble msg-buddy">Conversation cleared. What can I help you with?</div>';
+      $("historyBox").textContent = "";
+      BuddyChatScroll.reset();
+      appendHistory("buddy", "Conversation cleared. What can I help you with?");
     }
     $("statusText").textContent = "Conversation cleared.";
   };
@@ -11654,3 +12165,4 @@ chrome.storage?.onChanged?.addListener?.((changes, area) => {
 });
 
 render();
+BuddyChatScroll.init();

@@ -6,6 +6,7 @@ import {
   ClipboardCheck,
   Cpu,
   Globe,
+  Layers,
   Send,
   Sparkles,
   Stethoscope,
@@ -21,7 +22,9 @@ import { VoiceBar } from "@/components/voice-bar";
 import { AiModelHub } from "@/components/ai-model-hub";
 import { WebpageInspector } from "@/components/webpage-inspector";
 import { BuddyEmotionControlPanel } from "@/components/buddy-emotion-control-panel";
+import { ChatMarkdown } from "@/components/chat-markdown";
 import { VerificationDashboard } from "@/components/verification-dashboard";
+import { WorkCenterPanel } from "@/components/work-center-panel";
 import { useBuddyStateManager, BUDDY_EMOTION_STATES } from "@/hooks/use-buddy-state-manager";
 import { SingleSpeaker } from "@/shared/voice-turn";
 import { Badge } from "@/components/ui/badge";
@@ -108,9 +111,16 @@ function Dashboard() {
   }, [buddy]);
 
   const [activeTab, setActiveTab] = useState<
-    "stage" | "hub" | "inspector" | "emotions" | "verification"
+    "stage" | "work_center" | "hub" | "inspector" | "emotions" | "verification"
   >("stage");
   const [selectedModelId, setSelectedModelId] = useState<string>("gemini-3.8-flash");
+
+  useEffect(() => {
+    const slug = dashboard.data?.profile?.selected_buddy_slug;
+    if (slug && slug !== buddy.selectedBuddySlug) {
+      buddy.selectBuddy(slug);
+    }
+  }, [dashboard.data?.profile?.selected_buddy_slug, buddy]);
 
   useEffect(() => {
     try {
@@ -130,7 +140,7 @@ function Dashboard() {
   const ask = useMutation({
     mutationFn: async (text: string) => {
       const id = ++requestId.current;
-      buddy.setEmotion(BUDDY_EMOTION_STATES.THINKING, { reason: "Processing question…" });
+      buddy.setProcessingStage("thinking", { reason: "Processing question…" });
 
       let userApiKey: string | undefined;
       let customBaseUrl: string | undefined;
@@ -157,7 +167,13 @@ function Dashboard() {
     onSuccess: ({ result, stale }) => {
       if (stale) return;
       const lang = dashboard.data?.profile?.language === "english" ? "en-IN" : "hi-IN";
-      buddy.setEmotion(BUDDY_EMOTION_STATES.SPEAKING, { reason: "Speaking response" });
+      if (result.providerWarning?.message) {
+        toast.info(result.providerWarning.message);
+      }
+      if (result.providerFailure?.message) {
+        toast.error(result.providerFailure.message);
+      }
+      buddy.setProcessingStage("speaking", { reason: "Speaking response" });
       if (
         speaker.current?.speak(result.answer, lang, () => {
           setSpeaking(false);
@@ -186,13 +202,17 @@ function Dashboard() {
       setQuestion("");
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
-    onError: () => {
-      buddy.setEmotion(BUDDY_EMOTION_STATES.ERROR, {
+    onError: (err) => {
+      const errMsg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Buddy could not reach the AI provider. Check Settings → AI Model Hub.";
+      buddy.setProcessingStage("error", {
         durationMs: 3000,
         revertTo: BUDDY_EMOTION_STATES.IDLE,
-        reason: "Failed to process request",
+        reason: errMsg,
       });
-      toast.error("Buddy could not answer that just now. Please try again in a moment.");
+      toast.error(errMsg);
     },
   });
 
@@ -269,7 +289,7 @@ function Dashboard() {
     >
       {/* Dashboard Feature Navigation */}
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-border/80 pb-3">
-        <div className="flex items-center gap-1.5 rounded-xl bg-muted/40 p-1">
+        <div className="flex flex-wrap items-center gap-1.5 rounded-xl bg-muted/40 p-1">
           <Button
             variant={activeTab === "stage" ? "secondary" : "ghost"}
             size="sm"
@@ -277,6 +297,15 @@ function Dashboard() {
             className="h-8 text-xs font-medium"
           >
             Buddy Stage
+          </Button>
+          <Button
+            variant={activeTab === "work_center" ? "secondary" : "ghost"}
+            size="sm"
+            onClick={() => setActiveTab("work_center")}
+            className="h-8 text-xs font-medium gap-1.5"
+          >
+            <Layers className="h-3.5 w-3.5" />
+            Work Center
           </Button>
           <Button
             variant={activeTab === "emotions" ? "secondary" : "ghost"}
@@ -323,6 +352,8 @@ function Dashboard() {
           </Badge>
         </div>
       </div>
+
+      {activeTab === "work_center" && <WorkCenterPanel />}
 
       {activeTab === "emotions" && (
         <div className="space-y-4">
@@ -442,7 +473,10 @@ function Dashboard() {
                 lang={lang}
                 onListeningChange={setListening}
                 onStop={stopAll}
-                onSubmit={(text) => ask.mutate(text)}
+                onSubmit={(text) => {
+                  setManualEmotion(null);
+                  ask.mutate(text);
+                }}
               />
             </section>
 
@@ -464,9 +498,9 @@ function Dashboard() {
                       {answer.buddy}
                       {answer.blocked ? " · blocked" : ` · confidence ${answer.confidence}`}
                     </p>
-                    <p className="max-h-72 overflow-y-auto whitespace-pre-wrap text-sm">
-                      {answer.text}
-                    </p>
+                    <div className="max-h-72 overflow-y-auto pr-1 text-sm min-w-0">
+                      <ChatMarkdown content={answer.text} variant="assistant" />
+                    </div>
                     {answer.needs.length > 0 && (
                       <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
                         {answer.needs.map((need) => (

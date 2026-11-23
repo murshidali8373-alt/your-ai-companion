@@ -171,9 +171,15 @@ export function BuddyEmotionControlPanel({
   const [simulateReducedMotion, setSimulateReducedMotion] = useState<boolean>(false);
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
 
-  // Auto-tour cycle timer ref
-  const tourTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const burstTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // Auto-tour & timers refs
+  const tourTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const burstTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeEmotionRef = useRef<BuddyEmotion>(activeEmotion);
+
+  useEffect(() => {
+    activeEmotionRef.current = activeEmotion;
+  }, [activeEmotion]);
 
   const currentDef: EmotionDefinition = useMemo(() => {
     return ALL_EMOTIONS.find((e) => e.id === activeEmotion) ?? ALL_EMOTIONS[0]!;
@@ -181,6 +187,7 @@ export function BuddyEmotionControlPanel({
 
   const setEmotionAndNotify = useCallback(
     (emo: BuddyEmotion) => {
+      activeEmotionRef.current = emo;
       setActiveEmotion(emo);
       onEmotionChange?.(emo);
     },
@@ -204,7 +211,7 @@ export function BuddyEmotionControlPanel({
     }
   };
 
-  // Tour mode runner
+  // Tour mode runner (does not restart timer on activeEmotion change)
   useEffect(() => {
     if (triggerMode === "tour") {
       const tourList: BuddyEmotion[] = [
@@ -219,7 +226,7 @@ export function BuddyEmotionControlPanel({
         "sleepy",
         "neutral",
       ];
-      let idx = tourList.indexOf(activeEmotion);
+      let idx = tourList.indexOf(activeEmotionRef.current);
       if (idx === -1) idx = 0;
 
       tourTimerRef.current = setInterval(
@@ -232,15 +239,26 @@ export function BuddyEmotionControlPanel({
         },
         3000 * (1 / animSpeed),
       );
-    } else {
-      if (tourTimerRef.current) clearInterval(tourTimerRef.current);
+    } else if (tourTimerRef.current) {
+      clearInterval(tourTimerRef.current);
+      tourTimerRef.current = null;
     }
 
     return () => {
-      if (tourTimerRef.current) clearInterval(tourTimerRef.current);
-      if (burstTimerRef.current) clearTimeout(burstTimerRef.current);
+      if (tourTimerRef.current) {
+        clearInterval(tourTimerRef.current);
+        tourTimerRef.current = null;
+      }
+      if (burstTimerRef.current) {
+        clearTimeout(burstTimerRef.current);
+        burstTimerRef.current = null;
+      }
+      if (copyTimerRef.current) {
+        clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = null;
+      }
     };
-  }, [triggerMode, animSpeed, activeEmotion, setEmotionAndNotify]);
+  }, [triggerMode, animSpeed, setEmotionAndNotify]);
 
   const cssSnippet = useMemo(() => {
     return `/* Active AI Buddy Emotion: ${currentDef.label.toUpperCase()} */
@@ -258,10 +276,15 @@ ${
 }`;
   }, [currentDef]);
 
-  const handleCopyCss = () => {
-    navigator.clipboard.writeText(cssSnippet);
-    setCopiedCode(true);
-    setTimeout(() => setCopiedCode(false), 2000);
+  const handleCopyCss = async () => {
+    try {
+      await navigator.clipboard.writeText(cssSnippet);
+      setCopiedCode(true);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopiedCode(false), 2000);
+    } catch {
+      setCopiedCode(false);
+    }
   };
 
   // CSS custom property injected into style

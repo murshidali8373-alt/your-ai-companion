@@ -396,3 +396,44 @@ export async function collectWebResearchSources(
 
   return { sources, errors };
 }
+
+export interface CitationCandidate {
+  number?: number | undefined;
+  sourceId?: string | undefined;
+  title: string;
+  url: string;
+  domain: string;
+  quote?: string | undefined;
+}
+
+/**
+ * Strips any citations whose URL does not match a verified ResearchSource in the current run.
+ * Prevents hallucinated or fabricated links from reaching final outputs.
+ */
+export function verifyResearchCitations<T extends CitationCandidate>(
+  citations: T[],
+  sources: ResearchSource[],
+): { validCitations: T[]; rejectedCitations: T[] } {
+  const normalizeUrl = (raw: string): string => {
+    try {
+      const u = new URL(raw.trim());
+      return `${u.origin}${u.pathname.replace(/\/+$/, "")}${u.search}`.toLowerCase();
+    } catch {
+      return raw.trim().toLowerCase();
+    }
+  };
+
+  const validUrls = new Set(sources.map((s) => normalizeUrl(s.url)));
+  const validCitations: T[] = [];
+  const rejectedCitations: T[] = [];
+
+  for (const cite of citations) {
+    if (cite.url && validUrls.has(normalizeUrl(cite.url))) {
+      validCitations.push(cite);
+    } else {
+      rejectedCitations.push(cite);
+    }
+  }
+
+  return { validCitations, rejectedCitations };
+}
