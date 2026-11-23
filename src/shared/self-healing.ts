@@ -40,6 +40,22 @@ export type ErrorAttribution =
   | "unsupported_operation"
   | "temporary_browser_failure";
 
+export type StandardFailureCategory =
+  | "selector_dom_change"
+  | "missing_data"
+  | "permission_denied"
+  | "auth_expired"
+  | "provider_failure"
+  | "network_failure"
+  | "rate_limit"
+  | "timeout"
+  | "file_parsing_error"
+  | "unsupported_format"
+  | "workflow_configuration_error"
+  | "invalid_user_instruction";
+
+export type FailureSeverity = "low" | "medium" | "high" | "critical";
+
 export type ApprovalActionType =
   | "diagnose_only"
   | "show_affected_code"
@@ -76,6 +92,8 @@ export interface SanitizedDiagnosticReport {
   timestamp: string;
   component: MonitoredComponent;
   attribution: ErrorAttribution;
+  failureCategory: StandardFailureCategory;
+  severity: FailureSeverity;
   confidence: number;
   attributionReason: string;
   errorMessage: string;
@@ -292,37 +310,111 @@ export function computeErrorFingerprint(input: {
 /**
  * Classifies root cause attribution honestly without blaming extension code for site/network/provider issues.
  */
-export function classifyRuntimeError(input: DiagnosticReportInput): {
-  attribution: ErrorAttribution;
-  confidence: number;
-  reason: string;
-} {
+export function mapToStandardFailureCategory(
+  attribution: ErrorAttribution,
+  input: DiagnosticReportInput,
+): { failureCategory: StandardFailureCategory; severity: FailureSeverity } {
   const msg = `${input.errorMessage || ""} ${input.errorType || ""}`.toLowerCase();
   const status = input.httpStatus;
 
-  // 1. Permissions / Restricted URLs / Safety blocks
+  if (status === 429 || /rate limit|too many requests|quota exceeded/i.test(msg)) {
+    return { failureCategory: "rate_limit", severity: "medium" };
+  }
+  if (/timed? ?out|etimedout|aborterror|deadline exceeded|stall/i.test(msg)) {
+    return { failureCategory: "timeout", severity: "medium" };
+  }
+  if (/unsupported format|unsupported file|cannot parse extension|unknown extension/i.test(msg)) {
+    return { failureCategory: "unsupported_format", severity: "low" };
+  }
+  if (
+    input.component === "file_operations" ||
+    /corrupt|malformed.*(?:xlsx|docx|pdf|csv|zip)|failed to parse file|invalid pdf/i.test(msg)
+  ) {
+    return { failureCategory: "file_parsing_error", severity: "medium" };
+  }
+  if (
+    /workflow.*(?:missing|invalid|cycle|not approved|cron)|unapproved workflow/i.test(msg) ||
+    input.currentOperation?.includes("workflow")
+  ) {
+    return { failureCategory: "workflow_configuration_error", severity: "medium" };
+  }
+  if (/missing.*data|no visible.*found|not available in document|empty dataset/i.test(msg)) {
+    return { failureCategory: "missing_data", severity: "low" };
+  }
+
+  switch (attribution) {
+    case "permissions":
+      return { failureCategory: "permission_denied", severity: "high" };
+    case "authentication":
+      return { failureCategory: "auth_expired", severity: "high" };
+    case "api_provider":
+      return { failureCategory: "provider_failure", severity: "high" };
+    case "network":
+      return { failureCategory: "network_failure", severity: "medium" };
+    case "invalid_input":
+      return { failureCategory: "invalid_user_instruction", severity: "low" };
+    case "unsupported_operation":
+      return { failureCategory: "unsupported_format", severity: "low" };
+    case "website_behavior":
+    case "temporary_browser_failure":
+      return { failureCategory: "selector_dom_change", severity: "medium" };
+    case "ai_buddy_code":
+    default:
+      return {
+        failureCategory:
+          input.component === "dom_interaction" || input.component === "form_filling"
+            ? "selector_dom_change"
+            : "workflow_configuration_error",
+        severity: input.component === "build_and_test" ? "critical" : "high",
+      };
+  }
+}
+
+export function classifyRuntimeError(input: DiagnosticReportInput): {
+  attribution: ErrorAttribution;
+  failureCategory: StandardFailureCategory;
+  severity: FailureSeverity;
+  confidence: number;
+  reason: string;
+} {
+  const wrap = (
+    attribution: ErrorAttribution,
+    confidence: number,
+    reason: string,
+  ) => {
+    const mapped = mapToStandardFailureCategory(attribution, input);
+    return {
+      attribution,
+      failureCategory: mapped.failureCategory,
+      severity: mapped.severity,
+      confidence,
+      reason,
+    };
+  };
+  const msg = `${input.errorMessage || ""} ${input.errorType || ""}`.toLowerCase();
+  const status = input.httpStatus;
+
   if (
     /restricted browser page|permission level|cannot automate|password.*cannot be automated|requires explicit.*approval|missing permission|host permission/i.test(
       msg,
     )
   ) {
-    return {
-      attribution: "permissions",
-      confidence: 0.94,
-      reason:
-        "Blocked by AI Buddy permission ladder, restricted browser scheme, or sensitive-field security boundary.",
-    };
+    return wrap(
+      "permissions",
+      0.94,
+      "Blocked by AI Buddy permission ladder, restricted browser scheme, or sensitive-field security boundary.",
+    );
   }
 
   // 2. Unsupported / Planned capabilities
   if (
     /currently planned|not supported yet|unsupported operation|unknown browser action/i.test(msg)
   ) {
-    return {
-      attribution: "unsupported_operation",
-      confidence: 0.92,
-      reason: "Requested operation maps to a planned or unsupported capability.",
-    };
+    return wrap(
+      "unsupported_operation",
+      0.92,
+      "Requested operation maps to a planned or unsupported capability.",
+    );
   }
 
   // 3. Authentication (user session / GitHub / service auth)
@@ -332,11 +424,11 @@ export function classifyRuntimeError(input: DiagnosticReportInput): {
       msg,
     )
   ) {
-    return {
-      attribution: "authentication",
-      confidence: 0.91,
-      reason: "Authentication or user session token is missing, invalid, or expired.",
-    };
+    return wrap(
+      "authentication",
+      0.91,
+      "Authentication or user session token is missing, invalid, or expired.",
+    );
   }
 
   // 4. API Provider issues (Gemini/OpenAI/Groq rate limit, key, quota, outage)
@@ -348,12 +440,11 @@ export function classifyRuntimeError(input: DiagnosticReportInput): {
     status === 429 ||
     status === 402
   ) {
-    return {
-      attribution: "api_provider",
-      confidence: 0.9,
-      reason:
-        "Failure originated from external AI model provider credentials, quota, or availability.",
-    };
+    return wrap(
+      "api_provider",
+      0.9,
+      "Failure originated from external AI model provider credentials, quota, or availability.",
+    );
   }
 
   // 5. Network failures
@@ -365,11 +456,11 @@ export function classifyRuntimeError(input: DiagnosticReportInput): {
     status === 503 ||
     status === 504
   ) {
-    return {
-      attribution: "network",
-      confidence: 0.89,
-      reason: "Connectivity failure or timeout while communicating with remote host/backend.",
-    };
+    return wrap(
+      "network",
+      0.89,
+      "Connectivity failure or timeout while communicating with remote host/backend.",
+    );
   }
 
   // 6. Temporary browser runtime hiccups (SW sleep, closed tab, bfcache port disconnect)
@@ -378,11 +469,11 @@ export function classifyRuntimeError(input: DiagnosticReportInput): {
       msg,
     )
   ) {
-    return {
-      attribution: "temporary_browser_failure",
-      confidence: 0.91,
-      reason: "Transient Chromium tab/frame lifecycle or service-worker message port interruption.",
-    };
+    return wrap(
+      "temporary_browser_failure",
+      0.91,
+      "Transient Chromium tab/frame lifecycle or service-worker message port interruption.",
+    );
   }
 
   // 7. Website behavior / layout shift / external site validation
@@ -394,12 +485,11 @@ export function classifyRuntimeError(input: DiagnosticReportInput): {
       msg,
     )
   ) {
-    return {
-      attribution: "website_behavior",
-      confidence: 0.86,
-      reason:
-        "Target website DOM structure, cross-origin boundary, CAPTCHA/OTP, or site validation blocked interaction.",
-    };
+    return wrap(
+      "website_behavior",
+      0.86,
+      "Target website DOM structure, cross-origin boundary, CAPTCHA/OTP, or site validation blocked interaction.",
+    );
   }
 
   // 8. Invalid user/caller input
@@ -409,11 +499,11 @@ export function classifyRuntimeError(input: DiagnosticReportInput): {
       msg,
     )
   ) {
-    return {
-      attribution: "invalid_input",
-      confidence: 0.88,
-      reason: "User instruction or request payload was incomplete or failed input validation.",
-    };
+    return wrap(
+      "invalid_input",
+      0.88,
+      "User instruction or request payload was incomplete or failed input validation.",
+    );
   }
 
   // 9. AI Buddy code defects (SyntaxError, TypeError, ReferenceError, build/test failure, unhandled bug)
@@ -424,22 +514,20 @@ export function classifyRuntimeError(input: DiagnosticReportInput): {
     ) ||
     Boolean(input.file && /^(src|extension|tests)\//.test(input.file))
   ) {
-    return {
-      attribution: "ai_buddy_code",
-      confidence: 0.9,
-      reason: "Internal code exception or selector/logic defect detected inside AI Buddy modules.",
-    };
+    return wrap(
+      "ai_buddy_code",
+      0.9,
+      "Internal code exception or selector/logic defect detected inside AI Buddy modules.",
+    );
   }
 
-  return {
-    attribution:
-      input.component === "dom_interaction" || input.component === "form_filling"
-        ? "website_behavior"
-        : "ai_buddy_code",
-    confidence: 0.65,
-    reason:
-      "Classified from execution component context; further diagnosis recommended if deterministic recovery fails.",
-  };
+  return wrap(
+    input.component === "dom_interaction" || input.component === "form_filling"
+      ? "website_behavior"
+      : "ai_buddy_code",
+    0.65,
+    "Classified from execution component context; further diagnosis recommended if deterministic recovery fails.",
+  );
 }
 
 /**
@@ -491,6 +579,8 @@ export function sanitizeDiagnosticReport(
     timestamp: new Date().toISOString(),
     component: input.component,
     attribution: classification.attribution,
+    failureCategory: classification.failureCategory,
+    severity: classification.severity,
     confidence: classification.confidence,
     attributionReason: classification.reason,
     errorMessage: cleanMsg.slice(0, 1200),

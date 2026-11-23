@@ -13,19 +13,48 @@ export type SpecialistAgentId =
   | "planning"
   | "browser"
   | "visual_understanding"
+  | "visual_intelligence"
   | "research"
+  | "data_intelligence"
   | "spreadsheet"
   | "document"
+  | "file_workspace"
+  | "file_management"
   | "ecommerce"
   | "data_extraction"
   | "communication"
   | "verification"
-  | "file_management"
   | "analysis"
+  | "form_filling"
   | "form_automation"
+  | "navigation"
+  | "workflow_automation"
   | "workflow_recovery"
+  | "memory"
   | "quality_control"
   | "self_healing";
+
+export const CANONICAL_15_AGENTS = [
+  "planning",
+  "browser",
+  "research",
+  "data_intelligence",
+  "spreadsheet",
+  "document",
+  "file_workspace",
+  "form_filling",
+  "navigation",
+  "visual_intelligence",
+  "workflow_automation",
+  "verification",
+  "memory",
+  "communication",
+  "self_healing",
+] as const;
+
+export type CanonicalAgentId = (typeof CANONICAL_15_AGENTS)[number];
+
+export type DataProvenance = "extracted" | "calculated" | "estimated" | "unknown";
 
 export type SubtaskStatus =
   | "pending"
@@ -56,6 +85,7 @@ export interface Subtask {
   capabilityId: string;
   dependencies: string[];
   status: SubtaskStatus;
+  priority?: number; // 1 (lowest) to 10 (highest), default 5
   retryLimit: number;
   retryCount: number;
   tabOwnership?: number | string | null;
@@ -65,9 +95,16 @@ export interface Subtask {
     isConsequential: boolean;
     approved: boolean;
   };
+  input?: Record<string, unknown>;
   checkpoint?: Partial<TaskCheckpoint> | null;
   output?: unknown;
   error?: TaskErrorInfo | null;
+  verification?: {
+    verified: boolean;
+    strategy: string;
+    detail: string;
+  } | null;
+  durationMs?: number;
   startedAt?: string;
   completedAt?: string;
 }
@@ -80,6 +117,7 @@ export interface TaskNode {
     | "created"
     | "understood"
     | "planned"
+    | "paused"
     | "awaiting_approval"
     | "executing"
     | "verifying"
@@ -88,6 +126,7 @@ export interface TaskNode {
     | "failed"
     | "cancelled";
   subtasks: Subtask[];
+  replannedCount?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -127,8 +166,26 @@ export interface SessionUndoEntry {
   timestamp: string;
 }
 
+export interface SessionDecisionEntry {
+  decisionId: string;
+  summary: string;
+  rationale: string;
+  madeBy: SpecialistAgentId;
+  timestamp: string;
+}
+
+export interface SessionCostTelemetry {
+  totalEstimatedTokens: number;
+  totalModelCalls: number;
+  fastPathCount: number;
+  multiAgentCount: number;
+  estimatedCostUsd: number;
+}
+
 export interface TaskSessionContext {
   sessionId: string;
+  userId?: string | null;
+  taskIsolationKey?: string;
   currentTask: TaskNode | null;
   previousTasks: Array<{ taskId: string; goal: string; status: string; completedAt: string }>;
   activeWebpage: {
@@ -160,8 +217,11 @@ export interface TaskSessionContext {
     sourceUrl?: string;
     itemCount: number;
     previewSummary: string;
+    provenance?: DataProvenance;
     capturedAt: string;
   }>;
+  intermediateOutputs?: Record<string, unknown>;
+  decisions?: SessionDecisionEntry[];
   userCorrections: Array<{
     instruction: string;
     targetScope: string;
@@ -194,10 +254,15 @@ export interface TaskSessionContext {
     timestamp: string;
   }>;
   resourceLocks: ResourceLockTable;
+  costTelemetry?: SessionCostTelemetry;
+  pauseRequested?: boolean;
+  cancelRequested?: boolean;
 }
 
 export function createTaskSessionContext(params?: {
   sessionId?: string;
+  userId?: string | null;
+  taskIsolationKey?: string;
   activeWebpage?: TaskSessionContext["activeWebpage"];
   activeBrowserTab?: TaskSessionContext["activeBrowserTab"];
 }): TaskSessionContext {
@@ -205,6 +270,10 @@ export function createTaskSessionContext(params?: {
     sessionId:
       params?.sessionId ||
       `sess_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+    userId: params?.userId ?? null,
+    taskIsolationKey:
+      params?.taskIsolationKey ||
+      `iso_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
     currentTask: null,
     previousTasks: [],
     activeWebpage: params?.activeWebpage ?? null,
@@ -215,6 +284,8 @@ export function createTaskSessionContext(params?: {
     undoStack: [],
     relevantFiles: [],
     extractedDataRefs: [],
+    intermediateOutputs: {},
+    decisions: [],
     userCorrections: [],
     agentAssignments: {},
     pendingSubtasks: [],
@@ -233,6 +304,15 @@ export function createTaskSessionContext(params?: {
       tabs: {},
       files: {},
     },
+    costTelemetry: {
+      totalEstimatedTokens: 0,
+      totalModelCalls: 0,
+      fastPathCount: 0,
+      multiAgentCount: 0,
+      estimatedCostUsd: 0,
+    },
+    pauseRequested: false,
+    cancelRequested: false,
   };
 }
 
@@ -454,4 +534,117 @@ export function popUndoRecord(
     }
   }
   return null;
+}
+
+const SENSITIVE_TEXT_MASK_RE =
+  /(-----BEGIN [A-Z ]*PRIVATE KEY-----|\bsk-[A-Za-z0-9]{16,}|gh[ps]_[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{25,}|(?:password|passwd|otp|cvv|pin)\s*[:=]\s*[^\s,;]+|\b\d{4}[\s-]?\d{4}[\s-]?\d{4}(?:[\s-]?\d{4})?\b)/gi;
+
+export function maskSensitiveContextText(text: string): string {
+  return text.replace(SENSITIVE_TEXT_MASK_RE, "[REDACTED]");
+}
+
+export function recordDecision(
+  ctx: TaskSessionContext,
+  entry: Omit<SessionDecisionEntry, "decisionId" | "timestamp"> & { decisionId?: string },
+): SessionDecisionEntry {
+  const full: SessionDecisionEntry = {
+    decisionId:
+      entry.decisionId ||
+      `dec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+    summary: maskSensitiveContextText(entry.summary),
+    rationale: maskSensitiveContextText(entry.rationale),
+    madeBy: entry.madeBy,
+    timestamp: new Date().toISOString(),
+  };
+  ctx.decisions = [...(ctx.decisions ?? []), full].slice(-40);
+  return full;
+}
+
+export function recordExtractedDataWithProvenance(
+  ctx: TaskSessionContext,
+  entry: {
+    refId?: string;
+    label: string;
+    sourceUrl?: string;
+    itemCount: number;
+    previewSummary: string;
+    provenance: DataProvenance;
+  },
+): TaskSessionContext["extractedDataRefs"][number] {
+  const item: TaskSessionContext["extractedDataRefs"][number] = {
+    refId:
+      entry.refId || `ext_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`,
+    label: entry.label,
+    sourceUrl: entry.sourceUrl,
+    itemCount: entry.itemCount,
+    previewSummary: maskSensitiveContextText(entry.previewSummary),
+    provenance: entry.provenance,
+    capturedAt: new Date().toISOString(),
+  };
+  ctx.extractedDataRefs = [...ctx.extractedDataRefs, item].slice(-30);
+  return item;
+}
+
+export function recordCostTelemetry(
+  ctx: TaskSessionContext,
+  delta: { tokens?: number; modelCalls?: number; path?: ExecutionPath; costUsd?: number },
+): SessionCostTelemetry {
+  const current = ctx.costTelemetry ?? {
+    totalEstimatedTokens: 0,
+    totalModelCalls: 0,
+    fastPathCount: 0,
+    multiAgentCount: 0,
+    estimatedCostUsd: 0,
+  };
+  current.totalEstimatedTokens += delta.tokens ?? 0;
+  current.totalModelCalls += delta.modelCalls ?? 0;
+  if (delta.path === "fast_path") current.fastPathCount += 1;
+  if (delta.path === "multi_agent_path") current.multiAgentCount += 1;
+  current.estimatedCostUsd = Number((current.estimatedCostUsd + (delta.costUsd ?? 0)).toFixed(6));
+  ctx.costTelemetry = current;
+  return current;
+}
+
+export function isolateSessionContext(
+  ctx: TaskSessionContext,
+  targetUserId: string | null,
+): TaskSessionContext {
+  if ((ctx.userId ?? null) === (targetUserId ?? null)) {
+    return ctx;
+  }
+  return createTaskSessionContext({
+    userId: targetUserId,
+    activeWebpage: ctx.activeWebpage,
+    activeBrowserTab: ctx.activeBrowserTab,
+  });
+}
+
+export function requestTaskPause(ctx: TaskSessionContext): void {
+  ctx.pauseRequested = true;
+  if (ctx.currentTask && ctx.currentTask.status === "executing") {
+    ctx.currentTask.status = "paused";
+    ctx.currentTask.updatedAt = new Date().toISOString();
+  }
+}
+
+export function requestTaskResume(ctx: TaskSessionContext): void {
+  ctx.pauseRequested = false;
+  if (ctx.currentTask && ctx.currentTask.status === "paused") {
+    ctx.currentTask.status = "executing";
+    ctx.currentTask.updatedAt = new Date().toISOString();
+  }
+}
+
+export function requestTaskCancel(ctx: TaskSessionContext): void {
+  ctx.cancelRequested = true;
+  if (ctx.currentTask) {
+    ctx.currentTask.status = "cancelled";
+    for (const st of ctx.currentTask.subtasks) {
+      if (st.status === "pending" || st.status === "ready" || st.status === "awaiting_approval") {
+        st.status = "cancelled";
+      }
+    }
+    ctx.currentTask.updatedAt = new Date().toISOString();
+    syncSessionSubtaskBuckets(ctx);
+  }
 }

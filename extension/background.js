@@ -107,6 +107,63 @@ async function callBackendSelfHeal(payload, method = "POST") {
   return { ok: Boolean(res.ok && data?.ok !== false), status: res.status, data };
 }
 
+async function proxyExtensionApi(path, method = "GET", payload = null, queryParams = null) {
+  const { session, lastBase } = await chrome.storage.local.get(["session", "lastBase"]);
+  const primaryBase = await resolveExtensionApiBase(session, lastBase);
+  const candidateHosts = [
+    primaryBase,
+    DEFAULT_HOST,
+    FALLBACK_PRE_HOST,
+    "http://127.0.0.1:3000",
+    "http://localhost:3000",
+  ].filter((h, idx, arr) => Boolean(h) && arr.indexOf(h) === idx);
+
+  const headers = {};
+  if (method !== "GET" && method !== "DELETE") {
+    headers["content-type"] = "application/json";
+  }
+  const token = session?.accessToken || session?.access_token;
+  if (token) {
+    headers["authorization"] = `Bearer ${token}`;
+  }
+
+  let qs = "";
+  if (queryParams && typeof queryParams === "object") {
+    const sp = new URLSearchParams();
+    for (const [k, v] of Object.entries(queryParams)) {
+      if (v !== undefined && v !== null && String(v) !== "") {
+        sp.set(k, String(v));
+      }
+    }
+    const built = sp.toString();
+    if (built) qs = `?${built}`;
+  }
+
+  let lastErr = null;
+  for (const host of candidateHosts) {
+    try {
+      const res = await fetch(`${host}${path}${qs}`, {
+        method,
+        headers,
+        body: payload !== null && method !== "GET" && method !== "DELETE" ? JSON.stringify(payload) : undefined,
+        credentials: "omit",
+      });
+      const ct = res.headers.get("content-type") || "";
+      if (ct.includes("text/html")) continue;
+      const data = await res.json().catch(() => null);
+      if (data !== null) {
+        return { ok: Boolean(res.ok && data?.ok !== false), status: res.status, apiBase: host, ...data };
+      }
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  return {
+    ok: false,
+    message: lastErr instanceof Error ? lastErr.message : "Backend API unreachable.",
+  };
+}
+
 async function reportSwRuntimeError(component, errOrMsg, context = {}) {
   try {
     const rawMessage =
@@ -507,6 +564,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg.type === "SIGN_OUT") {
     conversationBufferHydrated = true;
     conversationBuffer = [];
+    swSelfHealState.activeTaskSessionContext = null;
     chrome.storage.local
       .remove(["session", "conversationBuffer"])
       .then(() =>
@@ -734,6 +792,108 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       safeReply(res?.data || { ok: false, message: "Self-healing backend unreachable." });
     })().catch((e) => safeReply({ ok: false, message: String(e?.message || e) }));
     return true;
+  }
+  if (msg.type === "WORKSPACE_API") {
+    (async () => {
+      const action = msg.action || "list";
+      if (action === "list") {
+        safeReply(await proxyExtensionApi("/api/public/extension/workspace", "GET"));
+        return;
+      }
+      if (action === "inspect") {
+        safeReply(
+          await proxyExtensionApi("/api/public/extension/workspace", "GET", null, {
+            inspectId: msg.artifactId,
+          }),
+        );
+        return;
+      }
+      if (action === "download") {
+        const { session, lastBase } = await chrome.storage.local.get(["session", "lastBase"]);
+        const apiBase = await resolveExtensionApiBase(session, lastBase);
+        const dlUrl = `${apiBase}/api/public/extension/workspace?downloadId=${encodeURIComponent(msg.artifactId || "")}`;
+        safeReply(await downloadFileFromUrl(dlUrl, msg.filenameHint || "ai-buddy-report"));
+        return;
+      }
+      if (action === "delete") {
+        safeReply(
+          await proxyExtensionApi("/api/public/extension/workspace", "DELETE", null, {
+            artifactId: msg.artifactId,
+          }),
+        );
+        return;
+      }
+      safeReply(
+        await proxyExtensionApi("/api/public/extension/workspace", "POST", {
+          action,
+          ...(msg.payload || {}),
+        }),
+      );
+    })().catch((e) => safeReply({ ok: false, message: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === "CONNECTORS_API") {
+    (async () => {
+      const action = msg.action || "list";
+      if (action === "list") {
+        safeReply(await proxyExtensionApi("/api/public/extension/connectors", "GET"));
+        return;
+      }
+      if (action === "disconnect") {
+        safeReply(
+          await proxyExtensionApi("/api/public/extension/connectors", "DELETE", null, {
+            connectorId: msg.connectorId,
+          }),
+        );
+        return;
+      }
+      safeReply(
+        await proxyExtensionApi("/api/public/extension/connectors", "POST", {
+          action,
+          ...(msg.payload || {}),
+        }),
+      );
+    })().catch((e) => safeReply({ ok: false, message: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === "WORKFLOWS_API") {
+    (async () => {
+      const action = msg.action || "list";
+      if (action === "list") {
+        safeReply(await proxyExtensionApi("/api/public/extension/workflows", "GET"));
+        return;
+      }
+      if (action === "delete") {
+        safeReply(
+          await proxyExtensionApi("/api/public/extension/workflows", "DELETE", null, {
+            workflowId: msg.workflowId,
+          }),
+        );
+        return;
+      }
+      safeReply(
+        await proxyExtensionApi("/api/public/extension/workflows", "POST", {
+          action,
+          ...(msg.payload || {}),
+        }),
+      );
+    })().catch((e) => safeReply({ ok: false, message: String(e?.message || e) }));
+    return true;
+  }
+  if (msg.type === "ORCHESTRATION_CONTROL") {
+    const action = msg.action || "get_context";
+    const ctx = swSelfHealState.activeTaskSessionContext;
+    if (action === "clear_context") {
+      swSelfHealState.activeTaskSessionContext = null;
+      safeReply({ ok: true, sessionContext: null });
+      return false;
+    }
+    if (ctx && (action === "pause" || action === "resume" || action === "cancel")) {
+      ctx.status = action === "pause" ? "paused" : action === "cancel" ? "cancelled" : "running";
+      ctx.updatedAt = new Date().toISOString();
+    }
+    safeReply({ ok: true, sessionContext: swSelfHealState.activeTaskSessionContext });
+    return false;
   }
   swLog("warn", "onMessage:unhandled_type", { traceId, type: msg.type });
   return false;

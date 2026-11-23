@@ -6141,6 +6141,20 @@ async function sendQuery(question, intent, options = {}) {
     appendHistory("buddy", currentAnswer);
     recordConversationTurn(trimmed, currentAnswer);
 
+    if (res.orchestration || res.sessionContext || res.costTelemetry) {
+      updateLiveOrchestrationState(
+        res.orchestration || null,
+        res.sessionContext || null,
+        res.costTelemetry || res.sessionContext?.costTelemetry || null,
+      );
+    }
+    if (Array.isArray(res.proactiveSuggestions) && res.proactiveSuggestions.length > 0) {
+      renderProactiveSuggestionsUI(res.proactiveSuggestions);
+    }
+    if (res.workflowDraft) {
+      showWorkflowDraftPreview(res.workflowDraft);
+    }
+
     if (res.providerWarning || res.providerFailure) {
       appendProviderWarningNotice(res.providerWarning, res.providerFailure);
     }
@@ -7177,21 +7191,58 @@ function renderTaskPlanUI() {
   $("progressPercentLabel").textContent = `${pct}%`;
   $("progressBarFill").style.width = `${pct}%`;
 
-  // Render steps list
+  // Render steps list cleanly with textContent
   const listEl = $("planStepsList");
-  listEl.innerHTML = "";
+  listEl.textContent = "";
   activePlan.steps.forEach((st, idx) => {
     const row = document.createElement("div");
     row.className = `plan-step-row ${st.status}`;
-    row.innerHTML = `
-      <div class="step-info">
-        <span class="step-num">${idx + 1}.</span>
-        <span class="step-text" title="${st.title}">${st.title}</span>
-      </div>
-      <span class="step-status-tag ${st.status}">${st.status}</span>
-    `;
+    const info = document.createElement("div");
+    info.className = "step-info";
+    const numEl = document.createElement("span");
+    numEl.className = "step-num";
+    numEl.textContent = `${idx + 1}.`;
+    const textEl = document.createElement("span");
+    textEl.className = "step-text";
+    textEl.title = st.title || "";
+    textEl.textContent = st.title || "";
+    info.appendChild(numEl);
+    info.appendChild(textEl);
+    const statusEl = document.createElement("span");
+    statusEl.className = `step-status-tag ${st.status}`;
+    statusEl.textContent = st.status;
+    row.appendChild(info);
+    row.appendChild(statusEl);
     listEl.appendChild(row);
   });
+
+  const costTel = typeof latestCostTelemetry !== "undefined" ? latestCostTelemetry : null;
+  const orchMeta = typeof latestOrchestrationMeta !== "undefined" ? latestOrchestrationMeta : null;
+  if ($("planCostBadge")) {
+    const tokens = costTel?.totalEstimatedTokens ?? costTel?.estimatedTokensUsed ?? 0;
+    const calls = costTel?.totalModelCalls ?? costTel?.totalAiCalls ?? 0;
+    if (tokens > 0 || calls > 0) {
+      $("planCostBadge").textContent = `${tokens} tok · ${calls} calls`;
+      $("planCostBadge").hidden = false;
+    } else {
+      $("planCostBadge").hidden = true;
+    }
+  }
+  if ($("planAgentsBar")) {
+    const agents = orchMeta?.agentsAssigned || orchMeta?.selectedAgents || [];
+    if (agents.length > 0) {
+      $("planAgentsBar").textContent = `Agents: ${agents.join(", ")}`;
+      $("planAgentsBar").hidden = false;
+    } else {
+      $("planAgentsBar").hidden = true;
+    }
+  }
+  if ($("planApproveBtn")) {
+    $("planApproveBtn").hidden = activePlan.status !== "awaiting_approval";
+  }
+  if ($("planLogsBox") && !$("planLogsBox").hidden && typeof refreshPlanLogsBoxContent === "function") {
+    refreshPlanLogsBoxContent();
+  }
 
   // Pause button label
   $("planPauseResumeBtn").textContent = isPlanPaused ? "▶️ Resume" : "⏸️ Pause";
@@ -8002,16 +8053,17 @@ async function compressImageFileForOcr(file) {
   }
 }
 
-// File / Document Attachment & OCR Understanding (Aadhaar, PAN, Invoices, PDFs, Images, CSV)
+// File / Document Attachment & OCR Understanding (Aadhaar, PAN, Invoices, PDFs, Images, CSV, XLSX, DOCX)
 async function handleUploadedDocumentFile(file) {
   if (!file) return;
   const active = getActiveBuddy();
   const isHindi = active.defaultLanguage !== "english";
   const isImage = file.type.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(file.name);
   const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+  const isOfficeDoc = /\.(xlsx|xls|docx)$/i.test(file.name);
   const isTextLike = /\.(txt|csv|tsv|json)$/i.test(file.name);
 
-  if (!isImage && !isPdf && !isTextLike) {
+  if (!isImage && !isPdf && !isTextLike && !isOfficeDoc) {
     const tag = `[Attached: ${file.name} (${Math.round(file.size / 1024)} KB)] `;
     if ($("promptInput") && !$("promptInput").value.includes(file.name)) {
       $("promptInput").value = tag + $("promptInput").value;
@@ -8053,6 +8105,62 @@ async function handleUploadedDocumentFile(file) {
           }
         } catch {}
       }
+    }
+
+    // For Office files (.xlsx/.xls/.docx), upload directly to Real File Workspace parser
+    if (isOfficeDoc) {
+      const wsRes = await sendRuntimeMessage({
+        type: "WORKSPACE_API",
+        action: "upload",
+        payload: {
+          filename: file.name,
+          mimeType: resolvedMime,
+          base64Data,
+        },
+      });
+      if (wsRes?.ok) {
+        setActiveUploadedDocument({
+          fileName: file.name,
+          documentType: wsRes.extension || "spreadsheet",
+          fields: {},
+          table: wsRes.preview?.headers
+            ? {
+                headers: wsRes.preview.headers,
+                rowCount: wsRes.preview.rowCount || 0,
+                rows: wsRes.preview.sampleRows || [],
+              }
+            : undefined,
+        });
+        setRigEmotion("happy", "Workspace Ready");
+        const summaryLine = wsRes.summary || `Parsed "${file.name}" into File Workspace.`;
+        $("statusText").textContent = summaryLine;
+        appendHistory("buddy", `📂 ${summaryLine}`);
+        loadWorkspaceArtifacts().catch(() => {});
+        return;
+      }
+      setRigEmotion("error", "Parse Failed");
+      const errMsg = wsRes?.message || `Could not parse "${file.name}" in File Workspace.`;
+      $("statusText").textContent = errMsg;
+      appendHistory("buddy", `⚠️ ${errMsg}`);
+      return;
+    }
+
+    // For CSV/TSV/TXT/JSON/PDF, sync to File Workspace in parallel while preserving ID/OCR EXTRACT_DOCUMENT
+    if (isTextLike || isPdf) {
+      sendRuntimeMessage({
+        type: "WORKSPACE_API",
+        action: "upload",
+        payload: {
+          filename: file.name,
+          mimeType: resolvedMime,
+          base64Data: isPdf ? base64Data : undefined,
+          textContent: isTextLike ? textContent : undefined,
+        },
+      })
+        .then((wsRes) => {
+          if (wsRes?.ok) loadWorkspaceArtifacts().catch(() => {});
+        })
+        .catch(() => {});
     }
 
     const extractRes = await sendRuntimeMessage({
@@ -8247,6 +8355,10 @@ if ($("planPauseResumeBtn")) {
   $("planPauseResumeBtn").onclick = async () => {
     if (!activePlan) return;
     isPlanPaused = !isPlanPaused;
+    sendRuntimeMessage({
+      type: "ORCHESTRATION_CONTROL",
+      action: isPlanPaused ? "pause" : "resume",
+    }).catch(() => {});
     if (isPlanPaused) {
       activePlan.status = "paused";
       await persistPlanCheckpoint(activePlan);
@@ -8263,6 +8375,21 @@ if ($("planPauseResumeBtn")) {
         runPlanLoop();
       }
     }
+  };
+}
+
+if ($("planApproveBtn")) {
+  $("planApproveBtn").onclick = () => {
+    $("approveConsequentialBtn")?.click();
+  };
+}
+
+if ($("planInspectLogsBtn")) {
+  $("planInspectLogsBtn").onclick = () => {
+    const box = $("planLogsBox");
+    if (!box) return;
+    box.hidden = !box.hidden;
+    if (!box.hidden) refreshPlanLogsBoxContent();
   };
 }
 
@@ -8293,6 +8420,7 @@ if ($("planStopBtn")) {
     activePlan.status = "cancelled";
     isPlanPaused = false;
     pendingApprovalStep = null;
+    sendRuntimeMessage({ type: "ORCHESTRATION_CONTROL", action: "cancel" }).catch(() => {});
     if ($("consequentialApprovalCard")) $("consequentialApprovalCard").hidden = true;
     if ($("planRetryBtn")) $("planRetryBtn").hidden = true;
     clearPlanCheckpoints();
@@ -8681,6 +8809,10 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     if (targetTab === "tasks") {
       loadMemories();
       loadTasksHistory();
+      loadWorkspaceArtifacts();
+      loadConnectorsStatus();
+      loadWorkflowsList();
+      syncProactiveQuietState();
     }
     if (targetTab === "models") loadModelHubStatus();
     if (targetTab === "settings") loadSettingsTab();
@@ -8927,30 +9059,40 @@ async function setLocalMemoriesStore(memories) {
 function renderMemoriesListUI(memories) {
   const list = $("memoriesList");
   if (!list) return;
+  list.textContent = "";
   if (Array.isArray(memories) && memories.length > 0) {
-    list.innerHTML = memories
-      .map(
-        (m) => `
-      <div class="item-row">
-        <div>
-          <div style="font-weight: 600; color: var(--text);">${escapeHtml(m.key)}</div>
-          <div style="font-size: 10px; color: var(--muted);">${escapeHtml(m.value)}</div>
-        </div>
-        <button class="ghost delete-mem-btn" data-key="${escapeHtml(m.key)}" style="padding: 2px 5px; font-size: 10px; color: var(--destructive);">🗑️</button>
-      </div>
-    `,
-      )
-      .join("");
+    memories.forEach((m) => {
+      const row = document.createElement("div");
+      row.className = "item-row";
+      const left = document.createElement("div");
+      left.style.overflow = "hidden";
+      const title = document.createElement("div");
+      title.style.fontWeight = "600";
+      title.style.color = "var(--text)";
+      title.textContent = `${m.key || ""}${m.kind ? ` [${m.kind}]` : ""}`;
+      const val = document.createElement("div");
+      val.style.fontSize = "10px";
+      val.style.color = "var(--muted)";
+      val.textContent = m.value || "";
+      left.append(title, val);
 
-    list.querySelectorAll(".delete-mem-btn").forEach((btn) => {
-      btn.onclick = async () => {
-        const key = btn.getAttribute("data-key");
-        await deleteMemory(key);
-      };
+      const delBtn = document.createElement("button");
+      delBtn.className = "ghost delete-mem-btn";
+      delBtn.style.padding = "2px 5px";
+      delBtn.style.fontSize = "10px";
+      delBtn.style.color = "var(--destructive)";
+      delBtn.textContent = "🗑️";
+      delBtn.onclick = () => deleteMemory(m.key);
+
+      row.append(left, delBtn);
+      list.appendChild(row);
     });
   } else {
-    list.innerHTML =
-      '<div style="color: var(--muted); font-size: 10px;">No custom memories saved yet. Click Add to save preferences.</div>';
+    const empty = document.createElement("div");
+    empty.style.color = "var(--muted)";
+    empty.style.fontSize = "10px";
+    empty.textContent = "No custom memories saved yet. Click Add to save preferences.";
+    list.appendChild(empty);
   }
 }
 
@@ -9029,6 +9171,7 @@ if ($("saveMemoryBtn")) {
   $("saveMemoryBtn").onclick = async () => {
     const key = $("memKeyInput")?.value.trim() || "";
     const value = $("memValInput")?.value.trim() || "";
+    const kind = $("memKindSelect")?.value || "user_preference";
     const errEl = $("memErrorMsg");
     if (!key || !value) {
       if (errEl) {
@@ -9042,30 +9185,50 @@ if ($("saveMemoryBtn")) {
     btn.disabled = true;
 
     try {
-      // Save immediately to chrome.storage.local so Guest/offline users never lose saved memories
-      const existing = await getLocalMemoriesStore();
-      const updated = [{ key, value, kind: "preference", created_at: new Date().toISOString() }, ...existing.filter((m) => m.key !== key)];
-      await setLocalMemoriesStore(updated);
-
       const { session } = await chrome.storage.local.get("session");
       const base = await getResolvedBackendBase();
       const headers = { "Content-Type": "application/json" };
       const token = session?.accessToken || session?.access_token;
       if (token) headers["Authorization"] = `Bearer ${token}`;
-      await fetchWithTimeout(
-        `${base}/api/public/extension/memories`,
-        {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ key, value, kind: "preference" }),
-        },
-        6000,
-      ).catch(() => {});
+
+      let serverRejected = false;
+      try {
+        const res = await fetchWithTimeout(
+          `${base}/api/public/extension/memories`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ key, value, kind, scope: "long_term" }),
+          },
+          6000,
+        );
+        const data = await res.json().catch(() => null);
+        if (!res.ok || data?.ok === false) {
+          serverRejected = true;
+          if (errEl) {
+            errEl.textContent = data?.message || data?.error || `Memory rejected (HTTP ${res.status}).`;
+            errEl.hidden = false;
+          }
+        }
+      } catch {
+        // Offline / unreachable backend -> allow local extension storage fallback for non-sensitive preferences
+      }
+
+      if (serverRejected) {
+        return;
+      }
+
+      const existing = await getLocalMemoriesStore();
+      const updated = [
+        { key, value, kind, created_at: new Date().toISOString() },
+        ...existing.filter((m) => m.key !== key),
+      ];
+      await setLocalMemoriesStore(updated);
 
       $("addMemoryForm").hidden = true;
       if ($("memKeyInput")) $("memKeyInput").value = "";
       if ($("memValInput")) $("memValInput").value = "";
-      if ($("statusText")) $("statusText").textContent = `✓ Saved memory "${key}".`;
+      if ($("statusText")) $("statusText").textContent = `✓ Saved memory "${key}" [${kind}].`;
       loadMemories();
     } finally {
       btn.disabled = false;
@@ -9223,6 +9386,608 @@ async function checkSavedCheckpoint() {
 }
 
 if ($("refreshTasksHistoryBtn")) $("refreshTasksHistoryBtn").onclick = loadTasksHistory;
+
+// ================= PHASE 3 + PHASE 4 CONTROLLERS =================
+let latestOrchestrationMeta = null;
+let latestSessionContext = null;
+let latestCostTelemetry = null;
+let proactiveQuietMode = false;
+let pendingWorkflowDraft = null;
+let cachedWorkspaceArtifacts = [];
+
+function refreshPlanLogsBoxContent() {
+  const box = $("planLogsBox");
+  if (!box) return;
+  const lines = [];
+  if (latestOrchestrationMeta?.path) {
+    const agents = latestOrchestrationMeta.agentsAssigned || latestOrchestrationMeta.selectedAgents || [];
+    lines.push(
+      `[Orchestrator] path=${latestOrchestrationMeta.path} | agents=${agents.join(", ") || "none"}`,
+    );
+  }
+  if (latestOrchestrationMeta?.dagSummary || latestOrchestrationMeta?.subtaskCounts) {
+    const d = latestOrchestrationMeta.dagSummary || {};
+    const c = latestOrchestrationMeta.subtaskCounts || {};
+    lines.push(
+      `[DAG] total=${c.total ?? 0}, completed=${c.completed ?? 0}, failed=${c.failed ?? 0}, awaiting=${c.awaitingApproval ?? 0}, waves=${d.parallelWaves ?? 0}, maxConcurrency=${d.maxObservedConcurrency ?? 1}`,
+    );
+  }
+  if (Array.isArray(latestSessionContext?.decisions)) {
+    latestSessionContext.decisions.slice(-6).forEach((dec) => {
+      lines.push(`[Decision:${dec.madeBy || dec.agentId || "agent"}] ${dec.summary || dec.decision || ""} — ${dec.rationale || ""}`);
+    });
+  }
+  if (Array.isArray(latestSessionContext?.executionHistory)) {
+    latestSessionContext.executionHistory.slice(-6).forEach((h) => {
+      lines.push(`[Exec:${h.agentId}] ${h.action} (${h.outcome}): ${h.detail}`);
+    });
+  }
+  if (Array.isArray(activePlan?.steps)) {
+    activePlan.steps.forEach((s) => {
+      lines.push(
+        `[Step ${s.stepNumber}] ${s.status}: ${s.title}${s.error ? ` (err: ${s.error})` : ""}`,
+      );
+    });
+  }
+  box.textContent = lines.length > 0 ? lines.join("\n") : "No orchestration logs captured yet.";
+}
+
+function updateLiveOrchestrationState(meta, sessionCtx, costTelemetry) {
+  latestOrchestrationMeta = meta;
+  latestSessionContext = sessionCtx;
+  latestCostTelemetry = costTelemetry || sessionCtx?.costTelemetry || null;
+
+  const summaryEl = $("agentDashboardSummary");
+  const listEl = $("liveSubtaskDetailsList");
+  const calls = latestCostTelemetry?.totalModelCalls ?? latestCostTelemetry?.totalAiCalls ?? 0;
+  const tok = latestCostTelemetry?.totalEstimatedTokens ?? latestCostTelemetry?.estimatedTokensUsed ?? 0;
+  const conc = meta?.dagSummary?.maxObservedConcurrency || 1;
+  const assignedAgents = meta?.agentsAssigned || meta?.selectedAgents || [];
+
+  if (summaryEl) {
+    summaryEl.textContent = `${meta?.path || "idle"} · ${calls} calls · ${tok} tok · x${conc} parallel`;
+  }
+  if (listEl) {
+    listEl.textContent = "";
+    const subs = Array.isArray(meta?.subtaskDetails) ? meta.subtaskDetails : [];
+    if (subs.length === 0) {
+      const msg = document.createElement("div");
+      msg.style.color = "var(--text-muted)";
+      msg.style.fontSize = "10px";
+      msg.textContent =
+        assignedAgents.length
+          ? `Fast path verified (${assignedAgents.join(", ")}).`
+          : "No active multi-agent subtasks yet.";
+      listEl.appendChild(msg);
+    } else {
+      subs.forEach((sub) => {
+        const row = document.createElement("div");
+        row.className = "item-row";
+        const left = document.createElement("div");
+        left.style.overflow = "hidden";
+        const title = document.createElement("div");
+        title.style.fontWeight = "600";
+        title.style.fontSize = "10px";
+        title.style.color = "var(--text)";
+        title.textContent = `${sub.agentName || sub.agentId}: ${sub.responsibility || sub.title || ""}`;
+        const subMeta = document.createElement("div");
+        subMeta.style.fontSize = "9px";
+        subMeta.style.color = "var(--muted)";
+        const depList = Array.isArray(sub.dependencies)
+          ? sub.dependencies
+          : Array.isArray(sub.dependsOn)
+            ? sub.dependsOn
+            : [];
+        const deps = depList.length ? `deps: ${depList.join(", ")}` : "root branch";
+        const retries = sub.retryCount ?? sub.retriesUsed ?? 0;
+        subMeta.textContent = `${deps} · retries=${retries}${sub.error ? ` · ${sub.error}` : ""}`;
+        left.append(title, subMeta);
+
+        const badge = document.createElement("span");
+        badge.className = `step-status-tag ${sub.status || "completed"}`;
+        badge.textContent = sub.verified ? "verified" : sub.status || "done";
+        row.append(left, badge);
+        listEl.appendChild(row);
+      });
+    }
+  }
+  if ($("planCostBadge") && latestCostTelemetry) {
+    $("planCostBadge").textContent = `${tok} tok · ${calls} calls`;
+    $("planCostBadge").hidden = false;
+  }
+  refreshPlanLogsBoxContent();
+}
+
+async function syncProactiveQuietState() {
+  try {
+    const data = await chrome.storage.local.get("proactiveQuietMode");
+    proactiveQuietMode = Boolean(data.proactiveQuietMode);
+    if ($("proactiveQuietToggle")) {
+      $("proactiveQuietToggle").checked = proactiveQuietMode;
+    }
+  } catch {}
+}
+
+if ($("proactiveQuietToggle")) {
+  $("proactiveQuietToggle").onchange = async (e) => {
+    proactiveQuietMode = Boolean(e.target.checked);
+    await chrome.storage.local.set({ proactiveQuietMode }).catch(() => {});
+    if (proactiveQuietMode && $("proactiveInsightsCard")) {
+      $("proactiveInsightsCard").hidden = true;
+    }
+  };
+}
+
+function renderProactiveSuggestionsUI(suggestions) {
+  const card = $("proactiveInsightsCard");
+  const list = $("proactiveSuggestionsList");
+  if (!card || !list) return;
+  if (proactiveQuietMode || !Array.isArray(suggestions) || suggestions.length === 0) {
+    card.hidden = true;
+    return;
+  }
+  list.textContent = "";
+  suggestions.forEach((s) => {
+    const row = document.createElement("div");
+    row.className = "item-row";
+    const left = document.createElement("div");
+    left.style.flex = "1";
+    const title = document.createElement("div");
+    title.style.fontWeight = "600";
+    title.style.fontSize = "10px";
+    title.style.color = "var(--text)";
+    title.textContent = s.title || s.category || "Suggestion";
+    const reason = document.createElement("div");
+    reason.style.fontSize = "9px";
+    reason.style.color = "var(--muted)";
+    reason.textContent = s.message || s.reason || "";
+    left.append(title, reason);
+
+    const runBtn = document.createElement("button");
+    runBtn.className = "ghost";
+    runBtn.style.padding = "2px 7px";
+    runBtn.style.fontSize = "10px";
+    runBtn.textContent = "Run";
+    runBtn.onclick = () => {
+      switchTab("chat");
+      if ($("promptInput")) {
+        $("promptInput").value = s.suggestedActionPrompt || s.suggestedPrompt || s.title || "";
+        $("promptInput").focus();
+      }
+    };
+    row.append(left, runBtn);
+    list.appendChild(row);
+  });
+  card.hidden = false;
+}
+
+async function loadWorkspaceArtifacts() {
+  const list = $("workspaceArtifactsList");
+  if (!list) return;
+  const res = await sendRuntimeMessage({ type: "WORKSPACE_API", action: "list" }).catch(() => null);
+  if (!res?.ok) {
+    list.textContent = "";
+    const msg = document.createElement("div");
+    msg.style.color = "var(--muted)";
+    msg.style.fontSize = "10px";
+    msg.textContent = res?.message || "Workspace API offline.";
+    list.appendChild(msg);
+    return;
+  }
+  cachedWorkspaceArtifacts = Array.isArray(res.artifacts) ? res.artifacts : [];
+  list.textContent = "";
+  if (cachedWorkspaceArtifacts.length === 0) {
+    const empty = document.createElement("div");
+    empty.style.color = "var(--muted)";
+    empty.style.fontSize = "10px";
+    empty.textContent = "No files in workspace yet. Click Upload or Attach.";
+    list.appendChild(empty);
+    return;
+  }
+  cachedWorkspaceArtifacts.forEach((art) => {
+    const row = document.createElement("div");
+    row.className = "item-row";
+    const left = document.createElement("div");
+    left.style.overflow = "hidden";
+    left.style.maxWidth = "62%";
+    const name = document.createElement("div");
+    name.style.fontWeight = "600";
+    name.style.fontSize = "10px";
+    name.style.color = "var(--text)";
+    name.textContent = `${art.filename} (${Math.max(1, Math.round((art.sizeBytes || 0) / 1024))} KB)`;
+    const summary = document.createElement("div");
+    summary.style.fontSize = "9px";
+    summary.style.color = "var(--muted)";
+    summary.textContent = art.summary || art.extension || "";
+    left.append(name, summary);
+
+    const actions = document.createElement("div");
+    actions.style.display = "flex";
+    actions.style.gap = "3px";
+
+    const inspectBtn = document.createElement("button");
+    inspectBtn.className = "ghost";
+    inspectBtn.style.padding = "2px 5px";
+    inspectBtn.style.fontSize = "9px";
+    inspectBtn.textContent = "View";
+    inspectBtn.onclick = async () => {
+      const insp = await sendRuntimeMessage({
+        type: "WORKSPACE_API",
+        action: "inspect",
+        artifactId: art.artifactId,
+      });
+      if (insp?.ok && insp.artifact && $("extractedDataCard") && $("extractedContent")) {
+        $("extractedDataCard").hidden = false;
+        if ($("extractedCountTitle")) $("extractedCountTitle").textContent = `📂 ${insp.artifact.filename}`;
+        $("extractedContent").textContent = JSON.stringify(insp.artifact.parsedPreview || insp.artifact, null, 2);
+      }
+    };
+
+    const dlBtn = document.createElement("button");
+    dlBtn.className = "ghost";
+    dlBtn.style.padding = "2px 5px";
+    dlBtn.style.fontSize = "9px";
+    dlBtn.textContent = "⬇️";
+    dlBtn.onclick = async () => {
+      const dlRes = await sendRuntimeMessage({
+        type: "WORKSPACE_API",
+        action: "download",
+        artifactId: art.artifactId,
+        filenameHint: art.filename,
+      });
+      if ($("workspaceStatusMsg")) {
+        $("workspaceStatusMsg").textContent = dlRes?.ok
+          ? `Downloaded ${art.filename}.`
+          : dlRes?.message || "Download failed.";
+        $("workspaceStatusMsg").hidden = false;
+      }
+    };
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "ghost";
+    delBtn.style.padding = "2px 5px";
+    delBtn.style.fontSize = "9px";
+    delBtn.style.color = "var(--destructive)";
+    delBtn.textContent = "🗑️";
+    delBtn.onclick = async () => {
+      await sendRuntimeMessage({ type: "WORKSPACE_API", action: "delete", artifactId: art.artifactId });
+      loadWorkspaceArtifacts();
+    };
+
+    actions.append(inspectBtn, dlBtn, delBtn);
+    row.append(left, actions);
+    list.appendChild(row);
+  });
+}
+
+if ($("refreshWorkspaceBtn")) $("refreshWorkspaceBtn").onclick = loadWorkspaceArtifacts;
+if ($("workspaceUploadTriggerBtn")) {
+  $("workspaceUploadTriggerBtn").onclick = () => $("composerFileInput")?.click();
+}
+if ($("workspaceCompareBtn")) {
+  $("workspaceCompareBtn").onclick = async () => {
+    const sheets = cachedWorkspaceArtifacts.filter((a) => /^(xlsx|csv|tsv)$/i.test(a.extension || ""));
+    const statusEl = $("workspaceStatusMsg");
+    if (sheets.length < 2) {
+      if (statusEl) {
+        statusEl.textContent = "Upload at least 2 CSV/TSV/XLSX files to compare.";
+        statusEl.hidden = false;
+      }
+      return;
+    }
+    const cmpRes = await sendRuntimeMessage({
+      type: "WORKSPACE_API",
+      action: "compare",
+      payload: {
+        baseArtifactId: sheets[1].artifactId,
+        compareArtifactId: sheets[0].artifactId,
+      },
+    });
+    if (cmpRes?.ok && $("extractedDataCard") && $("extractedContent")) {
+      $("extractedDataCard").hidden = false;
+      if ($("extractedCountTitle")) $("extractedCountTitle").textContent = "⚖️ Sheet Comparison";
+      $("extractedContent").textContent = JSON.stringify(cmpRes.comparison || cmpRes, null, 2);
+      if (statusEl) {
+        statusEl.textContent = `Compared ${sheets[1].filename} vs ${sheets[0].filename}.`;
+        statusEl.hidden = false;
+      }
+    } else if (statusEl) {
+      statusEl.textContent = cmpRes?.message || "Comparison failed.";
+      statusEl.hidden = false;
+    }
+  };
+}
+if ($("workspaceExportReportBtn")) {
+  $("workspaceExportReportBtn").onclick = async () => {
+    const statusEl = $("workspaceStatusMsg");
+    const title = activePlan?.title || "AI Buddy Verified Report";
+    const bodyText =
+      $("extractedContent")?.textContent?.trim() ||
+      cachedWorkspaceArtifacts.map((a) => `${a.filename}: ${a.summary}`).join("\n") ||
+      "Generated from AI Buddy File Workspace.";
+    const genRes = await sendRuntimeMessage({
+      type: "WORKSPACE_API",
+      action: "generate",
+      payload: {
+        format: "pdf",
+        filename: `ai-buddy-report-${Date.now()}.pdf`,
+        title,
+        sections: [{ heading: title, body: bodyText.slice(0, 6000) }],
+      },
+    });
+    if (genRes?.ok && genRes.artifactId) {
+      await sendRuntimeMessage({
+        type: "WORKSPACE_API",
+        action: "download",
+        artifactId: genRes.artifactId,
+        filenameHint: genRes.filename,
+      });
+      if (statusEl) {
+        statusEl.textContent = `${genRes.summary} Download started.`;
+        statusEl.hidden = false;
+      }
+      loadWorkspaceArtifacts();
+    } else if (statusEl) {
+      statusEl.textContent = genRes?.message || "PDF export failed.";
+      statusEl.hidden = false;
+    }
+  };
+}
+
+async function loadConnectorsStatus() {
+  const list = $("connectedAppsList");
+  if (!list) return;
+  const res = await sendRuntimeMessage({ type: "CONNECTORS_API", action: "list" }).catch(() => null);
+  list.textContent = "";
+  if (!res?.ok || !Array.isArray(res.connectors)) {
+    const msg = document.createElement("div");
+    msg.style.color = "var(--muted)";
+    msg.style.fontSize = "10px";
+    msg.textContent = res?.message || "Connectors status unavailable.";
+    list.appendChild(msg);
+    return;
+  }
+  res.connectors.forEach((c) => {
+    const row = document.createElement("div");
+    row.className = "item-row";
+    row.style.flexDirection = "column";
+    row.style.alignItems = "stretch";
+    row.style.gap = "4px";
+
+    const top = document.createElement("div");
+    top.style.display = "flex";
+    top.style.justifyContent = "space-between";
+    top.style.alignItems = "center";
+
+    const info = document.createElement("div");
+    const title = document.createElement("div");
+    title.style.fontWeight = "600";
+    title.style.fontSize = "10px";
+    title.style.color = "var(--text)";
+    title.textContent = `${c.name} · ${c.operational ? "Connected" : c.authState || "Not Authorized"}`;
+    const sub = document.createElement("div");
+    sub.style.fontSize = "9px";
+    sub.style.color = "var(--muted)";
+    sub.textContent =
+      Array.isArray(c.missingRequirements) && c.missingRequirements.length > 0
+        ? c.missingRequirements.join("; ")
+        : c.description || c.reason || (c.requiredScopes || []).join(", ");
+    info.append(title, sub);
+
+    const btn = document.createElement("button");
+    btn.className = "ghost";
+    btn.style.padding = "2px 6px";
+    btn.style.fontSize = "9px";
+    btn.textContent = c.operational ? "Disconnect" : "Connect Token";
+
+    const tokenForm = document.createElement("div");
+    tokenForm.hidden = true;
+    tokenForm.style.display = "flex";
+    tokenForm.style.gap = "4px";
+    const tokIn = document.createElement("input");
+    tokIn.type = "password";
+    tokIn.placeholder = `Paste ${c.name} token (stored server-side)`;
+    tokIn.style.flex = "1";
+    tokIn.style.fontSize = "10px";
+    tokIn.style.padding = "4px";
+    tokIn.style.background = "#0b0f19";
+    tokIn.style.color = "var(--text)";
+    tokIn.style.border = "1px solid var(--border)";
+    tokIn.style.borderRadius = "var(--radius-sm)";
+    const saveTokBtn = document.createElement("button");
+    saveTokBtn.className = "ghost";
+    saveTokBtn.style.fontSize = "9px";
+    saveTokBtn.style.padding = "2px 6px";
+    saveTokBtn.textContent = "Save";
+    saveTokBtn.onclick = async () => {
+      const accessToken = tokIn.value.trim();
+      if (!accessToken) return;
+      await sendRuntimeMessage({
+        type: "CONNECTORS_API",
+        action: "connect",
+        payload: { connectorId: c.id, accessToken },
+      });
+      loadConnectorsStatus();
+    };
+    tokenForm.append(tokIn, saveTokBtn);
+
+    btn.onclick = async () => {
+      if (c.operational) {
+        await sendRuntimeMessage({ type: "CONNECTORS_API", action: "disconnect", connectorId: c.id });
+        loadConnectorsStatus();
+      } else {
+        tokenForm.hidden = !tokenForm.hidden;
+      }
+    };
+
+    top.append(info, btn);
+    row.append(top, tokenForm);
+    list.appendChild(row);
+  });
+}
+
+if ($("refreshConnectorsBtn")) $("refreshConnectorsBtn").onclick = loadConnectorsStatus;
+
+function showWorkflowDraftPreview(draft) {
+  pendingWorkflowDraft = draft;
+  const box = $("workflowDraftPreview");
+  const summary = $("workflowDraftSummary");
+  if (!box || !summary || !draft) return;
+  const r = draft.recipe || draft;
+  const missingArr = draft.missingDetails || draft.missingRequirements || [];
+  const missing = Array.isArray(missingArr) && missingArr.length
+    ? ` | Missing: ${missingArr.join(", ")}`
+    : "";
+  const schedLabel =
+    draft.scheduleSummary ||
+    r.schedule?.humanReadable ||
+    r.schedule?.frequency ||
+    r.schedule?.type ||
+    "manual";
+  summary.textContent = `${r.name || "Workflow"} · Schedule: ${schedLabel}${missing}`;
+  box.hidden = false;
+}
+
+if ($("previewWorkflowBtn")) {
+  $("previewWorkflowBtn").onclick = async () => {
+    const prompt = $("nlWorkflowInput")?.value.trim();
+    if (!prompt) return;
+    const res = await sendRuntimeMessage({
+      type: "WORKFLOWS_API",
+      action: "parse",
+      payload: {
+        prompt,
+        availableFiles: cachedWorkspaceArtifacts.map((a) => a.filename),
+      },
+    });
+    if (res?.ok && res.draft) {
+      showWorkflowDraftPreview({ ...res.draft, sourcePrompt: prompt });
+    }
+  };
+}
+
+if ($("discardWorkflowDraftBtn")) {
+  $("discardWorkflowDraftBtn").onclick = () => {
+    pendingWorkflowDraft = null;
+    if ($("workflowDraftPreview")) $("workflowDraftPreview").hidden = true;
+  };
+}
+
+if ($("approveWorkflowBtn")) {
+  $("approveWorkflowBtn").onclick = async () => {
+    const prompt = pendingWorkflowDraft?.sourcePrompt || $("nlWorkflowInput")?.value.trim();
+    if (!prompt) return;
+    const created = await sendRuntimeMessage({
+      type: "WORKFLOWS_API",
+      action: "create",
+      payload: {
+        prompt,
+        availableFiles: cachedWorkspaceArtifacts.map((a) => a.filename),
+      },
+    });
+    if (created?.ok && created.workflow?.id) {
+      await sendRuntimeMessage({
+        type: "WORKFLOWS_API",
+        action: "approve",
+        payload: { workflowId: created.workflow.id },
+      });
+      pendingWorkflowDraft = null;
+      if ($("workflowDraftPreview")) $("workflowDraftPreview").hidden = true;
+      if ($("nlWorkflowInput")) $("nlWorkflowInput").value = "";
+      loadWorkflowsList();
+    }
+  };
+}
+
+async function loadWorkflowsList() {
+  const list = $("workflowsList");
+  const noteEl = $("schedulerInfraNote");
+  if (!list) return;
+  const res = await sendRuntimeMessage({ type: "WORKFLOWS_API", action: "list" }).catch(() => null);
+  list.textContent = "";
+  if (noteEl && res?.schedulerInfrastructure?.honestLimitation) {
+    noteEl.textContent = res.schedulerInfrastructure.honestLimitation;
+  }
+  const wfs = Array.isArray(res?.workflows) ? res.workflows : [];
+  if (wfs.length === 0) {
+    const empty = document.createElement("div");
+    empty.style.color = "var(--muted)";
+    empty.style.fontSize = "10px";
+    empty.textContent = "No saved automated workflows yet.";
+    list.appendChild(empty);
+    return;
+  }
+  wfs.forEach((wf) => {
+    const row = document.createElement("div");
+    row.className = "item-row";
+    const left = document.createElement("div");
+    left.style.overflow = "hidden";
+    const title = document.createElement("div");
+    title.style.fontWeight = "600";
+    title.style.fontSize = "10px";
+    title.style.color = "var(--text)";
+    title.textContent = `${wf.name} (${wf.enabled ? "Active" : "Paused"})`;
+    const sub = document.createElement("div");
+    sub.style.fontSize = "9px";
+    sub.style.color = "var(--muted)";
+    const schedInfo =
+      wf.schedule?.cronExpression ||
+      wf.schedule?.timeOfDay ||
+      wf.schedule?.frequency ||
+      wf.schedule?.type ||
+      "manual";
+    const runCount = wf.executionHistory?.length ?? wf.executionCount ?? wf.runHistory?.length ?? 0;
+    sub.textContent = `${schedInfo} · runs=${runCount}`;
+    left.append(title, sub);
+
+    const actions = document.createElement("div");
+    actions.style.display = "flex";
+    actions.style.gap = "3px";
+
+    const runBtn = document.createElement("button");
+    runBtn.className = "ghost";
+    runBtn.style.padding = "2px 5px";
+    runBtn.style.fontSize = "9px";
+    runBtn.textContent = "▶";
+    runBtn.onclick = async () => {
+      await sendRuntimeMessage({
+        type: "WORKFLOWS_API",
+        action: "run_now",
+        payload: { workflowId: wf.id },
+      });
+      loadWorkflowsList();
+    };
+
+    const toggleBtn = document.createElement("button");
+    toggleBtn.className = "ghost";
+    toggleBtn.style.padding = "2px 5px";
+    toggleBtn.style.fontSize = "9px";
+    toggleBtn.textContent = wf.enabled ? "⏸" : "▶";
+    toggleBtn.onclick = async () => {
+      await sendRuntimeMessage({
+        type: "WORKFLOWS_API",
+        action: wf.enabled ? "pause" : "resume",
+        payload: { workflowId: wf.id },
+      });
+      loadWorkflowsList();
+    };
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "ghost";
+    delBtn.style.padding = "2px 5px";
+    delBtn.style.fontSize = "9px";
+    delBtn.style.color = "var(--destructive)";
+    delBtn.textContent = "🗑️";
+    delBtn.onclick = async () => {
+      await sendRuntimeMessage({ type: "WORKFLOWS_API", action: "delete", workflowId: wf.id });
+      loadWorkflowsList();
+    };
+
+    actions.append(runBtn, toggleBtn, delBtn);
+    row.append(left, actions);
+    list.appendChild(row);
+  });
+}
 
 // Models & Providers Handlers
 function updateProviderNoticeUI(providerId) {

@@ -7,7 +7,16 @@
  * a `call` implementation — the core engine does not change.
  */
 
-import { findCatalogModel, MODEL_CATALOG, type ModelEntry as CatalogModelEntry } from "./model-hub";
+import {
+  checkProviderModalitySupport,
+  findCatalogModel,
+  getModelModalities,
+  MODEL_CATALOG,
+  type ModalityType,
+  type ModelEntry as CatalogModelEntry,
+} from "./model-hub";
+
+export { checkProviderModalitySupport, getModelModalities, type ModalityType };
 
 export function catalogToModelEntry(catalog: CatalogModelEntry): ModelEntry {
   return {
@@ -19,6 +28,7 @@ export function catalogToModelEntry(catalog: CatalogModelEntry): ModelEntry {
     cost: catalog.costRating,
     speed: 6 - catalog.speedRating,
     providerModelId: catalog.providerModelId,
+    supportedModalities: getModelModalities(catalog.id),
   };
 }
 
@@ -71,6 +81,7 @@ export interface ModelEntry {
   /** Reasoning effort for models that require one. */
   reasoningEffort?: "low" | "medium" | "high";
   providerModelId?: string;
+  supportedModalities?: ModalityType[];
 }
 
 export const MODELS: ModelEntry[] = [

@@ -1,11 +1,14 @@
 import {
+  AlertTriangle,
   CheckCircle2,
   ClipboardCheck,
   Clock,
   Copy,
   Download,
+  RefreshCw,
   RotateCcw,
   Search,
+  ShieldCheck,
   XCircle,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -47,10 +50,39 @@ export function VerificationDashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [confirmReset, setConfirmReset] = useState(false);
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
+  const [readinessLoading, setReadinessLoading] = useState(false);
+  const [readinessError, setReadinessError] = useState<string | null>(null);
+  const [readinessData, setReadinessData] = useState<{
+    readyForRelease: boolean;
+    score: number;
+    checks: Array<{ id: string; label: string; status: "pass" | "warning" | "blocker"; detail: string }>;
+    rollbackManifest?: {
+      extensionVersion: string;
+      canonicalAgentCount: number;
+      rollbackSteps: string[];
+    };
+  } | null>(null);
+
+  const runReadinessCheck = async () => {
+    if (typeof fetch !== "function") return;
+    setReadinessLoading(true);
+    setReadinessError(null);
+    try {
+      const res = await fetch("/api/public/extension/release-readiness");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as typeof readinessData & { ok?: boolean };
+      if (json) setReadinessData(json);
+    } catch (err) {
+      setReadinessError(err instanceof Error ? err.message : "Failed to fetch readiness status");
+    } finally {
+      setReadinessLoading(false);
+    }
+  };
 
   useEffect(() => {
     setStore(loadVerificationStore());
     setHydrated(true);
+    void runReadinessCheck();
   }, []);
 
   useEffect(() => {
@@ -608,6 +640,93 @@ export function VerificationDashboard() {
           })}
         </div>
       )}
+
+      {/* Release Readiness & Rollback Verification Card */}
+      <div className="rounded-xl border border-border bg-card p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="flex items-center gap-2 font-[family-name:var(--font-display)] text-base font-semibold text-foreground">
+              <ShieldCheck className="size-4 text-primary" />
+              Release Readiness &amp; Rollback Audit
+            </h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Live server readiness checks across AI providers, security guardrails, MV3 manifest,
+              skills/agents integrity, and rollback steps.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void runReadinessCheck()}
+            disabled={readinessLoading}
+            className="whitespace-nowrap shrink-0 gap-1.5"
+          >
+            <RefreshCw className={`size-3.5 ${readinessLoading ? "animate-spin" : ""}`} />
+            {readinessLoading ? "Checking…" : "Run Readiness Check"}
+          </Button>
+        </div>
+
+        {readinessError && (
+          <p className="mt-3 text-xs text-destructive">
+            Readiness probe error: {readinessError}
+          </p>
+        )}
+
+        {readinessData && (
+          <div className="mt-4 space-y-4 border-t border-border pt-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="font-medium text-foreground">
+                Status:{" "}
+                <span
+                  className={
+                    readinessData.readyForRelease ? "text-success" : "text-destructive"
+                  }
+                >
+                  {readinessData.readyForRelease ? "READY FOR RELEASE" : "BLOCKERS PRESENT"}
+                </span>
+              </span>
+              <span className="font-mono tabular-nums text-muted-foreground">
+                Readiness Score: {readinessData.score}% · Ext v
+                {readinessData.rollbackManifest?.extensionVersion ?? "0.1.0"} ·{" "}
+                {readinessData.rollbackManifest?.canonicalAgentCount ?? 15} Agents
+              </span>
+            </div>
+
+            <ul className="grid gap-2 sm:grid-cols-2">
+              {readinessData.checks.map((chk) => (
+                <li
+                  key={chk.id}
+                  className="rounded-lg border border-border bg-muted/20 p-3 text-xs"
+                >
+                  <div className="flex items-center justify-between gap-2 font-medium text-foreground">
+                    <span>{chk.label}</span>
+                    <span
+                      className={`inline-flex items-center gap-1 font-mono uppercase ${
+                        chk.status === "pass"
+                          ? "text-success"
+                          : chk.status === "warning"
+                            ? "text-amber-500"
+                            : "text-destructive"
+                      }`}
+                    >
+                      {chk.status === "pass" ? (
+                        <CheckCircle2 className="size-3" />
+                      ) : chk.status === "warning" ? (
+                        <AlertTriangle className="size-3" />
+                      ) : (
+                        <XCircle className="size-3" />
+                      )}
+                      {chk.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-muted-foreground">{chk.detail}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
     </section>
   );
 }

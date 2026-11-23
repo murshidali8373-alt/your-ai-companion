@@ -18,19 +18,16 @@ import { type PageSnapshot } from "@/shared/page-snapshot";
 import { type PermissionLevel } from "@/shared/permissions";
 import { canExecuteCapability, getCapability } from "@/shared/capability-registry";
 import {
-  acquireSubtaskLocks,
   createTaskSessionContext,
-  getExecutableParallelSubtasks,
-  releaseSubtaskLocks,
+  isolateSessionContext,
+  recordCostTelemetry,
   syncSessionSubtaskBuckets,
-  validateTaskGraphDependencies,
   type ExecutionPath,
   type SpecialistAgentId,
   type Subtask,
   type TaskNode,
   type TaskSessionContext,
 } from "@/shared/task-context";
-import { createTaskCheckpoint } from "@/shared/task-checkpoint";
 import {
   planDeterministicRecovery,
   sanitizeDiagnosticReport,
@@ -42,11 +39,15 @@ import {
 import { appendSanitizedReport, getSelfHealingStore } from "@/lib/self-healing/store.server";
 import { classifyUserRequest, type RequestClassification } from "@/lib/ai/request-classifier";
 import {
+  buildEpistemicBreakdown,
   classifyBrainIntent,
   determineCollaboratingBuddies,
+  generatePlanAlternatives,
   parseTaskControlCommand,
   recommendOptimalModel,
   type BrainIntent,
+  type EpistemicStatement,
+  type PlanAlternative,
   type SpecialistCollaboration,
   type TaskControlCommand,
 } from "./ai-buddy-brain";
@@ -58,22 +59,31 @@ import {
 } from "./page-intelligence-engine";
 import { evaluatePagination, resolveOrdinalTarget, searchContent } from "./navigation-engine";
 import {
-  aggregateRecords,
-  analyzeSpreadsheetData,
   type DataAggregationResult,
   type SpreadsheetAnalysisResult,
 } from "./data-intelligence-engine";
+import { type CrossFileComparisonResult, type WorkspaceDocument } from "./file-workspace-engine";
+import { type ResearchSource, type StructuredResearchReport } from "./research-engine";
 import {
-  compareSpreadsheetFiles,
-  type CrossFileComparisonResult,
-  type WorkspaceDocument,
-} from "./file-workspace-engine";
+  detectMemoryContradictions,
+  retrieveContextualMemories,
+  type MemoryContradictionAlert,
+  type MemoryRecord,
+} from "./memory-engine";
+import { buildBudgetedTaskContext, isSnapshotStale } from "./context-manager";
 import {
-  analyzeMultiSourceResearch,
-  type ResearchSource,
-  type StructuredResearchReport,
-} from "./research-engine";
-import { retrieveContextualMemories, type MemoryRecord } from "./memory-engine";
+  findReusablePatterns,
+  recordVerifiedExecutionPattern,
+  type VerifiedExecutionPattern,
+} from "./adaptive-learning";
+import { executeTaskDag } from "./dag-executor";
+import { getAgentDefinition } from "@/lib/agents/agents-registry";
+import {
+  generateProactiveSuggestions,
+  type ProactivePreferences,
+  type ProactiveSuggestion,
+} from "./proactive-engine";
+import { parseNaturalLanguageWorkflow, type ParsedNaturalWorkflow } from "./workflow-recipe-engine";
 
 export interface ExecutionPathDecision {
   path: ExecutionPath;
@@ -89,6 +99,7 @@ export interface ExecutionPathDecision {
 
 export interface UnifiedOrchestratorInput {
   instruction: string;
+  userId?: string | null;
   intentHint?: string | null;
   snapshot?: PageSnapshot | null;
   history?: Array<{ role: string; content: string }> | null;
@@ -104,6 +115,7 @@ export interface UnifiedOrchestratorInput {
   documents?: WorkspaceDocument[] | null;
   researchSources?: ResearchSource[] | null;
   userMemories?: MemoryRecord[];
+  proactivePreferences?: Partial<ProactivePreferences> | null;
   uploadedDocumentSummary?: {
     fileName: string;
     documentType: string;
@@ -117,6 +129,20 @@ export interface UnifiedOrchestratorInput {
     recentFields?: string[];
   } | null;
   hasVision?: boolean;
+}
+
+export interface SubtaskDetailView {
+  taskId: string;
+  title: string;
+  agentId: SpecialistAgentId;
+  agentName: string;
+  responsibility: string;
+  status: string;
+  dependencies: string[];
+  retryCount: number;
+  verified: boolean;
+  durationMs?: number;
+  error?: string;
 }
 
 export interface OrchestrationMetadata {
@@ -136,6 +162,12 @@ export interface OrchestrationMetadata {
     failed: number;
     awaitingApproval: number;
   };
+  subtaskDetails?: SubtaskDetailView[];
+  dagSummary?: {
+    parallelWaves: number;
+    maxObservedConcurrency: number;
+    replannedSubtasks: string[];
+  };
   blockedCapabilities: Array<{ capabilityId: string; reason: string }>;
 }
 
@@ -150,7 +182,21 @@ export interface UnifiedOrchestratorResult {
   dataAggregation?: DataAggregationResult;
   suggestedHighlightSelector?: string;
   memoryContextBlock?: string;
+  memoryContradictions?: MemoryContradictionAlert[];
+  reusablePatterns?: VerifiedExecutionPattern[];
+  staleSnapshotWarning?: string;
+  alternativePlans?: PlanAlternative[];
+  epistemicBreakdown?: EpistemicStatement[];
+  contextBudgetStats?: {
+    estimatedTokens: number;
+    truncatedSections: string[];
+    trimmedHistoryCount: number;
+    untrustedSignals: string[];
+  };
   engineInsightsBlock?: string;
+  proactiveSuggestions?: ProactiveSuggestion[];
+  workflowDraft?: ParsedNaturalWorkflow;
+  costTelemetry?: TaskSessionContext["costTelemetry"];
   blockedByCapability?: { capabilityId: string; reason: string } | null;
   recoveredErrors: Array<{
     report: SanitizedDiagnosticReport;
@@ -497,15 +543,19 @@ function buildMultiAgentSubtasks(
   const perm = input.permissionLevel ?? "explain";
   const tabId = input.activeTabId ?? null;
   const subtasks: Subtask[] = [];
-  let prevId: string | null = null;
 
   const pushTask = (
     suffix: string,
     title: string,
     agentId: SpecialistAgentId,
     capabilityId: string,
-    opts?: { fileOwnership?: string | null; tabOwnership?: number | null },
-  ) => {
+    opts?: {
+      dependencies?: string[];
+      priority?: number;
+      fileOwnership?: string | null;
+      tabOwnership?: number | null;
+    },
+  ): string => {
     const cap = getCapability(capabilityId);
     const id = `${parentTaskId}_${suffix}`;
     subtasks.push({
@@ -514,8 +564,9 @@ function buildMultiAgentSubtasks(
       title,
       agentId,
       capabilityId,
-      dependencies: prevId ? [prevId] : [],
+      dependencies: opts?.dependencies ?? [],
       status: "pending",
+      priority: opts?.priority ?? 5,
       retryLimit: 2,
       retryCount: 0,
       tabOwnership: opts?.tabOwnership ?? tabId,
@@ -526,64 +577,271 @@ function buildMultiAgentSubtasks(
         approved: Boolean(input.consentGranted),
       },
     });
-    prevId = id;
+    return id;
   };
 
+  // Root parallel-ready branches where appropriate (no artificial sequential chaining)
+  let observeId: string | null = null;
   if (input.snapshot) {
-    pushTask("observe", "Observe active webpage DOM", "browser", "observe_webpage");
+    observeId = pushTask("observe", "Observe active webpage DOM", "browser", "observe_webpage", {
+      priority: 9,
+      tabOwnership: tabId,
+    });
   }
 
-  if (decision.brainIntent === "smart_form_fill") {
-    pushTask("fill", "Resolve target form fields and enter values", "form_automation", "fill_form");
+  let memoryId: string | null = null;
+  if (input.userMemories && input.userMemories.length > 0) {
+    memoryId = pushTask(
+      "memory",
+      "Load relevant contextual memories",
+      "memory",
+      "manage_long_term_memory",
+      {
+        priority: 8,
+        tabOwnership: null, // Independent of browser tab lock so it runs truly in parallel!
+      },
+    );
+  }
+
+  const isScheduleWorkflow =
+    /\b(?:every\s+day|daily|weekly|hourly|schedule|har\s+roz|workflow\s+create|automate\s+daily)\b/i.test(
+      input.instruction,
+    );
+
+  const hasMultiDomainAttachments =
+    Boolean(input.spreadsheetData?.length) ||
+    Boolean(input.comparisonData?.length) ||
+    Boolean(input.researchSources?.length) ||
+    Boolean(input.documents?.length);
+
+  if (isScheduleWorkflow && !hasMultiDomainAttachments) {
+    const wfId = pushTask(
+      "workflow",
+      "Parse conversational schedule and safety preview",
+      "workflow_automation",
+      "manage_workflow_automation",
+      { priority: 9, tabOwnership: null },
+    );
+    pushTask(
+      "verify",
+      "Confirm approval gate before enabling schedule",
+      "verification",
+      "verify_outcome",
+      { dependencies: [wfId], tabOwnership: null },
+    );
+  } else if (isScheduleWorkflow && hasMultiDomainAttachments) {
+    const upstream: string[] = [];
+    if (observeId) upstream.push(observeId);
+    if (memoryId) upstream.push(memoryId);
+
+    if (input.spreadsheetData?.length || input.comparisonData?.length) {
+      upstream.push(
+        pushTask(
+          "compare",
+          input.comparisonData?.length
+            ? "Compare datasets and detect discrepancies"
+            : "Analyze spreadsheet columns and anomalies",
+          "spreadsheet",
+          input.comparisonData?.length ? "compare_datasets" : "process_spreadsheet",
+          {
+            dependencies: [],
+            priority: 8,
+            tabOwnership: null,
+            fileOwnership: input.uploadedDocumentSummary?.fileName ?? "comparison_dataset",
+          },
+        ),
+      );
+    }
+    if (input.researchSources?.length) {
+      upstream.push(
+        pushTask(
+          "research",
+          "Cross-reference multi-source evidence & contradictions",
+          "research",
+          "search_web",
+          { dependencies: [], priority: 8, tabOwnership: null },
+        ),
+      );
+    }
+    if (input.documents?.length) {
+      upstream.push(
+        pushTask("docs", "Extract & merge workspace documents", "document", "generate_report", {
+          dependencies: [],
+          priority: 7,
+          tabOwnership: null,
+        }),
+      );
+    }
+    upstream.push(
+      pushTask(
+        "workflow",
+        "Parse conversational schedule and safety preview",
+        "workflow_automation",
+        "manage_workflow_automation",
+        { dependencies: [], priority: 8, tabOwnership: null },
+      ),
+    );
+    pushTask(
+      "verify",
+      "Verify combined multi-agent outputs & schedule gate",
+      "verification",
+      "verify_outcome",
+      {
+        dependencies: upstream,
+        priority: 6,
+        tabOwnership: null,
+      },
+    );
+  } else if (decision.brainIntent === "smart_form_fill") {
+    const fillId = pushTask(
+      "fill",
+      "Resolve target form fields and enter values",
+      "form_filling",
+      "fill_form",
+      { dependencies: observeId ? [observeId] : [], priority: 9 },
+    );
     pushTask(
       "verify",
       "Verify field values without accidental submit",
       "verification",
       "verify_outcome",
+      { dependencies: [fillId], tabOwnership: null },
     );
   } else if (decision.brainIntent === "spreadsheet_audit") {
-    pushTask(
+    const sheetId = pushTask(
       "sheet",
       "Analyze spreadsheet columns and anomalies",
       "spreadsheet",
       "process_spreadsheet",
       {
+        dependencies: [],
+        priority: 8,
+        tabOwnership: null,
         fileOwnership: input.uploadedDocumentSummary?.fileName ?? "active_spreadsheet",
       },
     );
+    const dataId = pushTask(
+      "data",
+      "Compute data intelligence & outlier report",
+      "data_intelligence",
+      "calculate_values",
+      {
+        dependencies: [sheetId],
+        tabOwnership: null,
+      },
+    );
+    pushTask("verify", "Verify spreadsheet audit completeness", "verification", "verify_outcome", {
+      dependencies: [dataId],
+      tabOwnership: null,
+    });
   } else if (
     decision.brainIntent === "cross_file_comparison" ||
     decision.brainIntent === "universal_task"
   ) {
-    pushTask(
+    // True parallel independent branches: browser observation + spreadsheet inspection + document merge
+    const upstream: string[] = [];
+    if (observeId) upstream.push(observeId);
+    if (memoryId) upstream.push(memoryId);
+
+    const compareId = pushTask(
       "compare",
       "Compare datasets and detect discrepancies",
       "spreadsheet",
       "compare_datasets",
       {
+        dependencies: [], // Can run in parallel with DOM observation when tabOwnership is null!
+        priority: 8,
+        tabOwnership: null,
         fileOwnership: input.uploadedDocumentSummary?.fileName ?? "comparison_dataset",
       },
     );
-    pushTask(
+    upstream.push(compareId);
+
+    if (input.documents?.length) {
+      const docId = pushTask(
+        "docs",
+        "Extract & merge workspace documents",
+        "document",
+        "generate_report",
+        {
+          dependencies: [],
+          priority: 7,
+          tabOwnership: null,
+        },
+      );
+      upstream.push(docId);
+    }
+
+    const reportId = pushTask(
       "report",
       "Synthesize structured reconciliation report",
-      "analysis",
+      "data_intelligence",
       "generate_report",
+      {
+        dependencies: upstream,
+        priority: 7,
+        tabOwnership: null,
+      },
+    );
+    pushTask(
+      "verify",
+      "Verify reconciliation completeness & provenance",
+      "verification",
+      "verify_outcome",
+      {
+        dependencies: [reportId],
+        priority: 6,
+        tabOwnership: null,
+      },
     );
   } else if (decision.brainIntent === "multi_source_research") {
-    pushTask("research", "Cross-reference multi-source evidence", "research", "search_web");
+    const resId = pushTask(
+      "research",
+      "Cross-reference multi-source evidence & contradictions",
+      "research",
+      "search_web",
+      {
+        dependencies: [],
+        priority: 8,
+        tabOwnership: null,
+      },
+    );
+    const deps = [resId, ...(observeId ? [observeId] : []), ...(memoryId ? [memoryId] : [])];
+    pushTask("verify", "Verify research citations & unknowns", "verification", "verify_outcome", {
+      dependencies: deps,
+      tabOwnership: null,
+    });
   } else if (decision.brainIntent === "aggregate_data") {
-    pushTask(
+    const aggId = pushTask(
       "agg",
       "Aggregate webpage records deterministically",
-      "data_extraction",
+      "data_intelligence",
       "calculate_values",
+      {
+        dependencies: observeId ? [observeId] : [],
+        priority: 8,
+      },
     );
+    pushTask("verify", "Verify aggregated totals", "verification", "verify_outcome", {
+      dependencies: [aggId],
+      tabOwnership: null,
+    });
   } else {
     const primaryCap = decision.capabilityIds[0] || "maintain_checkpoints";
     const primaryAgent = decision.agentsAssigned[0] || "planning";
-    pushTask("exec", "Execute orchestrated workflow step", primaryAgent, primaryCap);
-    pushTask("verify", "Verify task outcome against state", "verification", "verify_outcome");
+    const execId = pushTask(
+      "exec",
+      "Execute orchestrated workflow step",
+      primaryAgent,
+      primaryCap,
+      {
+        dependencies: observeId ? [observeId] : [],
+      },
+    );
+    pushTask("verify", "Verify task outcome against state", "verification", "verify_outcome", {
+      dependencies: [execId],
+      tabOwnership: null,
+    });
   }
 
   return subtasks;
@@ -591,8 +849,8 @@ function buildMultiAgentSubtasks(
 
 /**
  * Executes the Unified Central Orchestrator over an incoming request,
- * updating TaskSessionContext, dispatching engines, checking capabilities,
- * and hooking errors into Self-Healing.
+ * updating TaskSessionContext, dispatching engines via DAG executor, checking capabilities,
+ * generating proactive suggestions, tracking token/cost telemetry, and hooking errors into Self-Healing.
  */
 export async function runUnifiedOrchestrator(
   input: UnifiedOrchestratorInput,
@@ -611,15 +869,20 @@ export async function runUnifiedOrchestrator(
     hasVision: input.hasVision,
   });
 
-  // Restore or initialize shared TaskSessionContext
+  // Restore or initialize shared TaskSessionContext with strict user isolation
   const sessionMap = getSessionMap();
-  const existingSession = input.sessionContext?.sessionId
+  const rawExisting = input.sessionContext?.sessionId
     ? (sessionMap.get(input.sessionContext.sessionId) ?? input.sessionContext)
     : (input.sessionContext ?? null);
+  const isolatedExisting =
+    rawExisting && input.userId !== undefined
+      ? isolateSessionContext(rawExisting, input.userId ?? null)
+      : rawExisting;
 
   const sessionCtx =
-    existingSession ??
+    isolatedExisting ??
     createTaskSessionContext({
+      userId: input.userId ?? null,
       activeWebpage: input.snapshot
         ? {
             url: input.snapshot.url,
@@ -662,7 +925,6 @@ export async function runUnifiedOrchestrator(
   const blockedCapabilities: Array<{ capabilityId: string; reason: string }> = [];
   let blockedByCapability: { capabilityId: string; reason: string } | null = null;
 
-  // Check planned / unavailable or permission-gated capabilities honestly
   for (const capId of decision.capabilityIds) {
     const check = canExecuteCapability(capId, permissionLevel, Boolean(input.consentGranted));
     if (!check.available) {
@@ -679,13 +941,15 @@ export async function runUnifiedOrchestrator(
     }
   }
 
-  // Retrieve contextual memories if available
   let memoryContextBlock: string | undefined;
+  let memoryContradictions: MemoryContradictionAlert[] = [];
   if (input.userMemories && input.userMemories.length > 0) {
     try {
+      memoryContradictions = detectMemoryContradictions(input.userMemories);
       const memRes = retrieveContextualMemories(input.userMemories, input.instruction, {
         privacyMode: input.privacyMode,
         maxCount: 4,
+        userId: input.userId ?? undefined,
       });
       if (memRes.formattedContext) {
         memoryContextBlock = memRes.formattedContext;
@@ -705,15 +969,43 @@ export async function runUnifiedOrchestrator(
     }
   }
 
+  let staleSnapshotWarning: string | undefined;
+  if (input.snapshot && decision.requestClassification.includePageContext) {
+    const staleCheck = isSnapshotStale(input.snapshot);
+    if (staleCheck.stale) {
+      staleSnapshotWarning = staleCheck.reason;
+    }
+  }
+
+  const reusablePatterns = findReusablePatterns(
+    input.instruction,
+    input.snapshot?.origin || "*",
+  );
+  const contextBudgetResult = buildBudgetedTaskContext({
+    instruction: input.instruction,
+    memoriesText: memoryContextBlock,
+    snapshotText: input.snapshot?.text?.slice(0, 8000),
+    documentSummaryText: input.uploadedDocumentSummary
+      ? `${input.uploadedDocumentSummary.fileName}: ${input.uploadedDocumentSummary.availableFields.join(", ")}`
+      : undefined,
+    history: input.history ?? undefined,
+  });
+  const alternativePlans = generatePlanAlternatives({
+    intent: decision.brainIntent,
+    instruction: input.instruction,
+    hasSnapshot: Boolean(input.snapshot),
+    hasDocument: Boolean(input.uploadedDocumentSummary || input.documents?.length || input.spreadsheetData?.length),
+  });
+
   let structuredPage: StructuredPageRepresentation | undefined;
   let suggestedHighlightSelector: string | undefined;
   let spreadsheetAnalysis: SpreadsheetAnalysisResult | undefined;
   let crossFileResult: CrossFileComparisonResult | undefined;
   let researchReport: StructuredResearchReport | undefined;
   let dataAggregation: DataAggregationResult | undefined;
+  let workflowDraft: ParsedNaturalWorkflow | undefined;
   const insightLines: string[] = [];
 
-  // Run lightweight page intelligence even on fast_path when page snapshot is relevant
   if (input.snapshot && decision.requestClassification.includePageContext) {
     try {
       structuredPage = analyzePageIntelligence(input.snapshot);
@@ -791,6 +1083,12 @@ export async function runUnifiedOrchestrator(
   }
 
   if (decision.path === "fast_path") {
+    const estTokens = Math.max(12, Math.ceil(input.instruction.length / 4));
+    const telemetry = recordCostTelemetry(sessionCtx, {
+      tokens: estTokens,
+      path: "fast_path",
+      costUsd: Number((estTokens * 0.0000004).toFixed(6)),
+    });
     sessionCtx.executionHistory.push({
       timestamp: new Date().toISOString(),
       agentId: decision.agentsAssigned[0] || "communication",
@@ -798,7 +1096,15 @@ export async function runUnifiedOrchestrator(
       outcome: "ok",
       detail: decision.reason,
     });
+    const proactiveSuggestions = generateProactiveSuggestions({
+      preferences: input.proactivePreferences ?? undefined,
+      checkpoints: sessionCtx.checkpoints,
+      activeProjects: (input.userMemories ?? [])
+        .filter((m) => m.kind === "active_project")
+        .map((m) => ({ key: m.key, value: m.value })),
+    });
     sessionMap.set(sessionCtx.sessionId, sessionCtx);
+    const fastEpistemic = buildEpistemicBreakdown({ structuredPage });
 
     return {
       decision,
@@ -825,13 +1131,26 @@ export async function runUnifiedOrchestrator(
       structuredPage,
       suggestedHighlightSelector,
       memoryContextBlock,
+      memoryContradictions: memoryContradictions.length > 0 ? memoryContradictions : undefined,
+      reusablePatterns: reusablePatterns.length > 0 ? reusablePatterns : undefined,
+      staleSnapshotWarning,
+      alternativePlans,
+      epistemicBreakdown: fastEpistemic,
+      contextBudgetStats: {
+        estimatedTokens: contextBudgetResult.estimatedTokens,
+        truncatedSections: contextBudgetResult.truncatedSections,
+        trimmedHistoryCount: contextBudgetResult.trimmedHistoryCount,
+        untrustedSignals: contextBudgetResult.untrustedSignals,
+      },
       engineInsightsBlock: insightLines.length > 0 ? insightLines.join("\n") : undefined,
+      proactiveSuggestions,
+      costTelemetry: telemetry,
       blockedByCapability,
       recoveredErrors,
     };
   }
 
-  // MULTI-AGENT PATH: Build TaskNode DAG, validate dependencies, enforce locks, run relevant engines
+  // MULTI-AGENT PATH: Build TaskNode DAG & execute via parallel DAG executor across 15 specialized agents
   const nowIso = new Date().toISOString();
   const taskId = `task_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   if (sessionCtx.currentTask && sessionCtx.currentTask.status === "completed") {
@@ -845,22 +1164,6 @@ export async function runUnifiedOrchestrator(
   }
 
   const subtasks = buildMultiAgentSubtasks(taskId, decision, input);
-  const dagCheck = validateTaskGraphDependencies(subtasks);
-  if (!dagCheck.valid) {
-    recoveredErrors.push(
-      reportExecutionError(
-        {
-          component: "task_orchestration",
-          error: new Error(`Invalid task DAG: ${dagCheck.errors.join("; ")}`),
-          agentId: "planning",
-          taskId,
-          currentOperation: "validate_task_graph",
-        },
-        sessionCtx,
-      ),
-    );
-  }
-
   const taskNode: TaskNode = {
     taskId,
     goal: input.instruction.slice(0, 300),
@@ -870,143 +1173,146 @@ export async function runUnifiedOrchestrator(
     createdAt: nowIso,
     updatedAt: nowIso,
   };
-  sessionCtx.currentTask = taskNode;
 
-  // Execute ready DAG subtasks safely with tab/file lock acquisition
-  for (let pass = 0; pass < subtasks.length + 2; pass++) {
-    const ready = getExecutableParallelSubtasks(sessionCtx);
-    if (ready.length === 0) break;
+  const dagSummary = await executeTaskDag(
+    sessionCtx,
+    taskNode,
+    {
+      instruction: input.instruction,
+      permissionLevel,
+      consentGranted: Boolean(input.consentGranted),
+      privacyMode: input.privacyMode,
+      buddySlug: input.buddySlug,
+      snapshot: input.snapshot,
+      spreadsheetData: input.spreadsheetData,
+      comparisonData: input.comparisonData,
+      documents: input.documents,
+      researchSources: input.researchSources,
+      userMemories: input.userMemories,
+      sessionContext: sessionCtx,
+    },
+    { maxConcurrency: 3, enableDynamicReplanning: true },
+  );
 
-    for (const st of ready) {
-      if (!acquireSubtaskLocks(sessionCtx, st)) continue;
-      st.status = "running";
-      st.startedAt = new Date().toISOString();
+  if (dagSummary.cycleError) {
+    recoveredErrors.push(
+      reportExecutionError(
+        {
+          component: "task_orchestration",
+          error: new Error(`Invalid task DAG: ${dagSummary.cycleError}`),
+          agentId: "planning",
+          taskId,
+          currentOperation: "validate_task_graph",
+        },
+        sessionCtx,
+      ),
+    );
+  }
 
-      try {
-        if (st.capabilityId === "process_spreadsheet" && input.spreadsheetData) {
-          spreadsheetAnalysis = analyzeSpreadsheetData(input.spreadsheetData);
-          st.output = {
-            rowCount: spreadsheetAnalysis.rowCount,
-            anomalies: spreadsheetAnalysis.anomalies.length,
-          };
-          insightLines.push(`Spreadsheet Analysis: ${spreadsheetAnalysis.summary}`);
-        } else if (
-          st.capabilityId === "compare_datasets" &&
-          input.spreadsheetData &&
-          input.comparisonData
-        ) {
-          crossFileResult = compareSpreadsheetFiles({
-            baseData: input.spreadsheetData,
-            compareData: input.comparisonData,
-            keyField: "id",
-            compareFields: ["price", "status"],
-            baseFileName: "Primary Dataset",
-            compareFileName: "Comparison Dataset",
-          });
-          st.output = {
-            discrepancies: crossFileResult.discrepancies.length,
-            missingInComparison: crossFileResult.missingInComparison.length,
-          };
-          insightLines.push(`Dataset Comparison: ${crossFileResult.auditSummary}`);
-        } else if (st.capabilityId === "search_web" && input.researchSources?.length) {
-          researchReport = analyzeMultiSourceResearch({
-            topic: input.instruction,
-            sources: input.researchSources,
-            claimsToEvaluate: [{ claim: input.instruction, suggestedCategory: "hypothesis" }],
-          });
-          st.output = { sourcesAnalyzed: researchReport.sourcesAnalyzed };
-          insightLines.push(`Research Summary: ${researchReport.executiveSummary}`);
-        } else if (st.capabilityId === "calculate_values" && input.snapshot?.statusCounts) {
-          const counts = input.snapshot.statusCounts;
-          const total = Object.values(counts).reduce((a, b) => a + b, 0);
-          dataAggregation = aggregateRecords([], {
-            pagesInspected: 1,
-            hasMorePages: Boolean(input.snapshot.pagination?.hasNextPage),
-          });
-          dataAggregation.statusCounts = counts;
-          dataAggregation.totalRecords = total;
-          dataAggregation.uniqueRecords = total;
-          st.output = { totalRecords: total };
-          insightLines.push(`Aggregated page records: ${total} item(s).`);
-        } else if (st.capabilityId === "observe_webpage" && structuredPage) {
-          st.output = {
-            forms: structuredPage.formInputCount,
-            controls: structuredPage.interactiveControlCount,
-          };
-        } else {
-          st.output = { planned: true };
-        }
-
-        st.status = "completed";
-        st.completedAt = new Date().toISOString();
-        sessionCtx.executionHistory.push({
-          timestamp: st.completedAt,
-          agentId: st.agentId,
-          subtaskId: st.taskId,
-          action: st.capabilityId,
-          outcome: "ok",
-          detail: st.title,
-        });
-      } catch (err) {
-        st.status = "failed";
-        const { report, recovery } = reportExecutionError(
+  // Hydrate structured results produced by the specialized agents
+  const inter = sessionCtx.intermediateOutputs ?? {};
+  if (inter["spreadsheetAnalysis"]) {
+    spreadsheetAnalysis = inter["spreadsheetAnalysis"] as SpreadsheetAnalysisResult;
+    insightLines.push(`Spreadsheet Analysis: ${spreadsheetAnalysis.summary}`);
+  }
+  if (inter["crossFileResult"]) {
+    crossFileResult = inter["crossFileResult"] as CrossFileComparisonResult;
+    insightLines.push(`Dataset Comparison: ${crossFileResult.auditSummary}`);
+  }
+  if (inter["researchReport"]) {
+    researchReport = inter["researchReport"] as StructuredResearchReport;
+    insightLines.push(`Research Summary: ${researchReport.executiveSummary}`);
+  }
+  if (inter["dataAggregation"]) {
+    dataAggregation = inter["dataAggregation"] as DataAggregationResult;
+    insightLines.push(`Aggregated page records: ${dataAggregation.totalRecords} item(s).`);
+  }
+  for (const res of Object.values(dagSummary.agentResults)) {
+    if (res.data?.["parsedWorkflow"]) {
+      workflowDraft = res.data["parsedWorkflow"] as ParsedNaturalWorkflow;
+    }
+    if (!res.ok && res.error) {
+      recoveredErrors.push(
+        reportExecutionError(
           {
             component: "agent_execution",
-            error: err,
-            agentId: st.agentId,
-            taskId: st.taskId,
-            capabilityId: st.capabilityId,
-            currentOperation: st.title,
+            error: new Error(res.error),
+            agentId: res.agentId,
+            taskId,
+            currentOperation: res.summary,
             pageUrl: input.snapshot?.url,
           },
           sessionCtx,
-        );
-        st.error = {
-          code: report.attribution,
-          message: report.errorMessage,
-          attribution: report.attribution,
-          recoverable: recovery.canAutoExecute,
-          timestamp: report.timestamp,
-          fingerprint: report.fingerprint,
-        };
-        recoveredErrors.push({ report, recovery });
-      } finally {
-        releaseSubtaskLocks(sessionCtx, st.taskId);
-      }
+        ),
+      );
     }
   }
-
-  // Persist TaskCheckpoint on session
-  const checkpoint = createTaskCheckpoint({
-    taskId,
-    title: input.instruction.slice(0, 60),
-    goal: input.instruction,
-    steps: subtasks.map((s) => ({
-      id: s.taskId,
-      label: s.title,
-      actionType: s.capabilityId,
-    })),
-    pageUrl: input.snapshot?.url,
-    pageOrigin: input.snapshot?.origin,
-    buddySlug: input.buddySlug ?? undefined,
-  });
-  sessionCtx.checkpoints.unshift(checkpoint);
-  sessionCtx.checkpoints = sessionCtx.checkpoints.slice(0, 10);
+  if (
+    !workflowDraft &&
+    /\b(?:every\s+day|daily|weekly|hourly|schedule|har\s+roz|workflow\s+create)\b/i.test(
+      input.instruction,
+    )
+  ) {
+    workflowDraft = parseNaturalLanguageWorkflow(input.instruction);
+  }
 
   syncSessionSubtaskBuckets(sessionCtx);
 
-  const awaitingApproval = subtasks.filter((s) => s.status === "awaiting_approval").length;
-  taskNode.status =
-    sessionCtx.failedSubtasks.length > 0
-      ? sessionCtx.completedSubtasks.length > 0
-        ? "partially_completed"
-        : "failed"
-      : sessionCtx.pendingSubtasks.length > 0
-        ? "planned"
-        : "completed";
-  taskNode.updatedAt = new Date().toISOString();
+  const estTokens = Math.max(40, Math.ceil(input.instruction.length / 4) + subtasks.length * 45);
+  const telemetry = recordCostTelemetry(sessionCtx, {
+    tokens: estTokens,
+    path: "multi_agent_path",
+    costUsd: Number((estTokens * 0.0000012).toFixed(6)),
+  });
+
+  const proactiveSuggestions = generateProactiveSuggestions({
+    preferences: input.proactivePreferences ?? undefined,
+    checkpoints: sessionCtx.checkpoints,
+    spreadsheetAnalysis,
+    crossFileResult,
+    activeProjects: (input.userMemories ?? [])
+      .filter((m) => m.kind === "active_project")
+      .map((m) => ({ key: m.key, value: m.value })),
+  });
+
+  const awaitingApproval = dagSummary.awaitingApprovalIds.length;
+  const subtaskDetails: SubtaskDetailView[] = taskNode.subtasks.map((st) => {
+    const def = getAgentDefinition(st.agentId);
+    return {
+      taskId: st.taskId,
+      title: st.title,
+      agentId: st.agentId,
+      agentName: def.name,
+      responsibility: def.responsibility,
+      status: st.status,
+      dependencies: st.dependencies,
+      retryCount: st.retryCount,
+      verified: Boolean(st.verification?.verified),
+      durationMs: st.durationMs,
+      error: st.error?.message,
+    };
+  });
 
   sessionMap.set(sessionCtx.sessionId, sessionCtx);
+  const fullEpistemic = buildEpistemicBreakdown({
+    structuredPage,
+    dataAggregation,
+    researchReport,
+    crossFileResult,
+  });
+
+  if (dagSummary.failedIds.length === 0 && dagSummary.completedIds.length > 0 && !input.privacyMode) {
+    recordVerifiedExecutionPattern({
+      intent: input.instruction,
+      domainOrigin: input.snapshot?.origin || "*",
+      actionSequence: taskNode.subtasks
+        .filter((s) => s.status === "completed")
+        .map((s) => `${s.agentId}:${s.capabilityId}`),
+      summary: `Verified ${dagSummary.completedIds.length} subtask(s) via ${decision.brainIntent}`,
+      ok: true,
+      verified: true,
+    });
+  }
 
   return {
     decision,
@@ -1017,16 +1323,24 @@ export async function runUnifiedOrchestrator(
       brainIntent: decision.brainIntent,
       sessionId: sessionCtx.sessionId,
       taskId: taskNode.taskId,
-      agentsAssigned: decision.agentsAssigned,
+      agentsAssigned: Array.from(
+        new Set([...decision.agentsAssigned, ...taskNode.subtasks.map((s) => s.agentId)]),
+      ),
       capabilityIds: decision.capabilityIds,
       collaborationNotice: decision.collaboration.collaborationNotice,
       recommendedModel: decision.recommendedModel,
       subtaskCounts: {
-        total: subtasks.length,
+        total: taskNode.subtasks.length,
         completed: sessionCtx.completedSubtasks.length,
         pending: sessionCtx.pendingSubtasks.length,
         failed: sessionCtx.failedSubtasks.length,
         awaitingApproval,
+      },
+      subtaskDetails,
+      dagSummary: {
+        parallelWaves: dagSummary.parallelWaves,
+        maxObservedConcurrency: dagSummary.maxObservedConcurrency,
+        replannedSubtasks: dagSummary.replannedSubtasks,
       },
       blockedCapabilities,
     },
@@ -1037,7 +1351,21 @@ export async function runUnifiedOrchestrator(
     dataAggregation,
     suggestedHighlightSelector,
     memoryContextBlock,
+    memoryContradictions: memoryContradictions.length > 0 ? memoryContradictions : undefined,
+    reusablePatterns: reusablePatterns.length > 0 ? reusablePatterns : undefined,
+    staleSnapshotWarning,
+    alternativePlans,
+    epistemicBreakdown: fullEpistemic,
+    contextBudgetStats: {
+      estimatedTokens: contextBudgetResult.estimatedTokens,
+      truncatedSections: contextBudgetResult.truncatedSections,
+      trimmedHistoryCount: contextBudgetResult.trimmedHistoryCount,
+      untrustedSignals: contextBudgetResult.untrustedSignals,
+    },
     engineInsightsBlock: insightLines.length > 0 ? insightLines.join("\n") : undefined,
+    proactiveSuggestions,
+    workflowDraft,
+    costTelemetry: telemetry,
     blockedByCapability,
     recoveredErrors,
   };

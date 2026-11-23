@@ -5,7 +5,7 @@
  */
 
 import { createFileRoute } from "@tanstack/react-router";
-import { MODEL_CATALOG, PROVIDERS, type ProviderId } from "@/lib/ai/model-hub";
+import { getModelModalities, MODEL_CATALOG, PROVIDERS, type ProviderId } from "@/lib/ai/model-hub";
 import { isProviderConfigured } from "@/lib/ai/provider-keys.server";
 import {
   extensionJsonResponse,
@@ -71,6 +71,7 @@ export const Route = createFileRoute("/api/public/extension/models")({
           speedRating: m.speedRating,
           costRating: m.costRating,
           recommendedUse: m.recommendedUse,
+          supportedModalities: getModelModalities(m.id),
           isDefault: Boolean(m.isDefault),
         }));
 

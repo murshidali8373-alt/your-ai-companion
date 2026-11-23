@@ -1379,6 +1379,146 @@
           </div>
         </div>
 
+        <!-- Proactive Intelligence Card -->
+        <div id="proactiveInsightsCard" class="section-card" hidden>
+          <div class="section-card-title">
+            <span style="color: var(--accent-cyan)">✨ Proactive Suggestions</span>
+            <label style="display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-muted); cursor: pointer">
+              <input type="checkbox" id="proactiveQuietToggle" />
+              Quiet Mode
+            </label>
+          </div>
+          <div id="proactiveSuggestionsList" class="items-list"></div>
+        </div>
+
+        <!-- Live Multi-Agent & Subtask Monitor -->
+        <div id="liveAgentDashboardCard" class="section-card">
+          <div class="section-card-title">
+            <span>🤖 Live Multi-Agent Activity</span>
+            <span id="agentDashboardSummary" style="font-size: 10px; color: var(--accent-cyan)">Idle · 0 calls</span>
+          </div>
+          <div id="liveSubtaskDetailsList" class="items-list">
+            <div style="color: var(--text-muted); font-size: 10px">
+              Run any multi-step research, comparison, or workspace task to watch specialized agents work in parallel.
+            </div>
+          </div>
+        </div>
+
+        <!-- Real File Workspace (CSV / XLSX / DOCX / PDF) -->
+        <div id="workspaceArtifactsCard" class="section-card">
+          <div class="section-card-title">
+            <span>📂 Real File Workspace</span>
+            <div style="display: flex; gap: 4px">
+              <button id="workspaceUploadTriggerBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">
+                ⬆️ Upload
+              </button>
+              <button id="refreshWorkspaceBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">
+                🔄
+              </button>
+            </div>
+          </div>
+          <div style="display: flex; gap: 4px; flex-wrap: wrap">
+            <button id="workspaceCompareBtn" class="ghost" style="padding: 3px 8px; font-size: 10px; flex: 1">
+              ⚖️ Compare Latest 2 Sheets
+            </button>
+            <button id="workspaceExportReportBtn" class="ghost" style="padding: 3px 8px; font-size: 10px; flex: 1">
+              📄 Export Verified PDF
+            </button>
+          </div>
+          <div id="workspaceStatusMsg" style="font-size: 10px; color: var(--text-muted)" hidden></div>
+          <div id="workspaceArtifactsList" class="items-list">
+            <div style="color: var(--text-muted); font-size: 10px">
+              Upload CSV, XLSX, DOCX, or PDF via Attach or Upload to inspect, compare, or generate reports.
+            </div>
+          </div>
+        </div>
+
+        <!-- Connected Apps (Server Token Vault) -->
+        <div id="connectedAppsCard" class="section-card">
+          <div class="section-card-title">
+            <span>🔌 Connected Apps & OAuth</span>
+            <button id="refreshConnectorsBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">
+              🔄
+            </button>
+          </div>
+          <div id="connectedAppsList" class="items-list">
+            <div style="color: var(--text-muted); font-size: 10px">Loading connector status…</div>
+          </div>
+        </div>
+
+        <!-- Workflow Automation & NL Scheduler -->
+        <div id="workflowAutomationCard" class="section-card">
+          <div class="section-card-title">
+            <span>🗓️ Workflow Automation Builder</span>
+          </div>
+          <div style="display: flex; gap: 4px">
+            <input
+              id="nlWorkflowInput"
+              placeholder='e.g. "Har roz subah 9 baje orders check karo"'
+              style="
+                flex: 1;
+                background: #0b0f19;
+                color: var(--text);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-sm);
+                padding: 5px;
+                font-size: 11px;
+              "
+            />
+            <button
+              id="previewWorkflowBtn"
+              style="
+                padding: 4px 10px;
+                font-size: 10px;
+                background: var(--accent);
+                color: white;
+                border: none;
+                border-radius: var(--radius-sm);
+                font-weight: 600;
+              "
+            >
+              Build
+            </button>
+          </div>
+          <div
+            id="workflowDraftPreview"
+            style="
+              background: #0b0f19;
+              border: 1px solid var(--border-accent);
+              border-radius: var(--radius-sm);
+              padding: 6px;
+              font-size: 10px;
+              display: flex;
+              flex-direction: column;
+              gap: 4px;
+            "
+            hidden
+          >
+            <div id="workflowDraftSummary" style="color: var(--text)"></div>
+            <div style="display: flex; gap: 4px">
+              <button
+                id="approveWorkflowBtn"
+                style="
+                  padding: 3px 8px;
+                  font-size: 10px;
+                  background: var(--accent);
+                  color: white;
+                  border: none;
+                  border-radius: var(--radius-sm);
+                  font-weight: 600;
+                "
+              >
+                ✅ Approve & Save
+              </button>
+              <button id="discardWorkflowDraftBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
+                Dismiss
+              </button>
+            </div>
+          </div>
+          <div id="workflowsList" class="items-list"></div>
+          <div id="schedulerInfraNote" style="font-size: 9px; color: var(--text-dim); line-height: 1.3"></div>
+        </div>
+
         <!-- Workflow Presets -->
         <div class="section-card">
           <div class="section-card-title">
@@ -1425,6 +1565,26 @@
             </button>
           </div>
           <div id="addMemoryForm" style="display: flex; flex-direction: column; gap: 4px" hidden>
+            <select
+              id="memKindSelect"
+              style="
+                background: #0b0f19;
+                color: var(--text);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-sm);
+                padding: 5px;
+                font-size: 11px;
+              "
+            >
+              <option value="user_preference">User Preference</option>
+              <option value="communication_preference">Communication Preference</option>
+              <option value="business_context">Business Context</option>
+              <option value="active_project">Active Project</option>
+              <option value="frequent_workflow">Frequent Workflow</option>
+              <option value="completed_task">Completed Task Summary</option>
+              <option value="reusable_instruction">Reusable Instruction</option>
+              <option value="automation_preference">Automation Preference</option>
+            </select>
             <input
               id="memKeyInput"
               placeholder="Key (e.g. seller_gstin, city)"
@@ -2022,8 +2182,22 @@
             <div id="planTitle" class="task-plan-title">Multi-Action Task Plan</div>
             <div id="planMeta" class="task-plan-meta">Target: current tab · 0 steps</div>
           </div>
-          <span id="planStatusBadge" class="status-badge">Pending</span>
+          <div style="display: flex; align-items: center; gap: 4px">
+            <span
+              id="planCostBadge"
+              style="
+                font-size: 9px;
+                color: var(--accent-cyan);
+                background: rgba(6, 182, 212, 0.1);
+                padding: 2px 5px;
+                border-radius: 4px;
+              "
+              hidden
+              >0 tok</span>
+            <span id="planStatusBadge" class="status-badge">Pending</span>
+          </div>
         </div>
+        <div id="planAgentsBar" style="font-size: 10px; color: var(--text-muted)" hidden></div>
         <div class="progress-container">
           <div class="progress-label-row">
             <span id="progressStepsLabel">0 of 0 steps completed</span>
@@ -2034,7 +2208,39 @@
           </div>
         </div>
         <div id="planStepsList" class="plan-steps-list"></div>
+        <pre
+          id="planLogsBox"
+          style="
+            margin: 4px 0 0 0;
+            font-size: 9px;
+            line-height: 1.35;
+            color: var(--text-muted);
+            background: #0b0f19;
+            padding: 5px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            max-height: 90px;
+            overflow: auto;
+            white-space: pre-wrap;
+          "
+          hidden
+        ></pre>
         <div style="display: flex; gap: 4px; margin-top: 2px; flex-wrap: wrap">
+          <button
+            id="planApproveBtn"
+            style="
+              padding: 3px 8px;
+              font-size: 10px;
+              background: var(--accent);
+              color: white;
+              border: none;
+              border-radius: var(--radius-sm);
+              font-weight: 600;
+            "
+            hidden
+          >
+            ✅ Approve
+          </button>
           <button id="planPauseResumeBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
             ⏸️ Pause
           </button>
@@ -2053,6 +2259,9 @@
             hidden
           >
             🔄 Retry
+          </button>
+          <button id="planInspectLogsBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
+            🪵 Logs
           </button>
           <button
             id="planStopBtn"

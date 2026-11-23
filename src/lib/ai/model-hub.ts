@@ -30,6 +30,15 @@ export type ModelTier = "free" | "freemium" | "paid" | "local";
 export type ModelCapability =
   "vision" | "reasoning" | "code" | "function_calling" | "streaming" | "multimodal_audio";
 
+export type ModalityType =
+  | "text"
+  | "image"
+  | "screenshot"
+  | "pdf"
+  | "audio_input"
+  | "audio_output"
+  | "realtime_voice";
+
 export interface ModelEntry {
   id: string;
   name: string;
@@ -1197,4 +1206,60 @@ export function filterModels(params: {
     }
     return true;
   });
+}
+
+/**
+ * Computes supported input/output modalities for any model or provider id.
+ */
+export function getModelModalities(modelOrProviderId: string): ModalityType[] {
+  const entry = findCatalogModel(modelOrProviderId);
+  const provider = (entry?.provider ?? modelOrProviderId) as ProviderId;
+  const modalities = new Set<ModalityType>(["text"]);
+
+  if (entry?.capabilities.includes("vision") || provider === "gemini") {
+    modalities.add("image");
+    modalities.add("screenshot");
+  }
+  if (provider === "gemini") {
+    modalities.add("pdf");
+    modalities.add("audio_input");
+    modalities.add("audio_output");
+    if (entry?.id.includes("gemini-4") || entry?.id.includes("gemini-3.8")) {
+      modalities.add("realtime_voice");
+    }
+  }
+  if (entry?.capabilities.includes("multimodal_audio")) {
+    modalities.add("audio_input");
+  }
+  return Array.from(modalities);
+}
+
+/**
+ * Strictly gates requests against model/provider modality support so unsupported media payloads
+ * fail honestly before dispatch.
+ */
+export function checkProviderModalitySupport(
+  modelOrProviderId: string,
+  requiredModalities: ModalityType[],
+): {
+  supported: boolean;
+  supportedModalities: ModalityType[];
+  missingModalities: ModalityType[];
+  reason?: string;
+} {
+  const supportedModalities = getModelModalities(modelOrProviderId);
+  const missingModalities = requiredModalities.filter((m) => !supportedModalities.includes(m));
+  if (missingModalities.length > 0) {
+    return {
+      supported: false,
+      supportedModalities,
+      missingModalities,
+      reason: `"${modelOrProviderId}" does not support required modalities: ${missingModalities.join(", ")}.`,
+    };
+  }
+  return {
+    supported: true,
+    supportedModalities,
+    missingModalities: [],
+  };
 }

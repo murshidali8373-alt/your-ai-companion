@@ -126,6 +126,30 @@ export interface BrainExecutionStep {
   error?: string;
 }
 
+export type EpistemicCategory =
+  | "observed_fact"
+  | "verified_external"
+  | "calculated"
+  | "inferred"
+  | "unknown";
+
+export interface EpistemicStatement {
+  statement: string;
+  category: EpistemicCategory;
+  source?: string;
+}
+
+export interface PlanAlternative {
+  id: string;
+  title: string;
+  summary: string;
+  riskLevel: "low" | "medium" | "high";
+  estimatedLatencyMs: number;
+  estimatedCostUsd: number;
+  constraints: string[];
+  recommended: boolean;
+}
+
 export interface BrainResponse {
   answer: string;
   confidence: number;
@@ -141,6 +165,8 @@ export interface BrainResponse {
   formResults?: FormFillResult | undefined;
   dataAggregation?: DataAggregationResult | undefined;
   executionPlan: BrainExecutionStep[];
+  alternativePlans?: PlanAlternative[] | undefined;
+  epistemicBreakdown?: EpistemicStatement[] | undefined;
   coverageNotice?: string | undefined;
   requiresConfirmation?: boolean | undefined;
   pendingAction?: { type: string; selector?: string; text?: string } | undefined;
@@ -505,24 +531,137 @@ export function determineCollaboratingBuddies(
 }
 
 /**
- * Recommends optimal model based on task demands
+ * Generates primary + safer/fallback plan alternatives with risk, latency, cost & constraint tradeoffs.
  */
-export function recommendOptimalModel(intent: BrainIntent, hasVision: boolean): string {
+export function generatePlanAlternatives(params: {
+  intent: BrainIntent;
+  instruction: string;
+  hasSnapshot: boolean;
+  hasDocument?: boolean;
+}): PlanAlternative[] {
+  const { intent, hasSnapshot, hasDocument } = params;
+  const isConsequential =
+    intent === "smart_form_fill" ||
+    /\b(?:submit|delete|remove|send|pay|purchase|approve)\b/i.test(params.instruction);
+
+  const primary: PlanAlternative = {
+    id: "plan_primary_verified",
+    title:
+      intent === "smart_form_fill"
+        ? "DOM-Targeted Fill Without Auto-Submit"
+        : intent === "cross_file_comparison"
+          ? "Deterministic Non-Destructive File Reconciliation"
+          : "Grounded Multi-Agent Execution With Verification",
+    summary: isConsequential
+      ? "Resolve exact verified targets, execute non-consequential steps, and pause before submission or mutation."
+      : "Execute deterministic engines alongside semantic DOM/file verification.",
+    riskLevel: isConsequential ? "medium" : "low",
+    estimatedLatencyMs: intent === "answer" || intent === "explain_page" ? 650 : 1800,
+    estimatedCostUsd: 0.0012,
+    constraints: [
+      hasSnapshot ? "Requires live active-tab snapshot" : "Text/file context only",
+      isConsequential ? "Requires user confirmation before submit/mutation" : "Read-only safe",
+    ],
+    recommended: true,
+  };
+
+  const conservative: PlanAlternative = {
+    id: "plan_dry_run_preview",
+    title: "Observe & Highlight Only (Dry-Run Preview)",
+    summary:
+      "Locate and highlight targets or preview diffs without writing field values or modifying workspace artifacts.",
+    riskLevel: "low",
+    estimatedLatencyMs: 500,
+    estimatedCostUsd: 0.0005,
+    constraints: ["Zero page mutations", hasDocument ? "Reads uploaded files read-only" : "Non-mutating"],
+    recommended: false,
+  };
+
+  return [primary, conservative];
+}
+
+export function buildEpistemicBreakdown(params: {
+  structuredPage?: StructuredPageRepresentation;
+  dataAggregation?: DataAggregationResult;
+  researchReport?: StructuredResearchReport;
+  crossFileResult?: CrossFileComparisonResult;
+}): EpistemicStatement[] {
+  const statements: EpistemicStatement[] = [];
+  if (params.structuredPage) {
+    statements.push({
+      statement: `Observed ${params.structuredPage.formInputCount} input(s) and ${params.structuredPage.interactiveControlCount} control(s) on "${params.structuredPage.metadata.title}".`,
+      category: "observed_fact",
+      source: params.structuredPage.metadata.url,
+    });
+  }
+  if (params.dataAggregation) {
+    statements.push({
+      statement: `Calculated ${params.dataAggregation.uniqueRecords} unique record(s) across ${params.dataAggregation.coverageReport.pagesInspected} page(s).`,
+      category: "calculated",
+    });
+    if (!params.dataAggregation.coverageReport.isComplete) {
+      statements.push({
+        statement:
+          params.dataAggregation.coverageReport.missingNotice ||
+          "Additional pages were not inspected.",
+        category: "unknown",
+      });
+    }
+  }
+  if (params.crossFileResult) {
+    statements.push({
+      statement: `Calculated comparison across datasets (${params.crossFileResult.discrepancies.length} discrepancies).`,
+      category: "calculated",
+    });
+  }
+  if (params.researchReport) {
+    statements.push({
+      statement: `Verified across ${params.researchReport.sourcesAnalyzed} external source(s).`,
+      category: "verified_external",
+    });
+    if (params.researchReport.unansweredQuestions.length > 0) {
+      statements.push({
+        statement: `${params.researchReport.unansweredQuestions.length} question(s) lacked corroborating evidence.`,
+        category: "unknown",
+      });
+    }
+  }
+  if (statements.length === 0) {
+    statements.push({
+      statement: "No live webpage DOM or tabular dataset attached; reply relies on conversational reasoning.",
+      category: "inferred",
+    });
+  }
+  return statements;
+}
+
+/**
+ * Recommends optimal model based on task demands (optionally constrained to configuredProviders)
+ */
+export function recommendOptimalModel(
+  intent: BrainIntent,
+  hasVision: boolean,
+  configuredProviders?: string[],
+): string {
+  const isAllowed = (provider: string) =>
+    !configuredProviders || configuredProviders.length === 0 || configuredProviders.includes(provider);
+
   if (hasVision || intent === "locate_element") {
-    return "gemini-3.8-flash"; // Google Gemini handles multimodal vision and screen coordinates best
+    if (isAllowed("gemini")) return "gemini-3.8-flash";
   }
   if (
     intent === "spreadsheet_audit" ||
     intent === "aggregate_data" ||
     intent === "cross_file_comparison"
   ) {
-    return "groq-llama-3.3-70b"; // Groq LPU delivers 300+ t/s reasoning on table structures
+    if (isAllowed("groq")) return "groq-llama-3.3-70b"; // Groq LPU delivers 300+ t/s reasoning on table structures
+    if (isAllowed("gemini")) return "gemini-3.8-flash";
   }
-  if (intent === "multi_source_research" || intent === "universal_task") {
-    return "gemini-3.8-flash";
-  }
-  if (intent === "explain_page" || intent === "answer") {
-    return "gemini-3.8-flash";
+  if (isAllowed("gemini")) return "gemini-3.8-flash";
+  if (configuredProviders && configuredProviders.length > 0) {
+    if (configuredProviders.includes("openai")) return "openai-gpt-4o-mini";
+    if (configuredProviders.includes("openrouter")) return "openrouter-free-gemini-2.0-flash";
+    if (configuredProviders.includes("ollama")) return "ollama-llama-3.1-8b";
   }
   return "gemini-3.8-flash";
 }
@@ -849,6 +988,19 @@ export async function executeBuddyBrain(req: BrainRequest): Promise<BrainRespons
     finalAnswer = `Hello! I am ${persona.name}. How can I assist you with this page or workflow today?`;
   }
 
+  const alternativePlans = generatePlanAlternatives({
+    intent,
+    instruction: req.instruction,
+    hasSnapshot: Boolean(req.snapshot),
+    hasDocument: Boolean(req.documents?.length || req.spreadsheetData?.length),
+  });
+  const epistemicBreakdown = buildEpistemicBreakdown({
+    structuredPage,
+    dataAggregation,
+    researchReport,
+    crossFileResult,
+  });
+
   return {
     answer: finalAnswer,
     confidence: 0.95,
@@ -863,6 +1015,8 @@ export async function executeBuddyBrain(req: BrainRequest): Promise<BrainRespons
     formResults,
     dataAggregation,
     executionPlan: plan,
+    alternativePlans,
+    epistemicBreakdown,
     coverageNotice,
     requiresConfirmation,
     pendingAction,

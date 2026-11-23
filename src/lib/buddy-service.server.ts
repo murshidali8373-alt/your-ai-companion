@@ -21,7 +21,12 @@ import {
 } from "./ai/prompt";
 import { getBuddyPreset } from "./ai/buddy-personas";
 import { recommendSpecialistBuddy, type BuddyModeRecommendation } from "./ai/mode-recommendations";
-import { MODEL_CATALOG, PROVIDERS, type ProviderId } from "./ai/model-hub";
+import {
+  checkProviderModalitySupport,
+  MODEL_CATALOG,
+  PROVIDERS,
+  type ProviderId,
+} from "./ai/model-hub";
 import { isProviderConfigured } from "./ai/provider-keys.server";
 import {
   MODELS,
@@ -48,7 +53,11 @@ import {
   reportExecutionError,
   type OrchestrationMetadata,
 } from "./engines/unified-orchestrator";
+import type { ProactiveSuggestion } from "./engines/proactive-engine";
+import type { ParsedNaturalWorkflow } from "./engines/workflow-recipe-engine";
 import type { TaskSessionContext } from "@/shared/task-context";
+import { wrapUntrustedContent } from "./security/guardrails.server";
+import { createCorrelationId, recordTelemetry } from "./telemetry/observability.server";
 
 export const DAILY_REQUEST_LIMIT = 300;
 
@@ -210,6 +219,9 @@ export interface AskOutput {
   recommendedMode?: BuddyModeRecommendation | null;
   orchestration?: OrchestrationMetadata | null;
   sessionContext?: TaskSessionContext | null;
+  proactiveSuggestions?: ProactiveSuggestion[] | null;
+  workflowDraft?: ParsedNaturalWorkflow | null;
+  costTelemetry?: TaskSessionContext["costTelemetry"] | null;
   selfHealing?: {
     reportId: string;
     fingerprint: string;
@@ -1134,6 +1146,7 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
   });
   const isGeneralChat = requestClass.category === "general_chat" || input.intent === "general";
 
+  const correlationId = createCorrelationId("ask");
   const safeForms = input.snapshot?.forms?.map((f) =>
     f.sensitive ? { ...f, value: undefined } : f,
   );
@@ -1141,11 +1154,15 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
     !isGeneralChat && input.snapshot
       ? { ...input.snapshot, forms: safeForms ?? input.snapshot.forms }
       : null;
-  const pageContext = isGeneralChat
+  const rawPageContext = isGeneralChat
     ? "General conversation mode (no active webpage context attached)."
     : safeSnapshot
       ? buildPageContext(safeSnapshot)
       : "No page context available.";
+  const pageContext =
+    !isGeneralChat && safeSnapshot
+      ? wrapUntrustedContent("active_webpage", rawPageContext, correlationId).wrapped
+      : rawPageContext;
   const system = buildSystemPrompt({
     persona: {
       name: persona.name,
@@ -1164,8 +1181,11 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
     interpretMode: input.intent === "interpret_command",
     chatMode: isGeneralChat ? "general" : "page",
   });
-  const docSummaryBlock = input.uploadedDocumentSummary
-    ? `\n\nUPLOADED DOCUMENT IN SESSION:\nFile: ${input.uploadedDocumentSummary.fileName} (Type: ${input.uploadedDocumentSummary.documentType})\nAvailable extracted fields: ${input.uploadedDocumentSummary.availableFields.join(", ") || "none"}`
+  const rawDocSummary = input.uploadedDocumentSummary
+    ? `UPLOADED DOCUMENT IN SESSION:\nFile: ${input.uploadedDocumentSummary.fileName} (Type: ${input.uploadedDocumentSummary.documentType})\nAvailable extracted fields: ${input.uploadedDocumentSummary.availableFields.join(", ") || "none"}`
+    : "";
+  const docSummaryBlock = rawDocSummary
+    ? `\n\n${wrapUntrustedContent("uploaded_document", rawDocSummary, correlationId).wrapped}`
     : "";
   const ctxParts: string[] = [];
   if (!isGeneralChat) {
@@ -1194,6 +1214,7 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
 
   const unifiedResult = await runUnifiedOrchestrator({
     instruction: question,
+    userId,
     intentHint: input.intent,
     snapshot: safeSnapshot,
     history: input.history,
@@ -1210,6 +1231,7 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       kind: "long_term_fact" as const,
       key: m.key,
       value: m.value,
+      userId,
       updatedAt: new Date().toISOString(),
     })),
     hasVision: !isGeneralChat && Boolean(input.screenshotBase64),
@@ -1265,6 +1287,26 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
   });
 
   try {
+    if (strictSelection && !isGeneralChat && Boolean(input.screenshotBase64)) {
+      const targetCapabilityId =
+        hasExplicitModel && input.preferredModel && input.preferredModel !== "auto"
+          ? input.preferredModel
+          : routingDecision.effectiveProvider;
+      const modalityCheck = checkProviderModalitySupport(targetCapabilityId, ["screenshot"]);
+      if (!modalityCheck.supported) {
+        throw new AiError(
+          "bad_request",
+          modalityCheck.reason ||
+            `Selected provider/model (${targetCapabilityId}) does not support screenshot/vision input.`,
+          {
+            provider: routingDecision.effectiveProvider,
+            resolution:
+              "Select a vision-capable model (e.g. Google Gemini) or turn off Page Vision for text-only providers.",
+          },
+        );
+      }
+    }
+
     const candidates = routingDecision.candidates;
     const useGeminiScreenshot =
       !isGeneralChat &&
@@ -1383,6 +1425,16 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
           }
         : null);
 
+    recordTelemetry({
+      correlationId,
+      type: "model.call",
+      outcome: "ok",
+      userId,
+      durationMs: result.latencyMs,
+      detail: `Ask succeeded via ${result.model} (${result.provider})`,
+      meta: { intent: input.intent, path: unifiedResult.orchestration.path },
+    });
+
     return {
       taskId,
       reply,
@@ -1412,6 +1464,10 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       recommendedMode,
       orchestration: unifiedResult.orchestration,
       sessionContext: unifiedResult.sessionContext,
+      proactiveSuggestions: unifiedResult.proactiveSuggestions ?? [],
+      workflowDraft: unifiedResult.workflowDraft ?? null,
+      costTelemetry:
+        unifiedResult.costTelemetry ?? unifiedResult.sessionContext.costTelemetry ?? null,
     };
   } catch (error) {
     const aiError =
@@ -1430,6 +1486,14 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       },
       unifiedResult.sessionContext,
     );
+    recordTelemetry({
+      correlationId,
+      type: "error.captured",
+      outcome: "error",
+      userId,
+      detail: `Ask provider failure (${aiError.kind}): ${aiError.userMessage}`,
+      meta: { attribution: shRecord.report.attribution, failureCategory: shRecord.report.failureCategory },
+    });
     await event(db, taskId, userId, "recover", `${aiError.kind}: ${aiError.userMessage}`);
     if (taskId) {
       await db
@@ -1470,6 +1534,10 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
         recommendedMode,
         orchestration: unifiedResult.orchestration,
         sessionContext: unifiedResult.sessionContext,
+        proactiveSuggestions: unifiedResult.proactiveSuggestions ?? [],
+        workflowDraft: unifiedResult.workflowDraft ?? null,
+        costTelemetry:
+          unifiedResult.costTelemetry ?? unifiedResult.sessionContext.costTelemetry ?? null,
         selfHealing: {
           reportId: shRecord.report.id,
           fingerprint: shRecord.report.fingerprint,
@@ -1508,6 +1576,10 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       recommendedMode,
       orchestration: unifiedResult.orchestration,
       sessionContext: unifiedResult.sessionContext,
+      proactiveSuggestions: unifiedResult.proactiveSuggestions ?? [],
+      workflowDraft: unifiedResult.workflowDraft ?? null,
+      costTelemetry:
+        unifiedResult.costTelemetry ?? unifiedResult.sessionContext.costTelemetry ?? null,
       selfHealing: {
         reportId: shRecord.report.id,
         fingerprint: shRecord.report.fingerprint,
@@ -1596,6 +1668,7 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
   });
   const isGeneralChat = requestClass.category === "general_chat" || input.intent === "general";
 
+  const guestCorrelationId = createCorrelationId("guest");
   const safeForms = input.snapshot?.forms?.map((f) =>
     f.sensitive ? { ...f, value: undefined } : f,
   );
@@ -1603,11 +1676,15 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
     !isGeneralChat && input.snapshot
       ? { ...input.snapshot, forms: safeForms ?? input.snapshot.forms }
       : null;
-  const pageContext = isGeneralChat
+  const rawPageContext = isGeneralChat
     ? "General conversation mode (no active webpage context attached)."
     : safeSnapshot
       ? buildPageContext(safeSnapshot)
       : "No page context available.";
+  const pageContext =
+    !isGeneralChat && safeSnapshot
+      ? wrapUntrustedContent("active_webpage", rawPageContext, guestCorrelationId).wrapped
+      : rawPageContext;
   const system = buildSystemPrompt({
     persona: {
       name: persona.name,
@@ -1626,8 +1703,11 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
     interpretMode: input.intent === "interpret_command",
     chatMode: isGeneralChat ? "general" : "page",
   });
-  const docSummaryBlock = input.uploadedDocumentSummary
-    ? `\n\nUPLOADED DOCUMENT IN SESSION:\nFile: ${input.uploadedDocumentSummary.fileName} (Type: ${input.uploadedDocumentSummary.documentType})\nAvailable extracted fields: ${input.uploadedDocumentSummary.availableFields.join(", ") || "none"}`
+  const rawDocSummary = input.uploadedDocumentSummary
+    ? `UPLOADED DOCUMENT IN SESSION:\nFile: ${input.uploadedDocumentSummary.fileName} (Type: ${input.uploadedDocumentSummary.documentType})\nAvailable extracted fields: ${input.uploadedDocumentSummary.availableFields.join(", ") || "none"}`
+    : "";
+  const docSummaryBlock = rawDocSummary
+    ? `\n\n${wrapUntrustedContent("uploaded_document", rawDocSummary, guestCorrelationId).wrapped}`
     : "";
   const ctxParts: string[] = [];
   if (!isGeneralChat) {
@@ -1656,6 +1736,7 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
 
   const unifiedResult = await runUnifiedOrchestrator({
     instruction: question,
+    userId: "guest",
     intentHint: input.intent,
     snapshot: safeSnapshot,
     history: input.history,
@@ -1713,6 +1794,26 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
   });
 
   try {
+    if (strictSelection && !isGeneralChat && Boolean(input.screenshotBase64)) {
+      const targetCapabilityId =
+        hasExplicitModel && input.preferredModel && input.preferredModel !== "auto"
+          ? input.preferredModel
+          : routingDecision.effectiveProvider;
+      const modalityCheck = checkProviderModalitySupport(targetCapabilityId, ["screenshot"]);
+      if (!modalityCheck.supported) {
+        throw new AiError(
+          "bad_request",
+          modalityCheck.reason ||
+            `Selected provider/model (${targetCapabilityId}) does not support screenshot/vision input.`,
+          {
+            provider: routingDecision.effectiveProvider,
+            resolution:
+              "Select a vision-capable model (e.g. Google Gemini) or turn off Page Vision for text-only providers.",
+          },
+        );
+      }
+    }
+
     const candidates = routingDecision.candidates;
     const useGeminiScreenshot =
       !isGeneralChat &&
@@ -1796,6 +1897,16 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
           }
         : null);
 
+    recordTelemetry({
+      correlationId: guestCorrelationId,
+      type: "model.call",
+      outcome: "ok",
+      userId: "guest",
+      durationMs: result.latencyMs,
+      detail: `Guest ask succeeded via ${result.model} (${result.provider})`,
+      meta: { intent: input.intent, path: unifiedResult.orchestration.path },
+    });
+
     return {
       taskId: null,
       reply,
@@ -1825,6 +1936,10 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
       recommendedMode,
       orchestration: unifiedResult.orchestration,
       sessionContext: unifiedResult.sessionContext,
+      proactiveSuggestions: unifiedResult.proactiveSuggestions ?? [],
+      workflowDraft: unifiedResult.workflowDraft ?? null,
+      costTelemetry:
+        unifiedResult.costTelemetry ?? unifiedResult.sessionContext.costTelemetry ?? null,
     };
   } catch (error) {
     const aiError =
@@ -1842,6 +1957,14 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
       },
       unifiedResult.sessionContext,
     );
+    recordTelemetry({
+      correlationId: guestCorrelationId,
+      type: "error.captured",
+      outcome: "error",
+      userId: "guest",
+      detail: `Guest ask provider failure (${aiError.kind}): ${aiError.userMessage}`,
+      meta: { attribution: shRecord.report.attribution, failureCategory: shRecord.report.failureCategory },
+    });
     const failureDetails = buildProviderFailureDetails({
       aiError,
       effectiveProvider: routingDecision.effectiveProvider,
@@ -1875,6 +1998,10 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
         recommendedMode,
         orchestration: unifiedResult.orchestration,
         sessionContext: unifiedResult.sessionContext,
+        proactiveSuggestions: unifiedResult.proactiveSuggestions ?? [],
+        workflowDraft: unifiedResult.workflowDraft ?? null,
+        costTelemetry:
+          unifiedResult.costTelemetry ?? unifiedResult.sessionContext.costTelemetry ?? null,
         selfHealing: {
           reportId: shRecord.report.id,
           fingerprint: shRecord.report.fingerprint,
@@ -1913,6 +2040,10 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
       recommendedMode,
       orchestration: unifiedResult.orchestration,
       sessionContext: unifiedResult.sessionContext,
+      proactiveSuggestions: unifiedResult.proactiveSuggestions ?? [],
+      workflowDraft: unifiedResult.workflowDraft ?? null,
+      costTelemetry:
+        unifiedResult.costTelemetry ?? unifiedResult.sessionContext.costTelemetry ?? null,
       selfHealing: {
         reportId: shRecord.report.id,
         fingerprint: shRecord.report.fingerprint,

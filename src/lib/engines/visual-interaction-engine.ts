@@ -219,3 +219,217 @@ export function compareVisualSnapshots(
           : "Screenshot comparison skipped (screenshot unavailable).",
   };
 }
+
+export interface DomVisualFusionInput {
+  domRect?: { left: number; top: number; width: number; height: number } | null;
+  visualPoint?: {
+    x: number;
+    y: number;
+    screenshotWidth: number;
+    screenshotHeight: number;
+    scrollX: number;
+    scrollY: number;
+    devicePixelRatio: number;
+    zoomScale: number;
+    capturedAt: number;
+  } | null;
+  viewport: ViewportSnapshotMetrics;
+  isOccluded?: boolean;
+  isDetached?: boolean;
+  nowMs?: number;
+}
+
+export interface DomVisualFusionResult {
+  ok: boolean;
+  source: "dom_and_visual" | "dom_only" | "visual_fallback" | "rejected";
+  targetRect?: { left: number; top: number; width: number; height: number };
+  centerPoint?: { x: number; y: number };
+  armKinematics?: ArmKinematicsResult;
+  callout?: HighlightCalloutCoordinates;
+  reason?: string;
+}
+
+/**
+ * Fuses DOM bounding box with DPR/zoom-scaled visual coordinates, rejecting detached,
+ * occluded, scrolled, resized, or stale visual targets honestly.
+ */
+export function fuseDomAndVisualTarget(input: DomVisualFusionInput): DomVisualFusionResult {
+  if (input.isDetached) {
+    return { ok: false, source: "rejected", reason: "DOM element is detached from document." };
+  }
+  if (input.isOccluded) {
+    return {
+      ok: false,
+      source: "rejected",
+      reason: "Target element is occluded by a modal, overlay, or offscreen container.",
+    };
+  }
+
+  let scaledVisual: { x: number; y: number } | undefined;
+  let visualFailureReason: string | undefined;
+
+  if (input.visualPoint) {
+    const vpScaled = scaleScreenshotPointToViewport(
+      { x: input.visualPoint.x, y: input.visualPoint.y },
+      { width: input.visualPoint.screenshotWidth, height: input.visualPoint.screenshotHeight },
+      { width: input.viewport.width, height: input.viewport.height },
+    );
+    const val = validateCoordinateTarget(
+      {
+        x: vpScaled.x,
+        y: vpScaled.y,
+        scrollX: input.visualPoint.scrollX,
+        scrollY: input.visualPoint.scrollY,
+        viewportWidth: input.viewport.width,
+        viewportHeight: input.viewport.height,
+        devicePixelRatio: input.visualPoint.devicePixelRatio,
+        zoomScale: input.visualPoint.zoomScale,
+        capturedAt: input.visualPoint.capturedAt,
+      },
+      input.viewport,
+      input.nowMs ?? Date.now(),
+    );
+    if (val.valid && val.adjustedX !== undefined && val.adjustedY !== undefined) {
+      scaledVisual = { x: val.adjustedX, y: val.adjustedY };
+    } else {
+      visualFailureReason = val.reason;
+    }
+  }
+
+  if (input.domRect && input.domRect.width > 0 && input.domRect.height > 0) {
+    const centerDom = {
+      x: Math.round(input.domRect.left + input.domRect.width / 2),
+      y: Math.round(input.domRect.top + input.domRect.height / 2),
+    };
+    const armKinematics = calculateZoomAwareArmKinematics(input.domRect, input.viewport);
+    const callout = calculateCalloutCoordinates(input.domRect, input.viewport);
+
+    if (scaledVisual) {
+      const insideDom =
+        scaledVisual.x >= input.domRect.left - 16 &&
+        scaledVisual.x <= input.domRect.left + input.domRect.width + 16 &&
+        scaledVisual.y >= input.domRect.top - 16 &&
+        scaledVisual.y <= input.domRect.top + input.domRect.height + 16;
+
+      return {
+        ok: true,
+        source: insideDom ? "dom_and_visual" : "dom_only",
+        targetRect: input.domRect,
+        centerPoint: centerDom,
+        armKinematics,
+        callout,
+        reason: insideDom
+          ? undefined
+          : "Visual coordinate diverged from DOM bounding rect; anchored safely to live DOM rect.",
+      };
+    }
+
+    return {
+      ok: true,
+      source: "dom_only",
+      targetRect: input.domRect,
+      centerPoint: centerDom,
+      armKinematics,
+      callout,
+      reason: visualFailureReason,
+    };
+  }
+
+  if (scaledVisual) {
+    const syntheticRect = {
+      left: Math.max(0, scaledVisual.x - 16),
+      top: Math.max(0, scaledVisual.y - 16),
+      width: 32,
+      height: 32,
+    };
+    return {
+      ok: true,
+      source: "visual_fallback",
+      targetRect: syntheticRect,
+      centerPoint: scaledVisual,
+      armKinematics: calculateZoomAwareArmKinematics(syntheticRect, input.viewport),
+      callout: calculateCalloutCoordinates(syntheticRect, input.viewport),
+    };
+  }
+
+  return {
+    ok: false,
+    source: "rejected",
+    reason: visualFailureReason || "Neither valid DOM rect nor valid visual coordinates were available.",
+  };
+}
+
+export type ContextualCommandType =
+  | "fill_remaining_fields"
+  | "click_previous_target"
+  | "return_original_tab"
+  | "undo_last_change"
+  | "continue_where_stopped"
+  | "compare_two_pages";
+
+export function parseMultiTurnContextualCommand(instruction: string): {
+  matched: boolean;
+  commandType?: ContextualCommandType;
+  explanation?: string;
+} {
+  const norm = instruction.toLowerCase().trim();
+  if (
+    /\b(?:fill\s+remaining\s+fields|remaining\s+fields|baaki\s+(?:fields?|sab)\s+(?:bhar|fill)\b)/i.test(
+      norm,
+    )
+  ) {
+    return {
+      matched: true,
+      commandType: "fill_remaining_fields",
+      explanation: "Identify remaining unfilled fields from current form session state.",
+    };
+  }
+  if (
+    /\b(?:click\s+(?:that|this|it)\s+instead|us(?:par|ko)\s+click|doosre\s+wale\s+par\s+click)\b/i.test(
+      norm,
+    )
+  ) {
+    return {
+      matched: true,
+      commandType: "click_previous_target",
+      explanation: "Resolve contextual target reference from active session history.",
+    };
+  }
+  if (
+    /\b(?:return\s+to\s+(?:the\s+)?original\s+tab|previous\s+tab|pichle\s+tab\s+(?:par|pe)\s+(?:wapas|jao))\b/i.test(
+      norm,
+    )
+  ) {
+    return {
+      matched: true,
+      commandType: "return_original_tab",
+      explanation: "Switch browser focus back to recorded origin tab.",
+    };
+  }
+  if (/\b(?:undo\s+(?:the\s+)?last\s+change|undo\s+last|pichla\s+change\s+undo|revert\s+last)\b/i.test(norm)) {
+    return {
+      matched: true,
+      commandType: "undo_last_change",
+      explanation: "Restore last reversible field/DOM modification from checkpoint.",
+    };
+  }
+  if (
+    /\b(?:continue\s+where\s+(?:you|we)\s+stopped|jahan\s+ruke\s+the\s+wahan\s+se|resume\s+checkpoint)\b/i.test(
+      norm,
+    )
+  ) {
+    return {
+      matched: true,
+      commandType: "continue_where_stopped",
+      explanation: "Resume multi-step execution from last verified checkpoint.",
+    };
+  }
+  if (/\b(?:compare\s+(?:the\s+)?two\s+pages|compare\s+both\s+tabs|dono\s+pages\s+compare)\b/i.test(norm)) {
+    return {
+      matched: true,
+      commandType: "compare_two_pages",
+      explanation: "Compare structured snapshots between active and origin/secondary tabs.",
+    };
+  }
+  return { matched: false };
+}

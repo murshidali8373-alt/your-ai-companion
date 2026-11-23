@@ -14,8 +14,10 @@ const memorySchema = z.object({
   id: z.string().optional(),
   key: z.string().min(1).max(100),
   value: z.string().min(1).max(2000),
-  kind: z.string().default("preference"),
+  kind: z.string().default("user_preference"),
   source: z.string().default("extension"),
+  scope: z.enum(["short_term", "long_term"]).default("long_term"),
+  instructionContext: z.string().max(500).optional(),
 });
 
 // Ephemeral guest memories
@@ -25,22 +27,26 @@ const guestMemoriesStore: Array<{
   value: string;
   kind: string;
   source: string;
+  scope?: "short_term" | "long_term";
+  outdated?: boolean;
   created_at: string;
 }> = [
   {
     id: "guest_mem_1",
     key: "preferred_language",
     value: "Hinglish / English friendly mix",
-    kind: "preference",
+    kind: "communication_preference",
     source: "default",
+    scope: "long_term",
     created_at: new Date().toISOString(),
   },
   {
     id: "guest_mem_2",
     key: "ecommerce_platform",
     value: "Meesho & Amazon Seller Central",
-    kind: "workflow",
+    kind: "business_context",
     source: "default",
+    scope: "long_term",
     created_at: new Date().toISOString(),
   },
 ];
@@ -73,12 +79,17 @@ export const Route = createFileRoute("/api/public/extension/memories")({
 
         return extensionJsonResponse(request, {
           ok: true,
-          memories: guestMemoriesStore,
+          memories: guestMemoriesStore.filter((m) => !m.outdated),
           isGuest: true,
         });
       },
 
       POST: async ({ request }) => {
+        const {
+          detectDoNotRememberCommand,
+          validateMemoryEntry,
+        } = await import("@/lib/engines/memory-engine");
+
         let auth = null;
         try {
           auth = await verifyBearer(request.headers.get("authorization"));
@@ -91,6 +102,23 @@ export const Route = createFileRoute("/api/public/extension/memories")({
           body = memorySchema.parse(await request.json());
         } catch {
           return extensionJsonResponse(request, { ok: false, message: "Invalid memory payload" }, 400);
+        }
+
+        if (body.instructionContext && detectDoNotRememberCommand(body.instructionContext)) {
+          return extensionJsonResponse(
+            request,
+            { ok: false, message: "Not saved: respected your 'do not remember' instruction." },
+            400,
+          );
+        }
+
+        const validation = validateMemoryEntry(body.key, body.value);
+        if (!validation.valid) {
+          return extensionJsonResponse(
+            request,
+            { ok: false, message: validation.reason || "Memory rejected by security policy." },
+            400,
+          );
         }
 
         const id = body.id || globalThis.crypto.randomUUID();
@@ -120,24 +148,43 @@ export const Route = createFileRoute("/api/public/extension/memories")({
           return extensionJsonResponse(request, { ok: true, memory: data });
         }
 
-        // Guest store
-        const existingIdx = guestMemoriesStore.findIndex((m) => m.key === body.key);
+        // Guest store with duplicate / outdated handling
+        const existingIdx = guestMemoriesStore.findIndex(
+          (m) => !m.outdated && m.key.toLowerCase() === body.key.trim().toLowerCase(),
+        );
         const memItem = {
           id,
-          key: body.key,
-          value: body.value,
+          key: body.key.trim(),
+          value: body.value.trim(),
           kind: body.kind,
           source: body.source,
+          scope: body.scope,
           created_at: new Date().toISOString(),
         };
 
+        let deduplicated = false;
+        let replacedOutdated = false;
         if (existingIdx >= 0) {
-          guestMemoriesStore[existingIdx] = memItem;
-        } else {
-          guestMemoriesStore.unshift(memItem);
+          if (guestMemoriesStore[existingIdx]!.value.toLowerCase() === memItem.value.toLowerCase()) {
+            deduplicated = true;
+            return extensionJsonResponse(request, {
+              ok: true,
+              memory: guestMemoriesStore[existingIdx],
+              deduplicated,
+              isGuest: true,
+            });
+          }
+          guestMemoriesStore[existingIdx]!.outdated = true;
+          replacedOutdated = true;
         }
+        guestMemoriesStore.unshift(memItem);
 
-        return extensionJsonResponse(request, { ok: true, memory: memItem, isGuest: true });
+        return extensionJsonResponse(request, {
+          ok: true,
+          memory: memItem,
+          replacedOutdated,
+          isGuest: true,
+        });
       },
 
       DELETE: async ({ request }) => {

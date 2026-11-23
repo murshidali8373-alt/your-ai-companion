@@ -32,6 +32,24 @@ export interface RecipeStep {
   isConsequential?: boolean | undefined;
 }
 
+export interface ScheduleConfig {
+  type: "manual" | "once" | "recurring" | "condition_trigger";
+  cronExpression?: string | undefined;
+  intervalMinutes?: number | undefined;
+  timeOfDay?: string | undefined;
+  dayOfWeek?: string | undefined;
+  runAtIso?: string | undefined;
+  conditionExpression?: string | undefined;
+  nextRunAtIso?: string | undefined;
+  frequency?: "daily" | "weekly" | "hourly" | "manual" | undefined;
+}
+
+export interface RetryPolicy {
+  maxRetries: number;
+  backoffMs: number;
+  notifyOnFailure: boolean;
+}
+
 export interface WorkflowExecutionRun {
   runId: string;
   recipeId: string;
@@ -41,10 +59,12 @@ export interface WorkflowExecutionRun {
   stepsCompleted: number;
   outputSummary?: string | undefined;
   error?: string | undefined;
+  triggeredBy?: "manual" | "schedule" | "condition" | "api" | undefined;
 }
 
 export interface WorkflowRecipe {
   id: string;
+  userId?: string | undefined;
   name: string;
   description: string;
   origin: string;
@@ -53,16 +73,16 @@ export interface WorkflowRecipe {
   steps: RecipeStep[];
   confidence: number;
   approvedByUser: boolean;
+  enabled?: boolean | undefined;
   createdAt: string;
   lastExecutedAt?: string | undefined;
   executionCount: number;
   executionHistory?: WorkflowExecutionRun[] | undefined;
-  schedule?:
-    | {
-        frequency?: "daily" | "weekly" | "hourly" | "manual" | undefined;
-        timeOfDay?: string | undefined;
-      }
-    | undefined;
+  schedule?: ScheduleConfig | undefined;
+  retryPolicy?: RetryPolicy | undefined;
+  requiredConnectors?: string[] | undefined;
+  requiredFiles?: string[] | undefined;
+  missingDetails?: string[] | undefined;
 }
 
 export interface TaskLogEntry {
@@ -413,4 +433,461 @@ function capitalizeWords(str: string): string {
     .split(/\s+/)
     .map((w) => (w[0] ? w[0].toUpperCase() + w.slice(1).toLowerCase() : ""))
     .join(" ");
+}
+
+export interface ParsedNaturalWorkflow {
+  name: string;
+  scheduleType: ScheduleConfig["type"];
+  scheduleSummary: string;
+  steps: RecipeStep[];
+  needsClarification: boolean;
+  missingDetails: string[];
+  requiredConnectors: string[];
+  requiredFiles: string[];
+  recipe: WorkflowRecipe;
+}
+
+function parseTimeOfDay(text: string): string | undefined {
+  const m = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|baje)?\b/i);
+  if (!m) return undefined;
+  let hh = Number(m[1]);
+  const mm = m[2] ? Number(m[2]) : 0;
+  const suffix = (m[3] || "").toLowerCase();
+  if (Number.isNaN(hh) || hh > 24 || mm > 59) return undefined;
+  if (suffix === "pm" && hh < 12) hh += 12;
+  if (suffix === "am" && hh === 12) hh = 0;
+  if (!suffix && /\b(?:shaam|evening|raat|night)\b/i.test(text) && hh < 12) hh += 12;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+/**
+ * Conversational Workflow Builder: parses English/Hinglish prompts into a
+ * parameterized, safety-gated WorkflowRecipe requiring explicit approval before enabling.
+ */
+export function parseNaturalLanguageWorkflow(
+  prompt: string,
+  options?: {
+    availableFiles?: string[] | undefined;
+    availableConnectors?: string[] | undefined;
+  },
+): ParsedNaturalWorkflow {
+  const clean = prompt.trim();
+  const lower = clean.toLowerCase();
+  const missingDetails: string[] = [];
+
+  // 1. Determine Schedule
+  const timeOfDay = parseTimeOfDay(lower);
+  let schedule: ScheduleConfig = { type: "manual", frequency: "manual" };
+  let scheduleSummary = "Manual execution (on demand)";
+
+  if (/\b(?:every\s+hour|hourly|har\s+ghante|every\s+(\d+)\s+min)/i.test(lower)) {
+    const minMatch = lower.match(/every\s+(\d+)\s+min/i);
+    const intervalMinutes = minMatch ? Math.max(5, Number(minMatch[1])) : 60;
+    schedule = {
+      type: "recurring",
+      frequency: "hourly",
+      intervalMinutes,
+      cronExpression: intervalMinutes === 60 ? "0 * * * *" : `*/${intervalMinutes} * * * *`,
+    };
+    scheduleSummary =
+      intervalMinutes === 60
+        ? "Recurring every hour"
+        : `Recurring every ${intervalMinutes} minutes`;
+  } else if (
+    /\b(?:every\s+week|weekly|har\s+hafte|every\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i.test(
+      lower,
+    )
+  ) {
+    const dayMatch = lower.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
+    schedule = {
+      type: "recurring",
+      frequency: "weekly",
+      dayOfWeek: dayMatch ? dayMatch[1]!.toLowerCase() : "monday",
+      timeOfDay: timeOfDay ?? "09:00",
+      cronExpression: `0 ${(timeOfDay ?? "09:00").split(":")[0]} * * 1`,
+    };
+    scheduleSummary = `Weekly on ${capitalizeWords(schedule.dayOfWeek || "Monday")} at ${schedule.timeOfDay}`;
+  } else if (/\b(?:every\s+day|daily|har\s+roz|rozana|subah|daily\s+at)\b/i.test(lower)) {
+    const t = timeOfDay ?? "09:00";
+    const [hh, mm] = t.split(":");
+    schedule = {
+      type: "recurring",
+      frequency: "daily",
+      timeOfDay: t,
+      cronExpression: `${Number(mm ?? 0)} ${Number(hh ?? 9)} * * *`,
+    };
+    scheduleSummary = `Daily at ${t}`;
+  } else if (/\b(?:tomorrow|once|kal|ek\s+baar)\b/i.test(lower)) {
+    const runAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    if (timeOfDay) {
+      const [hh, mm] = timeOfDay.split(":").map(Number);
+      runAt.setHours(hh || 9, mm || 0, 0, 0);
+    }
+    schedule = {
+      type: "once",
+      frequency: "manual",
+      timeOfDay,
+      runAtIso: runAt.toISOString(),
+    };
+    scheduleSummary = `One-time run (${runAt.toISOString().slice(0, 16).replace("T", " ")})`;
+  } else if (
+    /\b(?:when|if|agar|jab)\b/i.test(lower) &&
+    /[><=]|\b(?:exceeds|drops|changes|arrives)\b/i.test(lower)
+  ) {
+    schedule = {
+      type: "condition_trigger",
+      frequency: "manual",
+      conditionExpression: clean.slice(0, 160),
+    };
+    scheduleSummary = `Condition-triggered: ${clean.slice(0, 80)}`;
+  }
+
+  // 2. Identify Connectors & Files referenced
+  const requiredConnectors: string[] = [];
+  if (/\b(?:gmail|email|mail)\b/i.test(lower)) requiredConnectors.push("gmail");
+  if (/\b(?:google\s+sheets?|spreadsheet)\b/i.test(lower)) requiredConnectors.push("google_sheets");
+  if (/\b(?:google\s+drive|drive)\b/i.test(lower)) requiredConnectors.push("google_drive");
+  if (/\b(?:slack)\b/i.test(lower)) requiredConnectors.push("slack");
+  if (/\b(?:github|repo|pull\s+request|issue)\b/i.test(lower)) requiredConnectors.push("github");
+  if (/\b(?:meesho)\b/i.test(lower)) requiredConnectors.push("meesho_supplier");
+
+  const requiredFiles: string[] = [];
+  const fileMatches = clean.match(/[\w.-]+\.(?:xlsx|csv|docx|pdf|json|tsv)/gi) ?? [];
+  for (const fm of fileMatches) {
+    if (!requiredFiles.includes(fm)) requiredFiles.push(fm);
+  }
+
+  if (options?.availableFiles && requiredFiles.length > 0) {
+    for (const reqFile of requiredFiles) {
+      if (!options.availableFiles.some((f) => f.toLowerCase() === reqFile.toLowerCase())) {
+        missingDetails.push(`Required file "${reqFile}" is not uploaded in workspace yet.`);
+      }
+    }
+  }
+  if (options?.availableConnectors && requiredConnectors.length > 0) {
+    for (const conn of requiredConnectors) {
+      if (conn !== "meesho_supplier" && !options.availableConnectors.includes(conn)) {
+        missingDetails.push(`Connector "${conn}" is not connected yet.`);
+      }
+    }
+  }
+
+  // 3. Build Workflow Steps
+  const steps: RecipeStep[] = [];
+  let order = 1;
+  if (/\b(?:open|check|visit|meesho|orders|portal|website)\b/i.test(lower)) {
+    steps.push({
+      id: `wf_s${order}`,
+      order: order++,
+      label: "Observe & collect live portal records",
+      actionType: "extract_table",
+    });
+  }
+  if (/\b(?:compare|reconcile|spreadsheet|excel|xlsx|csv)\b/i.test(lower)) {
+    steps.push({
+      id: `wf_s${order}`,
+      order: order++,
+      label: "Compare & analyze spreadsheet dataset",
+      actionType: "extract",
+    });
+  }
+  if (/\b(?:report|summary|pdf|docx|export)\b/i.test(lower)) {
+    steps.push({
+      id: `wf_s${order}`,
+      order: order++,
+      label: "Generate structured summary artifact",
+      actionType: "multi_step",
+    });
+  }
+  if (/\b(?:send|email|notify|slack|post|submit|delete)\b/i.test(lower)) {
+    steps.push({
+      id: `wf_s${order}`,
+      order: order++,
+      label: "Send notification or apply consequential update (approval gated)",
+      actionType: "click",
+      isConsequential: true,
+    });
+  }
+  if (steps.length === 0) {
+    if (clean.length < 8) {
+      missingDetails.push("Please specify what action steps this workflow should perform.");
+    } else {
+      steps.push({
+        id: "wf_s1",
+        order: 1,
+        label: clean.slice(0, 100),
+        actionType: "multi_step",
+      });
+    }
+  }
+
+  const name = capitalizeWords(
+    clean
+      .replace(
+        /\b(?:every\s+day|daily|weekly|hourly|har\s+roz|rozana|subah|at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm|baje)?)\b/gi,
+        "",
+      )
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 56) || "Custom Scheduled Workflow",
+  );
+
+  const id = `recipe_nl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`;
+  const recipe: WorkflowRecipe = {
+    id,
+    name,
+    description: clean.slice(0, 240),
+    origin: requiredConnectors.includes("meesho_supplier") ? "supplier.meesho.com" : "*",
+    triggerPhrases: [clean.toLowerCase().slice(0, 80)],
+    steps:
+      steps.length > 0
+        ? steps
+        : [{ id: "wf_s1", order: 1, label: clean.slice(0, 80), actionType: "multi_step" }],
+    confidence: missingDetails.length === 0 ? 0.92 : 0.6,
+    approvedByUser: false,
+    enabled: false,
+    createdAt: new Date().toISOString(),
+    executionCount: 0,
+    executionHistory: [],
+    schedule,
+    retryPolicy: {
+      maxRetries: 2,
+      backoffMs: 1500,
+      notifyOnFailure: true,
+    },
+    requiredConnectors,
+    requiredFiles,
+    missingDetails,
+  };
+
+  return {
+    name: recipe.name,
+    scheduleType: schedule.type,
+    scheduleSummary,
+    steps: recipe.steps,
+    needsClarification: missingDetails.length > 0,
+    missingDetails,
+    requiredConnectors,
+    requiredFiles,
+    recipe,
+  };
+}
+
+/**
+ * Edits a saved workflow naturally (pause, resume, change time/frequency, update retries, rename).
+ */
+export function editWorkflowNaturally(
+  recipe: WorkflowRecipe,
+  instruction: string,
+): { recipe: WorkflowRecipe; changeSummary: string } {
+  const lower = instruction.toLowerCase();
+  const updated: WorkflowRecipe = {
+    ...recipe,
+    schedule: recipe.schedule ? { ...recipe.schedule } : { type: "manual", frequency: "manual" },
+    retryPolicy: recipe.retryPolicy
+      ? { ...recipe.retryPolicy }
+      : { maxRetries: 2, backoffMs: 1500, notifyOnFailure: true },
+  };
+  const changes: string[] = [];
+
+  if (/\b(?:pause|stop|disable|band\s+karo|rok\s+do)\b/i.test(lower)) {
+    updated.enabled = false;
+    changes.push("Paused workflow");
+  } else if (/\b(?:resume|enable|start|chalu\s+karo)\b/i.test(lower)) {
+    if (updated.approvedByUser) {
+      updated.enabled = true;
+      changes.push("Resumed workflow");
+    } else {
+      changes.push("Cannot enable until explicitly approved");
+    }
+  }
+
+  const newTime = parseTimeOfDay(lower);
+  if (newTime) {
+    updated.schedule = {
+      ...updated.schedule,
+      type: "recurring",
+      frequency: updated.schedule?.frequency === "weekly" ? "weekly" : "daily",
+      timeOfDay: newTime,
+      cronExpression: `${Number(newTime.split(":")[1] ?? 0)} ${Number(newTime.split(":")[0] ?? 9)} * * *`,
+    };
+    changes.push(`Updated schedule time to ${newTime}`);
+  }
+
+  const retryMatch = lower.match(/\b(\d+)\s*retr(?:y|ies)\b/i);
+  if (retryMatch) {
+    updated.retryPolicy!.maxRetries = Math.min(5, Math.max(0, Number(retryMatch[1])));
+    changes.push(`Updated maxRetries to ${updated.retryPolicy!.maxRetries}`);
+  }
+
+  const renameMatch = instruction.match(/\brename\s+(?:it\s+)?to\s+["']?([^"'\n]+)["']?/i);
+  if (renameMatch?.[1]) {
+    updated.name = renameMatch[1].trim();
+    changes.push(`Renamed workflow to "${updated.name}"`);
+  }
+
+  return {
+    recipe: updated,
+    changeSummary:
+      changes.length > 0 ? changes.join("; ") : "No editable fields matched instruction.",
+  };
+}
+
+export interface BusinessWorkflowTemplate {
+  id: string;
+  name: string;
+  category: "finance" | "ecommerce" | "inventory" | "procurement" | "executive";
+  description: string;
+  requiredConnectors: string[];
+  parameters: RecipeParameter[];
+  steps: RecipeStep[];
+  defaultSchedule: ScheduleConfig;
+}
+
+export const BUSINESS_WORKFLOW_TEMPLATES: BusinessWorkflowTemplate[] = [
+  {
+    id: "tpl_gst_invoice_reconciliation",
+    name: "GST Invoice & Ledger Reconciliation",
+    category: "finance",
+    description:
+      "Extract invoice rows, verify GST tax totals against uploaded accounting ledger, and flag mismatches without modifying source records.",
+    requiredConnectors: ["google_sheets"],
+    parameters: [
+      { key: "gstRatePercent", label: "Expected GST Rate (%)", type: "number", defaultValue: 18, required: true },
+      { key: "invoiceColumn", label: "Invoice ID Column", type: "string", defaultValue: "invoice_no", required: true },
+    ],
+    defaultSchedule: { type: "recurring", frequency: "weekly", dayOfWeek: "friday", timeOfDay: "17:00" },
+    steps: [
+      { id: "gst_s1", order: 1, label: "Extract invoice table from portal or workspace", actionType: "extract_table" },
+      { id: "gst_s2", order: 2, label: "Reconcile GST sums & missing invoices", actionType: "extract", parameterKey: "invoiceColumn" },
+      { id: "gst_s3", order: 3, label: "Prepare discrepancy audit summary", actionType: "multi_step" },
+    ],
+  },
+  {
+    id: "tpl_order_returns_audit",
+    name: "E-Commerce Order & Returns Audit",
+    category: "ecommerce",
+    description:
+      "Compute return rate, RTO counts, and SKU return anomalies from seller order exports.",
+    requiredConnectors: ["google_sheets"],
+    parameters: [
+      { key: "returnThresholdPct", label: "Alert Threshold (%)", type: "number", defaultValue: 12, required: true },
+    ],
+    defaultSchedule: { type: "recurring", frequency: "daily", timeOfDay: "09:30" },
+    steps: [
+      { id: "ret_s1", order: 1, label: "Collect seller orders & return status rows", actionType: "extract_table" },
+      { id: "ret_s2", order: 2, label: "Calculate SKU return & RTO rate", actionType: "extract", parameterKey: "returnThresholdPct" },
+      { id: "ret_s3", order: 3, label: "Draft returns escalation report (approval required before send)", actionType: "click", isConsequential: true },
+    ],
+  },
+  {
+    id: "tpl_inventory_low_stock_alert",
+    name: "Inventory Low-Stock & Reorder Alert",
+    category: "inventory",
+    description:
+      "Scan stock quantities across warehouse sheets, flag SKUs below threshold, and stage supplier reorder draft.",
+    requiredConnectors: ["slack"],
+    parameters: [
+      { key: "minStockUnits", label: "Low Stock Threshold", type: "number", defaultValue: 10, required: true },
+    ],
+    defaultSchedule: { type: "recurring", frequency: "daily", timeOfDay: "08:00" },
+    steps: [
+      { id: "inv_s1", order: 1, label: "Read inventory sheet & stock levels", actionType: "extract_table" },
+      { id: "inv_s2", order: 2, label: "Flag SKUs at or below threshold", actionType: "extract", parameterKey: "minStockUnits" },
+      { id: "inv_s3", order: 3, label: "Notify purchasing channel after approval", actionType: "click", isConsequential: true },
+    ],
+  },
+  {
+    id: "tpl_supplier_price_variance",
+    name: "Supplier Cost & Price Variance Check",
+    category: "procurement",
+    description:
+      "Compare current supplier quotes against historical PO rates and surface price hikes cleanly.",
+    requiredConnectors: ["google_drive"],
+    parameters: [
+      { key: "maxVariancePct", label: "Allowed Price Variance (%)", type: "number", defaultValue: 5, required: true },
+    ],
+    defaultSchedule: { type: "manual", frequency: "manual" },
+    steps: [
+      { id: "sup_s1", order: 1, label: "Load supplier price sheet & historical baseline", actionType: "extract" },
+      { id: "sup_s2", order: 2, label: "Compute SKU-level price delta & variance %", actionType: "multi_step", parameterKey: "maxVariancePct" },
+    ],
+  },
+  {
+    id: "tpl_daily_executive_kpi",
+    name: "Daily Executive KPI Summary",
+    category: "executive",
+    description:
+      "Aggregate revenue, gross margin, return rate, and open alerts into an executive digest.",
+    requiredConnectors: ["gmail", "google_sheets"],
+    parameters: [
+      { key: "recipientEmail", label: "Digest Recipient", type: "string", defaultValue: "", required: false },
+    ],
+    defaultSchedule: { type: "recurring", frequency: "daily", timeOfDay: "19:00" },
+    steps: [
+      { id: "kpi_s1", order: 1, label: "Compute daily business KPIs deterministically", actionType: "extract" },
+      { id: "kpi_s2", order: 2, label: "Format executive digest & await send confirmation", actionType: "click", isConsequential: true },
+    ],
+  },
+];
+
+export function listBusinessWorkflowTemplates(): BusinessWorkflowTemplate[] {
+  return BUSINESS_WORKFLOW_TEMPLATES.map((t) => ({
+    ...t,
+    parameters: t.parameters.map((p) => ({ ...p })),
+    steps: t.steps.map((s) => ({ ...s })),
+  }));
+}
+
+/**
+ * Instantiates a parameterized business template into a safety-gated WorkflowRecipe.
+ * Always initializes approvedByUser=false and enabled=false so the user must explicitly approve.
+ */
+export function instantiateBusinessTemplate(
+  templateId: string,
+  overrides?: {
+    name?: string | undefined;
+    userId?: string | undefined;
+    parameterValues?: Record<string, string | number | boolean> | undefined;
+    schedule?: ScheduleConfig | undefined;
+  },
+): { recipe: WorkflowRecipe | null; error?: string } {
+  const tpl = BUSINESS_WORKFLOW_TEMPLATES.find((t) => t.id === templateId);
+  if (!tpl) {
+    return { recipe: null, error: `Unknown business template: ${templateId}` };
+  }
+  const paramValues = overrides?.parameterValues ?? {};
+  const parameters: RecipeParameter[] = tpl.parameters.map((p) => ({
+    ...p,
+    defaultValue: paramValues[p.key] ?? p.defaultValue,
+  }));
+  const steps: RecipeStep[] = tpl.steps.map((s) => ({
+    ...s,
+    defaultValue:
+      s.parameterKey && paramValues[s.parameterKey] !== undefined
+        ? String(paramValues[s.parameterKey])
+        : s.defaultValue,
+  }));
+
+  const recipe: WorkflowRecipe = {
+    id: `recipe_${tpl.id}_${Date.now().toString(36)}`,
+    userId: overrides?.userId,
+    name: overrides?.name?.trim() || tpl.name,
+    description: tpl.description,
+    origin: "*",
+    triggerPhrases: [tpl.name.toLowerCase(), tpl.id],
+    parameters,
+    steps,
+    confidence: 0.96,
+    approvedByUser: false,
+    enabled: false,
+    createdAt: new Date().toISOString(),
+    executionCount: 0,
+    executionHistory: [],
+    schedule: overrides?.schedule ?? { ...tpl.defaultSchedule },
+    retryPolicy: { maxRetries: 2, backoffMs: 1500, notifyOnFailure: true },
+    requiredConnectors: [...tpl.requiredConnectors],
+  };
+
+  return { recipe };
 }

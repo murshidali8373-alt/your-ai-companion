@@ -30,6 +30,8 @@ import {
   listRecentCommits,
 } from "@/lib/self-healing/github-workflow.server";
 import { getSelfHealingStore } from "@/lib/self-healing/store.server";
+import { checkApiRateLimit, extractCallerKey } from "@/lib/security/guardrails.server";
+import { recordTelemetry, startTelemetrySpan } from "@/lib/telemetry/observability.server";
 
 const monitoredComponents = [
   "background_sw",
@@ -179,6 +181,29 @@ export const Route = createFileRoute("/api/public/extension/self-heal")({
         });
       },
       POST: async ({ request }) => {
+        const callerKey = extractCallerKey(request, null);
+        const rate = checkApiRateLimit("extension_self_heal", callerKey, {
+          maxRequests: 60,
+          windowMs: 60_000,
+        });
+        if (!rate.allowed) {
+          recordTelemetry({
+            type: "security.block",
+            outcome: "blocked",
+            detail: `Rate limit exceeded on /api/public/extension/self-heal (${callerKey})`,
+          });
+          return extensionJsonResponse(
+            request,
+            {
+              ok: false,
+              error: "rate_limited",
+              message: `Too many self-heal requests. Retry after ${rate.retryAfterSeconds}s.`,
+              retryAfterSeconds: rate.retryAfterSeconds,
+            },
+            429,
+          );
+        }
+
         let parsed: z.infer<typeof postSchema>;
         try {
           parsed = postSchema.parse(await request.json());
@@ -190,11 +215,21 @@ export const Route = createFileRoute("/api/public/extension/self-heal")({
           );
         }
 
+        const span = startTelemetrySpan({
+          type: "error.captured",
+          detail: `Self-heal action: ${parsed.action}`,
+        });
+
         try {
           switch (parsed.action) {
             case "report_error": {
               const session = reportAndTriageError(parsed, {
                 extensionVersion: parsed.extensionVersion,
+              });
+              span.finish("ok", `Triaged ${session.report.failureCategory || session.report.attribution}`, {
+                repairId: session.repairId,
+                attribution: session.report.attribution,
+                failureCategory: session.report.failureCategory,
               });
               return extensionJsonResponse(request, {
                 ok: true,
@@ -278,6 +313,7 @@ export const Route = createFileRoute("/api/public/extension/self-heal")({
             }
           }
         } catch (err) {
+          span.finish("error", err instanceof Error ? err.message : "Self-healing endpoint error.");
           return extensionJsonResponse(
             request,
             {

@@ -13,6 +13,14 @@ import {
   handleExtensionOptions,
 } from "@/lib/extension-cors.server";
 import { verifyBearer } from "@/lib/supabase-bearer.server";
+import {
+  acquireIdempotencyLock,
+  checkApiRateLimit,
+  completeIdempotencyLock,
+  extractCallerKey,
+  releaseIdempotencyLock,
+} from "@/lib/security/guardrails.server";
+import { recordTelemetry, startTelemetrySpan } from "@/lib/telemetry/observability.server";
 
 const elementSchema = z.object({
   ref: z.string().max(24),
@@ -97,6 +105,8 @@ const bodySchema = z.object({
     .optional(),
   sessionContext: z.record(z.unknown()).nullable().optional(),
   activeTabId: z.number().int().nullable().optional(),
+  idempotencyKey: z.string().max(120).optional(),
+  correlationId: z.string().max(80).optional(),
 });
 
 export const Route = createFileRoute("/api/public/extension/ask")({
@@ -105,6 +115,28 @@ export const Route = createFileRoute("/api/public/extension/ask")({
       OPTIONS: async ({ request }) => handleExtensionOptions(request),
       POST: async ({ request }) => {
         const auth = await verifyBearer(request.headers.get("authorization"));
+        const callerKey = extractCallerKey(request, auth?.userId ?? null);
+        const rate = checkApiRateLimit("extension_ask", callerKey, {
+          maxRequests: 60,
+          windowMs: 60_000,
+        });
+        if (!rate.allowed) {
+          recordTelemetry({
+            type: "security.block",
+            outcome: "blocked",
+            userId: auth?.userId ?? "guest",
+            detail: `Rate limit exceeded on /api/public/extension/ask (${callerKey})`,
+          });
+          return extensionJsonResponse(
+            request,
+            {
+              error: "rate_limited",
+              message: `Too many requests. Please retry after ${rate.retryAfterSeconds}s.`,
+              retryAfterSeconds: rate.retryAfterSeconds,
+            },
+            429,
+          );
+        }
 
         let parsed: z.infer<typeof bodySchema>;
         try {
@@ -115,6 +147,42 @@ export const Route = createFileRoute("/api/public/extension/ask")({
             { error: "bad_request", message: "That request was malformed." },
             400,
           );
+        }
+
+        const span = startTelemetrySpan({
+          correlationId: parsed.correlationId,
+          type: "task.start",
+          userId: auth?.userId ?? "guest",
+          detail: `Ask (${parsed.intent}): ${parsed.question.slice(0, 120)}`,
+        });
+
+        const idemScopeKey = parsed.idempotencyKey
+          ? `${auth?.userId ?? "guest"}:${parsed.idempotencyKey}`
+          : null;
+        const idem = acquireIdempotencyLock("extension_ask", idemScopeKey);
+        if (idem.state === "in_flight") {
+          span.finish("blocked", "Duplicate in-flight ask request rejected");
+          return extensionJsonResponse(
+            request,
+            {
+              error: "duplicate_in_flight",
+              message: "An identical request is already executing.",
+              correlationId: span.correlationId,
+            },
+            409,
+          );
+        }
+        if (idem.state === "replay") {
+          span.finish("ok", "Returned idempotent cached ask response");
+          const replayPayload =
+            idem.cachedResult && typeof idem.cachedResult === "object"
+              ? {
+                  ...(idem.cachedResult as Record<string, unknown>),
+                  idempotentReplay: true,
+                  correlationId: span.correlationId,
+                }
+              : idem.cachedResult;
+          return extensionJsonResponse(request, replayPayload);
         }
 
         try {
@@ -137,7 +205,10 @@ export const Route = createFileRoute("/api/public/extension/ask")({
               sessionContext: (parsed.sessionContext ?? null) as never,
               activeTabId: parsed.activeTabId ?? null,
             });
-            return extensionJsonResponse(request, result);
+            const payload = { ...result, correlationId: span.correlationId };
+            completeIdempotencyLock(idem.lockKey, payload);
+            span.finish("ok", `Completed ask for user (${result.activeProvider ?? "unknown"})`);
+            return extensionJsonResponse(request, payload);
           } else {
             // Guest mode: unauthenticated users can still inspect pages and ask Buddy
             const result = await askGuest({
@@ -158,9 +229,14 @@ export const Route = createFileRoute("/api/public/extension/ask")({
               sessionContext: (parsed.sessionContext ?? null) as never,
               activeTabId: parsed.activeTabId ?? null,
             });
-            return extensionJsonResponse(request, { ...result, guest: true });
+            const payload = { ...result, guest: true, correlationId: span.correlationId };
+            completeIdempotencyLock(idem.lockKey, payload);
+            span.finish("ok", `Completed guest ask (${result.activeProvider ?? "unknown"})`);
+            return extensionJsonResponse(request, payload);
           }
         } catch (error) {
+          releaseIdempotencyLock(idem.lockKey);
+          span.finish("error", error instanceof Error ? error.message : "Ask execution error");
           console.error("[extension/ask]", error);
           const message =
             error instanceof Error
@@ -170,7 +246,7 @@ export const Route = createFileRoute("/api/public/extension/ask")({
                 : "Buddy encountered an unexpected server error. Try again.";
           return extensionJsonResponse(
             request,
-            { error: "server_error", message },
+            { error: "server_error", message, correlationId: span.correlationId },
             500,
           );
         }

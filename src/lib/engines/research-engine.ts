@@ -61,7 +61,19 @@ export interface StructuredResearchReport {
   conflictingFindings: Array<{ claim: string; note: string }>;
   unansweredQuestions: string[];
   citations: Array<{ number: number; title: string; url: string; domain: string }>;
+  flaggedUntrustedSignals?: number;
   markdownReport: string;
+}
+
+const UNTRUSTED_INJECTION_RE =
+  /\b(?:ignore|disregard|forget|bypass)\s+(?:all\s+)?(?:previous|prior|system|above|security)\s+(?:instructions?|rules?|prompts?|policies?)\b|(?:^|\n)\s*(?:SYSTEM|DEVELOPER|ASSISTANT)\s*:\s*(?:override|you are now|must execute)/i;
+
+function sanitizeResearchSnippet(snip: string): { text: string; flagged: boolean } {
+  const flagged = UNTRUSTED_INJECTION_RE.test(snip);
+  const text = flagged
+    ? `[UNTRUSTED_SNIPPET_NEUTRALIZED] ${snip.replace(/(?:SYSTEM|DEVELOPER|ASSISTANT)\s*:/gi, "[UNTRUSTED_LABEL]:")}`
+    : snip;
+  return { text, flagged };
 }
 
 /**
@@ -87,12 +99,22 @@ export function analyzeMultiSourceResearch(params: {
   };
 
   const allCitationsMap = new Map<string, { title: string; url: string; domain: string }>();
+  let flaggedUntrustedSignals = 0;
+
+  const cleanSources: ResearchSource[] = sources.map((src) => ({
+    ...src,
+    snippets: src.snippets.map((s) => {
+      const res = sanitizeResearchSnippet(s);
+      if (res.flagged) flaggedUntrustedSignals += 1;
+      return res.text;
+    }),
+  }));
 
   claimsToEvaluate.forEach((item, idx) => {
     const claimLower = item.claim.toLowerCase();
     const matchingCitations: VerifiedCitation[] = [];
 
-    for (const src of sources) {
+    for (const src of cleanSources) {
       for (const snip of src.snippets) {
         const words = claimLower.split(/\s+/).filter((w) => w.length > 3);
         const matchCount = words.filter((w) => snip.toLowerCase().includes(w)).length;
@@ -202,6 +224,175 @@ export function analyzeMultiSourceResearch(params: {
     conflictingFindings,
     unansweredQuestions,
     citations,
+    flaggedUntrustedSignals,
     markdownReport: reportLines.join("\n"),
   };
+}
+
+export interface DetectedSourceContradiction {
+  topicToken: string;
+  sourceA: { title: string; url: string; excerpt: string; numbers: string[] };
+  sourceB: { title: string; url: string; excerpt: string; numbers: string[] };
+  reason: string;
+}
+
+/**
+ * Automatically detects conflicting quantitative figures or opposing assertions across ResearchSources.
+ */
+export function detectSourceContradictions(
+  sources: ResearchSource[],
+): DetectedSourceContradiction[] {
+  const contradictions: DetectedSourceContradiction[] = [];
+  if (sources.length < 2) return contradictions;
+
+  const numRe = /\b\d+(?:\.\d+)?%?/g;
+  const entries = sources.flatMap((s) =>
+    s.snippets.map((snip) => ({
+      source: s,
+      snip,
+      lower: snip.toLowerCase(),
+      numbers: (snip.match(numRe) ?? []) as string[],
+      words: new Set(
+        snip
+          .toLowerCase()
+          .replace(/[^a-z0-9\s]/g, " ")
+          .split(/\s+/)
+          .filter((w) => w.length > 4),
+      ),
+    })),
+  );
+
+  for (let i = 0; i < entries.length; i++) {
+    for (let j = i + 1; j < entries.length; j++) {
+      const a = entries[i]!;
+      const b = entries[j]!;
+      if (a.source.id === b.source.id) continue;
+
+      const shared = [...a.words].filter((w) => b.words.has(w));
+      if (shared.length < 2) continue;
+
+      // Numeric disagreement on shared context
+      if (a.numbers.length > 0 && b.numbers.length > 0) {
+        const diffNum = a.numbers.some((na) => !b.numbers.includes(na));
+        if (diffNum) {
+          contradictions.push({
+            topicToken: shared.slice(0, 3).join(", "),
+            sourceA: {
+              title: a.source.title,
+              url: a.source.url,
+              excerpt: a.snip.slice(0, 180),
+              numbers: a.numbers,
+            },
+            sourceB: {
+              title: b.source.title,
+              url: b.source.url,
+              excerpt: b.snip.slice(0, 180),
+              numbers: b.numbers,
+            },
+            reason: `Different numeric values (${a.numbers.join(", ")} vs ${b.numbers.join(", ")}) for "${shared.slice(0, 2).join(" ")}".`,
+          });
+          continue;
+        }
+      }
+
+      // Negation polarity disagreement
+      const negA = /\b(?:not|no|never|without|zero|none|false)\b/i.test(a.lower);
+      const negB = /\b(?:not|no|never|without|zero|none|false)\b/i.test(b.lower);
+      if (negA !== negB && shared.length >= 3) {
+        contradictions.push({
+          topicToken: shared.slice(0, 3).join(", "),
+          sourceA: {
+            title: a.source.title,
+            url: a.source.url,
+            excerpt: a.snip.slice(0, 180),
+            numbers: a.numbers,
+          },
+          sourceB: {
+            title: b.source.title,
+            url: b.source.url,
+            excerpt: b.snip.slice(0, 180),
+            numbers: b.numbers,
+          },
+          reason: `Opposing polarity detected between ${a.source.domain} and ${b.source.domain}.`,
+        });
+      }
+    }
+  }
+  return contradictions;
+}
+
+const PRIVATE_IP_OR_HOST_RE =
+  /^(?:localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|::1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|169\.254\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|.*\.local|.*\.internal)$/i;
+
+export function validatePublicResearchUrl(rawUrl: string): {
+  valid: boolean;
+  url?: URL;
+  reason?: string;
+} {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return { valid: false, reason: "Only http/https public research URLs are permitted." };
+    }
+    if (PRIVATE_IP_OR_HOST_RE.test(parsed.hostname)) {
+      return { valid: false, reason: "Blocked private/loopback/metadata host for SSRF safety." };
+    }
+    return { valid: true, url: parsed };
+  } catch {
+    return { valid: false, reason: "Malformed URL." };
+  }
+}
+
+export async function collectWebResearchSources(
+  urls: string[],
+  fetchFn: typeof fetch = fetch,
+): Promise<{ sources: ResearchSource[]; errors: Array<{ url: string; reason: string }> }> {
+  const sources: ResearchSource[] = [];
+  const errors: Array<{ url: string; reason: string }> = [];
+
+  await Promise.all(
+    urls.slice(0, 6).map(async (rawUrl, idx) => {
+      const check = validatePublicResearchUrl(rawUrl);
+      if (!check.valid || !check.url) {
+        errors.push({ url: rawUrl, reason: check.reason || "Invalid URL" });
+        return;
+      }
+      try {
+        const res = await fetchFn(check.url.toString(), {
+          method: "GET",
+          headers: { "User-Agent": "AI-Buddy-Research/2.0" },
+          signal: AbortSignal.timeout(6000),
+        });
+        if (!res.ok) {
+          errors.push({ url: rawUrl, reason: `HTTP ${res.status}` });
+          return;
+        }
+        const html = await res.text();
+        const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+        const title = titleMatch?.[1]?.replace(/\s+/g, " ").trim() || check.url.hostname;
+        const plain = html
+          .replace(/<script[\s\S]*?<\/script>/gi, " ")
+          .replace(/<style[\s\S]*?<\/style>/gi, " ")
+          .replace(/<[^>]+>/g, "\n")
+          .split(/\n+/)
+          .map((l) => l.replace(/\s+/g, " ").trim())
+          .filter((l) => l.length > 40 && l.length < 400);
+
+        sources.push({
+          id: `web_src_${idx + 1}`,
+          url: check.url.toString(),
+          title,
+          domain: check.url.hostname,
+          snippets: plain.slice(0, 8).map((s) => sanitizeResearchSnippet(s).text),
+        });
+      } catch (err) {
+        errors.push({
+          url: rawUrl,
+          reason: err instanceof Error ? err.message : "Network fetch failed",
+        });
+      }
+    }),
+  );
+
+  return { sources, errors };
 }

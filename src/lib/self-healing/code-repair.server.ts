@@ -39,6 +39,7 @@ import {
   type RepairSession,
   type VerificationCheckResult,
 } from "./store.server";
+import { assertSafeWorkspacePath } from "@/lib/security/guardrails.server";
 
 const execFileAsync = promisify(execFile);
 
@@ -101,8 +102,12 @@ export function resolveSafeRepoPath(
 
   const resolvedRoot = path.resolve(rootDir);
   const resolvedTarget = path.resolve(resolvedRoot, ...segments);
-  if (!resolvedTarget.startsWith(resolvedRoot + path.sep)) {
-    return { ok: false, reason: `Resolved path escapes workspace root: "${relPath}".` };
+  const pathGuard = assertSafeWorkspacePath(segments.join("/"), resolvedRoot);
+  if (!pathGuard.safe || !resolvedTarget.startsWith(resolvedRoot + path.sep)) {
+    return {
+      ok: false,
+      reason: pathGuard.reason || `Resolved path escapes workspace root: "${relPath}".`,
+    };
   }
 
   return {

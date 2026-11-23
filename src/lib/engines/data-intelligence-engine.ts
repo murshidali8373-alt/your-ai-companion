@@ -369,3 +369,595 @@ export function generateStructuredReport(
   });
   return [header, sep, ...rows].join("\n");
 }
+
+export type ValueProvenance = "extracted" | "calculated" | "estimated" | "unknown";
+
+export interface ProvenanceTaggedValue<T = unknown> {
+  value: T;
+  provenance: ValueProvenance;
+  source?: string;
+}
+
+export function tagWithProvenance<T>(
+  value: T,
+  provenance: ValueProvenance,
+  source?: string,
+): ProvenanceTaggedValue<T> {
+  return { value, provenance, source };
+}
+
+export interface MissingValuesReport {
+  totalRows: number;
+  columnsWithMissing: Array<{
+    column: string;
+    missingCount: number;
+    missingRatio: number;
+    sampleMissingRowIndices: number[];
+  }>;
+}
+
+export function detectMissingValuesReport(
+  rows: Array<Record<string, unknown>>,
+): MissingValuesReport {
+  if (!rows.length) return { totalRows: 0, columnsWithMissing: [] };
+  const keys = Array.from(new Set(rows.flatMap((r) => Object.keys(r))));
+  const columnsWithMissing: MissingValuesReport["columnsWithMissing"] = [];
+
+  for (const col of keys) {
+    const missingIndices: number[] = [];
+    rows.forEach((row, idx) => {
+      const v = row[col];
+      if (v === null || v === undefined || (typeof v === "string" && v.trim() === "")) {
+        missingIndices.push(idx);
+      }
+    });
+    if (missingIndices.length > 0) {
+      columnsWithMissing.push({
+        column: col,
+        missingCount: missingIndices.length,
+        missingRatio: Number((missingIndices.length / rows.length).toFixed(4)),
+        sampleMissingRowIndices: missingIndices.slice(0, 10),
+      });
+    }
+  }
+  return { totalRows: rows.length, columnsWithMissing };
+}
+
+export interface StatisticalOutlier {
+  rowIndex: number;
+  recordId: string;
+  column: string;
+  value: number;
+  method: "iqr" | "zscore";
+  bounds: { lower: number; upper: number };
+  provenance: "calculated";
+}
+
+export function detectStatisticalOutliers(
+  rows: Array<Record<string, unknown>>,
+  numericColumn: string,
+  options?: { idKey?: string; zThreshold?: number },
+): StatisticalOutlier[] {
+  const idKey = options?.idKey || "id";
+  const zThreshold = options?.zThreshold ?? 2.0;
+  const pts: Array<{ rowIndex: number; recordId: string; value: number }> = [];
+
+  rows.forEach((row, idx) => {
+    const raw = row[numericColumn];
+    const num =
+      typeof raw === "number"
+        ? raw
+        : typeof raw === "string" && raw.trim() !== ""
+          ? Number(raw.replace(/[₹$,]/g, ""))
+          : NaN;
+    if (!Number.isNaN(num) && Number.isFinite(num)) {
+      pts.push({
+        rowIndex: idx,
+        recordId: String(row[idKey] ?? row["sku"] ?? `row_${idx + 1}`),
+        value: num,
+      });
+    }
+  });
+
+  if (pts.length < 4) return [];
+
+  const sorted = [...pts].map((p) => p.value).sort((a, b) => a - b);
+  const q1 = sorted[Math.floor(sorted.length * 0.25)]!;
+  const q3 = sorted[Math.floor(sorted.length * 0.75)]!;
+  const iqr = q3 - q1;
+
+  const mean = sorted.reduce((a, b) => a + b, 0) / sorted.length;
+  const variance = sorted.reduce((acc, v) => acc + (v - mean) ** 2, 0) / sorted.length;
+  const stdDev = Math.sqrt(variance);
+
+  const outliers: StatisticalOutlier[] = [];
+  if (iqr > 0) {
+    const lower = Number((q1 - 1.5 * iqr).toFixed(2));
+    const upper = Number((q3 + 1.5 * iqr).toFixed(2));
+    for (const p of pts) {
+      if (p.value < lower || p.value > upper) {
+        outliers.push({
+          rowIndex: p.rowIndex,
+          recordId: p.recordId,
+          column: numericColumn,
+          value: p.value,
+          method: "iqr",
+          bounds: { lower, upper },
+          provenance: "calculated",
+        });
+      }
+    }
+  } else if (stdDev > 0) {
+    const lower = Number((mean - zThreshold * stdDev).toFixed(2));
+    const upper = Number((mean + zThreshold * stdDev).toFixed(2));
+    for (const p of pts) {
+      const z = Math.abs((p.value - mean) / stdDev);
+      if (z >= zThreshold) {
+        outliers.push({
+          rowIndex: p.rowIndex,
+          recordId: p.recordId,
+          column: numericColumn,
+          value: p.value,
+          method: "zscore",
+          bounds: { lower, upper },
+          provenance: "calculated",
+        });
+      }
+    }
+  }
+  return outliers;
+}
+
+export interface FilterRule {
+  column: string;
+  operator: "eq" | "neq" | "contains" | "gt" | "gte" | "lt" | "lte";
+  value: unknown;
+}
+
+export function filterSortGroupRecords(
+  rows: Array<Record<string, unknown>>,
+  params: {
+    filters?: FilterRule[];
+    sortBy?: { column: string; direction?: "asc" | "desc" };
+    groupBy?: string;
+    numericSumColumn?: string;
+  },
+): {
+  filteredRows: Array<Record<string, unknown>>;
+  groups: Array<{
+    groupKey: string;
+    count: number;
+    sum?: number;
+    avg?: number;
+    provenance: "calculated";
+  }>;
+  provenance: "calculated";
+} {
+  let current = [...rows];
+
+  if (params.filters && params.filters.length > 0) {
+    current = current.filter((row) =>
+      params.filters!.every((f) => {
+        const cell = row[f.column];
+        if (f.operator === "eq")
+          return String(cell ?? "").toLowerCase() === String(f.value ?? "").toLowerCase();
+        if (f.operator === "neq")
+          return String(cell ?? "").toLowerCase() !== String(f.value ?? "").toLowerCase();
+        if (f.operator === "contains") {
+          return String(cell ?? "")
+            .toLowerCase()
+            .includes(String(f.value ?? "").toLowerCase());
+        }
+        const nCell = Number(cell);
+        const nVal = Number(f.value);
+        if (Number.isNaN(nCell) || Number.isNaN(nVal)) return false;
+        if (f.operator === "gt") return nCell > nVal;
+        if (f.operator === "gte") return nCell >= nVal;
+        if (f.operator === "lt") return nCell < nVal;
+        if (f.operator === "lte") return nCell <= nVal;
+        return true;
+      }),
+    );
+  }
+
+  if (params.sortBy) {
+    const { column, direction = "asc" } = params.sortBy;
+    const factor = direction === "desc" ? -1 : 1;
+    current.sort((a, b) => {
+      const av = a[column];
+      const bv = b[column];
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * factor;
+      return String(av ?? "").localeCompare(String(bv ?? "")) * factor;
+    });
+  }
+
+  const groups: Array<{
+    groupKey: string;
+    count: number;
+    sum?: number;
+    avg?: number;
+    provenance: "calculated";
+  }> = [];
+
+  if (params.groupBy) {
+    const map = new Map<string, Array<Record<string, unknown>>>();
+    for (const r of current) {
+      const k = String(r[params.groupBy] ?? "unknown");
+      const list = map.get(k) ?? [];
+      list.push(r);
+      map.set(k, list);
+    }
+    for (const [groupKey, items] of map.entries()) {
+      let sum: number | undefined;
+      let avg: number | undefined;
+      if (params.numericSumColumn) {
+        const nums = items
+          .map((x) => Number(x[params.numericSumColumn!]))
+          .filter((n) => !Number.isNaN(n));
+        if (nums.length > 0) {
+          sum = Number(nums.reduce((a, b) => a + b, 0).toFixed(2));
+          avg = Number((sum / nums.length).toFixed(2));
+        }
+      }
+      groups.push({ groupKey, count: items.length, sum, avg, provenance: "calculated" });
+    }
+  }
+
+  return { filteredRows: current, groups, provenance: "calculated" };
+}
+
+export interface BusinessMetricValue {
+  value: number;
+  formula: string;
+  sourceColumns: string[];
+  provenance: "calculated";
+}
+
+export interface BusinessMetricsReport {
+  rowCount: number;
+  metrics: {
+    revenue?: BusinessMetricValue | undefined;
+    cost?: BusinessMetricValue | undefined;
+    grossProfit?: BusinessMetricValue | undefined;
+    netProfit?: BusinessMetricValue | undefined;
+    marginPercent?: BusinessMetricValue | undefined;
+    returnRatePercent?: BusinessMetricValue | undefined;
+    totalUnits?: BusinessMetricValue | undefined;
+    inventoryTurnover?: BusinessMetricValue | undefined;
+  };
+  lowStockSkus: Array<{ sku: string; stock: number; threshold: number }>;
+  columnProvenance: Record<string, { role: string; rowMatches: number }>;
+  missingMetrics: Array<{ metric: string; reason: string }>;
+  missingColumns: string[];
+  summary: string;
+}
+
+function parseNumericCell(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const cleaned = v.replace(/[₹$,%\s,]/g, "").trim();
+    if (!cleaned) return null;
+    const n = Number(cleaned);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function findMatchingColumn(keys: string[], candidates: string[]): string | undefined {
+  const lowerMap = new Map(keys.map((k) => [k.toLowerCase().trim(), k]));
+  for (const c of candidates) {
+    const exact = lowerMap.get(c);
+    if (exact) return exact;
+  }
+  for (const k of keys) {
+    const kl = k.toLowerCase();
+    if (candidates.some((c) => kl.includes(c))) return k;
+  }
+  return undefined;
+}
+
+/**
+ * Deterministic Business Intelligence KPI calculator.
+ * Never invents or estimates COGS/cost/tax columns when absent; reports missingColumns honestly.
+ */
+export function computeBusinessMetrics(
+  rows: Array<Record<string, unknown>>,
+  options?: {
+    revenueColumn?: string | undefined;
+    costColumn?: string | undefined;
+    expenseColumn?: string | undefined;
+    quantityColumn?: string | undefined;
+    stockColumn?: string | undefined;
+    statusColumn?: string | undefined;
+    skuColumn?: string | undefined;
+    lowStockThreshold?: number | undefined;
+  },
+): BusinessMetricsReport {
+  if (!rows || rows.length === 0) {
+    return {
+      rowCount: 0,
+      metrics: {},
+      lowStockSkus: [],
+      columnProvenance: {},
+      missingMetrics: [{ metric: "all", reason: "No rows provided for business KPI analysis." }],
+      missingColumns: ["revenue", "cost", "quantity", "stock", "status"],
+      summary: "No rows supplied for business KPI computation.",
+    };
+  }
+
+  const allKeys = Array.from(new Set(rows.flatMap((r) => Object.keys(r))));
+  const revCol =
+    options?.revenueColumn ??
+    findMatchingColumn(allKeys, ["revenue", "sales", "total_amount", "amount", "price", "gross_sales"]);
+  const costCol =
+    options?.costColumn ?? findMatchingColumn(allKeys, ["cogs", "cost_price", "unit_cost", "cost"]);
+  const expCol =
+    options?.expenseColumn ?? findMatchingColumn(allKeys, ["expense", "operating_expense", "fee", "shipping_cost"]);
+  const qtyCol =
+    options?.quantityColumn ?? findMatchingColumn(allKeys, ["quantity", "qty", "units", "units_sold"]);
+  const stockCol =
+    options?.stockColumn ?? findMatchingColumn(allKeys, ["stock", "inventory", "on_hand", "stock_qty"]);
+  const statusCol =
+    options?.statusColumn ?? findMatchingColumn(allKeys, ["status", "order_status", "state"]);
+  const skuCol =
+    options?.skuColumn ?? findMatchingColumn(allKeys, ["sku", "product_id", "item_id", "id"]);
+  const threshold = options?.lowStockThreshold ?? 10;
+
+  const columnProvenance: Record<string, { role: string; rowMatches: number }> = {};
+  const missingColumns: string[] = [];
+  const missingMetrics: Array<{ metric: string; reason: string }> = [];
+  const metrics: BusinessMetricsReport["metrics"] = {};
+
+  const sumCol = (col: string, role: string): { total: number; matches: number } => {
+    let total = 0;
+    let matches = 0;
+    for (const r of rows) {
+      const n = parseNumericCell(r[col]);
+      if (n !== null) {
+        total += n;
+        matches++;
+      }
+    }
+    columnProvenance[col] = { role, rowMatches: matches };
+    return { total: Number(total.toFixed(2)), matches };
+  };
+
+  let revTotal: number | null = null;
+  if (revCol) {
+    const res = sumCol(revCol, "revenue");
+    if (res.matches > 0) {
+      revTotal = res.total;
+      metrics.revenue = {
+        value: revTotal,
+        formula: `SUM(${revCol})`,
+        sourceColumns: [revCol],
+        provenance: "calculated",
+      };
+    }
+  } else {
+    missingColumns.push("revenue");
+    missingMetrics.push({ metric: "revenue", reason: "No revenue/sales/amount column found." });
+  }
+
+  let costTotal: number | null = null;
+  if (costCol) {
+    const res = sumCol(costCol, "cost");
+    if (res.matches > 0) {
+      costTotal = res.total;
+      metrics.cost = {
+        value: costTotal,
+        formula: `SUM(${costCol})`,
+        sourceColumns: [costCol],
+        provenance: "calculated",
+      };
+    }
+  } else {
+    missingColumns.push("cost");
+    missingMetrics.push({
+      metric: "cost",
+      reason: "No cost/COGS column found; refusing to estimate cost.",
+    });
+  }
+
+  let expTotal = 0;
+  if (expCol && expCol !== costCol) {
+    const res = sumCol(expCol, "expense");
+    expTotal = res.total;
+  }
+
+  if (revTotal !== null && costTotal !== null) {
+    const grossProfit = Number((revTotal - costTotal).toFixed(2));
+    metrics.grossProfit = {
+      value: grossProfit,
+      formula: `SUM(${revCol}) - SUM(${costCol})`,
+      sourceColumns: [revCol!, costCol!],
+      provenance: "calculated",
+    };
+
+    const netProfit = Number((grossProfit - expTotal).toFixed(2));
+    metrics.netProfit = {
+      value: netProfit,
+      formula: expCol && expCol !== costCol
+        ? `SUM(${revCol}) - SUM(${costCol}) - SUM(${expCol})`
+        : `SUM(${revCol}) - SUM(${costCol})`,
+      sourceColumns: expCol && expCol !== costCol ? [revCol!, costCol!, expCol] : [revCol!, costCol!],
+      provenance: "calculated",
+    };
+
+    if (revTotal !== 0) {
+      metrics.marginPercent = {
+        value: Number(((grossProfit / revTotal) * 100).toFixed(2)),
+        formula: `(grossProfit / revenue) * 100`,
+        sourceColumns: [revCol!, costCol!],
+        provenance: "calculated",
+      };
+    } else {
+      missingMetrics.push({ metric: "marginPercent", reason: "Total revenue is 0." });
+    }
+  } else {
+    if (revTotal === null || costTotal === null) {
+      missingMetrics.push({
+        metric: "grossProfit",
+        reason: "Requires both revenue and cost/COGS columns.",
+      });
+      missingMetrics.push({
+        metric: "marginPercent",
+        reason: "Requires both revenue and cost/COGS columns.",
+      });
+    }
+  }
+
+  let unitsTotal: number | null = null;
+  if (qtyCol) {
+    const res = sumCol(qtyCol, "quantity");
+    if (res.matches > 0) {
+      unitsTotal = res.total;
+      metrics.totalUnits = {
+        value: unitsTotal,
+        formula: `SUM(${qtyCol})`,
+        sourceColumns: [qtyCol],
+        provenance: "calculated",
+      };
+    }
+  } else {
+    missingColumns.push("quantity");
+  }
+
+  if (statusCol) {
+    let returned = 0;
+    let totalStatus = 0;
+    for (const r of rows) {
+      const rawSt = r[statusCol];
+      if (rawSt !== undefined && rawSt !== null && String(rawSt).trim() !== "") {
+        totalStatus++;
+        if (/\b(?:return|returned|rto|refund|refunded)\b/i.test(String(rawSt))) {
+          returned++;
+        }
+      }
+    }
+    columnProvenance[statusCol] = { role: "status", rowMatches: totalStatus };
+    if (totalStatus > 0) {
+      metrics.returnRatePercent = {
+        value: Number(((returned / totalStatus) * 100).toFixed(2)),
+        formula: `(COUNT(status IN [return,rto,refund]) / COUNT(status)) * 100`,
+        sourceColumns: [statusCol],
+        provenance: "calculated",
+      };
+    }
+  } else {
+    missingColumns.push("status");
+    missingMetrics.push({ metric: "returnRatePercent", reason: "No status column found." });
+  }
+
+  const lowStockSkus: Array<{ sku: string; stock: number; threshold: number }> = [];
+  if (stockCol) {
+    const res = sumCol(stockCol, "stock");
+    rows.forEach((r, idx) => {
+      const stk = parseNumericCell(r[stockCol]);
+      if (stk !== null && stk <= threshold) {
+        const skuVal = skuCol ? String(r[skuCol] ?? `row_${idx + 1}`) : `row_${idx + 1}`;
+        lowStockSkus.push({ sku: skuVal, stock: stk, threshold });
+      }
+    });
+    const avgInv = res.matches > 0 ? res.total / res.matches : 0;
+    const turnoverNumerator = costTotal ?? unitsTotal;
+    if (turnoverNumerator !== null && avgInv > 0) {
+      metrics.inventoryTurnover = {
+        value: Number((turnoverNumerator / avgInv).toFixed(2)),
+        formula: `${costTotal !== null ? `SUM(${costCol})` : `SUM(${qtyCol})`} / AVG(${stockCol})`,
+        sourceColumns: [costTotal !== null ? costCol! : qtyCol!, stockCol],
+        provenance: "calculated",
+      };
+    } else {
+      missingMetrics.push({
+        metric: "inventoryTurnover",
+        reason: "Requires positive average stock plus cost or units sold.",
+      });
+    }
+  } else {
+    missingColumns.push("stock");
+    missingMetrics.push({ metric: "inventoryTurnover", reason: "No stock/inventory column found." });
+  }
+
+  const computedNames = Object.keys(metrics);
+  const summary =
+    `Computed ${computedNames.length} KPI(s) across ${rows.length} row(s)` +
+    (lowStockSkus.length > 0 ? `; ${lowStockSkus.length} low-stock SKU(s)` : "") +
+    (missingColumns.length > 0 ? `; missing columns: ${missingColumns.join(", ")}` : "") +
+    ".";
+
+  return {
+    rowCount: rows.length,
+    metrics,
+    lowStockSkus,
+    columnProvenance,
+    missingMetrics,
+    missingColumns,
+    summary,
+  };
+}
+
+export interface PeriodComparisonDelta {
+  metric: string;
+  previous: number;
+  current: number;
+  delta: number;
+  percentChange: number | null;
+  provenance: "calculated";
+}
+
+export function compareBusinessPeriods(
+  currentRows: Array<Record<string, unknown>>,
+  previousRows: Array<Record<string, unknown>>,
+  options?: Parameters<typeof computeBusinessMetrics>[1],
+): {
+  current: BusinessMetricsReport;
+  previous: BusinessMetricsReport;
+  deltas: PeriodComparisonDelta[];
+  uncomparableMetrics: string[];
+  summary: string;
+} {
+  const current = computeBusinessMetrics(currentRows, options);
+  const previous = computeBusinessMetrics(previousRows, options);
+  const keys = [
+    "revenue",
+    "cost",
+    "grossProfit",
+    "netProfit",
+    "marginPercent",
+    "returnRatePercent",
+    "totalUnits",
+    "inventoryTurnover",
+  ] as const;
+
+  const deltas: PeriodComparisonDelta[] = [];
+  const uncomparableMetrics: string[] = [];
+
+  for (const k of keys) {
+    const curVal = current.metrics[k]?.value;
+    const prevVal = previous.metrics[k]?.value;
+    if (typeof curVal === "number" && typeof prevVal === "number") {
+      const delta = Number((curVal - prevVal).toFixed(2));
+      const percentChange =
+        prevVal !== 0 ? Number((((curVal - prevVal) / Math.abs(prevVal)) * 100).toFixed(2)) : null;
+      deltas.push({
+        metric: k,
+        previous: prevVal,
+        current: curVal,
+        delta,
+        percentChange,
+        provenance: "calculated",
+      });
+    } else {
+      uncomparableMetrics.push(k);
+    }
+  }
+
+  return {
+    current,
+    previous,
+    deltas,
+    uncomparableMetrics,
+    summary: `Compared ${deltas.length} metric(s) between previous (${previous.rowCount} rows) and current (${current.rowCount} rows) periods.`,
+  };
+}

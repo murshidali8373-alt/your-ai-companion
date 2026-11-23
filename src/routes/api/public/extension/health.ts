@@ -11,6 +11,7 @@ import {
   extensionJsonResponse,
   handleExtensionOptions,
 } from "@/lib/extension-cors.server";
+import { evaluateReleaseReadiness } from "@/lib/release/release-readiness.server";
 import { verifyBearer } from "@/lib/supabase-bearer.server";
 
 export const Route = createFileRoute("/api/public/extension/health")({
@@ -81,6 +82,7 @@ export const Route = createFileRoute("/api/public/extension/health")({
         }
 
         const ok = Object.values(checks).every((c) => c.ok);
+        const readiness = evaluateReleaseReadiness();
         return extensionJsonResponse(
           request,
           {
@@ -89,6 +91,12 @@ export const Route = createFileRoute("/api/public/extension/health")({
             providers: {
               geminiConfigured: hasGemini,
               configuredProviders,
+            },
+            readiness: {
+              readyForRelease: readiness.readyForRelease,
+              score: readiness.score,
+              blockerCount: readiness.blockers.length,
+              warningCount: readiness.warnings.length,
             },
             version: "0.1.0",
           },
