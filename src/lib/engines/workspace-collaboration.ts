@@ -58,7 +58,13 @@ export interface SharedWorkspace {
 
 const ROLE_PERMISSIONS: Record<WorkspaceRole, Set<WorkspaceActionKind>> = {
   viewer: new Set(["read_data"]),
-  editor: new Set(["read_data", "run_analysis", "edit_draft", "share_report", "execute_shared_workflow"]),
+  editor: new Set([
+    "read_data",
+    "run_analysis",
+    "edit_draft",
+    "share_report",
+    "execute_shared_workflow",
+  ]),
   owner: new Set([
     "read_data",
     "run_analysis",
@@ -87,7 +93,8 @@ export function createSharedWorkspace(params: {
   ownerId: string;
   workspaceId?: string | undefined;
 }): SharedWorkspace {
-  const id = params.workspaceId || `ws_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const id =
+    params.workspaceId || `ws_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const now = new Date().toISOString();
   const ws: SharedWorkspace = {
     id,
@@ -127,7 +134,13 @@ export function addWorkspaceMember(params: {
   if (!ws) return { ok: false, error: "Workspace not found." };
   const actor = ws.members.find((m) => m.userId === params.actorUserId);
   if (!actor || !ROLE_PERMISSIONS[actor.role].has("manage_members")) {
-    recordWorkspaceAuditEvent(ws.id, params.actorUserId, "manage_members", false, `Denied member add for ${params.targetUserId}`);
+    recordWorkspaceAuditEvent(
+      ws.id,
+      params.actorUserId,
+      "manage_members",
+      false,
+      `Denied member add for ${params.targetUserId}`,
+    );
     return { ok: false, error: "Only workspace owners can manage members." };
   }
   const existing = ws.members.find((m) => m.userId === params.targetUserId);
@@ -164,12 +177,28 @@ export function canPerformWorkspaceAction(params: {
 } {
   const ws = workspaceStore.get(params.workspaceId);
   if (!ws) {
-    return { allowed: false, requiresApproval: false, role: "non_member", reason: "Workspace not found." };
+    return {
+      allowed: false,
+      requiresApproval: false,
+      role: "non_member",
+      reason: "Workspace not found.",
+    };
   }
   const member = ws.members.find((m) => m.userId === params.userId);
   if (!member) {
-    recordWorkspaceAuditEvent(ws.id, params.userId, params.action, false, "Blocked non-member access.");
-    return { allowed: false, requiresApproval: false, role: "non_member", reason: "User is not a member of this workspace." };
+    recordWorkspaceAuditEvent(
+      ws.id,
+      params.userId,
+      params.action,
+      false,
+      "Blocked non-member access.",
+    );
+    return {
+      allowed: false,
+      requiresApproval: false,
+      role: "non_member",
+      reason: "User is not a member of this workspace.",
+    };
   }
   if (!ROLE_PERMISSIONS[member.role].has(params.action)) {
     recordWorkspaceAuditEvent(
@@ -206,7 +235,13 @@ export function canPerformWorkspaceAction(params: {
       };
     }
   }
-  recordWorkspaceAuditEvent(ws.id, params.userId, params.action, true, `Authorized "${params.action}".`);
+  recordWorkspaceAuditEvent(
+    ws.id,
+    params.userId,
+    params.action,
+    true,
+    `Authorized "${params.action}".`,
+  );
   return { allowed: true, requiresApproval: false, role: member.role, reason: "Authorized." };
 }
 

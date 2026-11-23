@@ -355,7 +355,8 @@ export function fuseDomAndVisualTarget(input: DomVisualFusionInput): DomVisualFu
   return {
     ok: false,
     source: "rejected",
-    reason: visualFailureReason || "Neither valid DOM rect nor valid visual coordinates were available.",
+    reason:
+      visualFailureReason || "Neither valid DOM rect nor valid visual coordinates were available.",
   };
 }
 
@@ -406,7 +407,11 @@ export function parseMultiTurnContextualCommand(instruction: string): {
       explanation: "Switch browser focus back to recorded origin tab.",
     };
   }
-  if (/\b(?:undo\s+(?:the\s+)?last\s+change|undo\s+last|pichla\s+change\s+undo|revert\s+last)\b/i.test(norm)) {
+  if (
+    /\b(?:undo\s+(?:the\s+)?last\s+change|undo\s+last|pichla\s+change\s+undo|revert\s+last)\b/i.test(
+      norm,
+    )
+  ) {
     return {
       matched: true,
       commandType: "undo_last_change",
@@ -424,7 +429,11 @@ export function parseMultiTurnContextualCommand(instruction: string): {
       explanation: "Resume multi-step execution from last verified checkpoint.",
     };
   }
-  if (/\b(?:compare\s+(?:the\s+)?two\s+pages|compare\s+both\s+tabs|dono\s+pages\s+compare)\b/i.test(norm)) {
+  if (
+    /\b(?:compare\s+(?:(?:the|these|those|both)\s+)?(?:two\s+)?(?:pages?|tabs?)|(?:in\s+|ye\s+)?dono\s+(?:pages?|tabs?)\s+(?:ko\s+)?compare(?:\s+(?:karo|kro|(?:kar|kr)\s*do))?|dono\s+(?:pages?|tabs?)\s+ka\s+compar(?:e|ison)(?:\s+(?:karo|kro|dikhao))?)\b/i.test(
+      norm,
+    )
+  ) {
     return {
       matched: true,
       commandType: "compare_two_pages",

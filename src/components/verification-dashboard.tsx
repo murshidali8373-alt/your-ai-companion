@@ -11,7 +11,7 @@ import {
   ShieldCheck,
   XCircle,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -55,7 +55,12 @@ export function VerificationDashboard() {
   const [readinessData, setReadinessData] = useState<{
     readyForRelease: boolean;
     score: number;
-    checks: Array<{ id: string; label: string; status: "pass" | "warning" | "blocker"; detail: string }>;
+    checks: Array<{
+      id: string;
+      label: string;
+      status: "pass" | "warning" | "blocker";
+      detail: string;
+    }>;
     rollbackManifest?: {
       extensionVersion: string;
       canonicalAgentCount: number;
@@ -63,7 +68,7 @@ export function VerificationDashboard() {
     };
   } | null>(null);
 
-  const runReadinessCheck = async () => {
+  const runReadinessCheck = useCallback(async () => {
     if (typeof fetch !== "function") return;
     setReadinessLoading(true);
     setReadinessError(null);
@@ -77,13 +82,13 @@ export function VerificationDashboard() {
     } finally {
       setReadinessLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     setStore(loadVerificationStore());
     setHydrated(true);
     void runReadinessCheck();
-  }, []);
+  }, [runReadinessCheck]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -668,9 +673,7 @@ export function VerificationDashboard() {
         </div>
 
         {readinessError && (
-          <p className="mt-3 text-xs text-destructive">
-            Readiness probe error: {readinessError}
-          </p>
+          <p className="mt-3 text-xs text-destructive">Readiness probe error: {readinessError}</p>
         )}
 
         {readinessData && (
@@ -679,9 +682,7 @@ export function VerificationDashboard() {
               <span className="font-medium text-foreground">
                 Status:{" "}
                 <span
-                  className={
-                    readinessData.readyForRelease ? "text-success" : "text-destructive"
-                  }
+                  className={readinessData.readyForRelease ? "text-success" : "text-destructive"}
                 >
                   {readinessData.readyForRelease ? "READY FOR RELEASE" : "BLOCKERS PRESENT"}
                 </span>

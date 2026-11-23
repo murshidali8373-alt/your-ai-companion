@@ -688,15 +688,25 @@ export function computeBusinessMetrics(
   const allKeys = Array.from(new Set(rows.flatMap((r) => Object.keys(r))));
   const revCol =
     options?.revenueColumn ??
-    findMatchingColumn(allKeys, ["revenue", "sales", "total_amount", "amount", "price", "gross_sales"]);
+    findMatchingColumn(allKeys, [
+      "revenue",
+      "sales",
+      "total_amount",
+      "amount",
+      "price",
+      "gross_sales",
+    ]);
   const costCol =
     options?.costColumn ?? findMatchingColumn(allKeys, ["cogs", "cost_price", "unit_cost", "cost"]);
   const expCol =
-    options?.expenseColumn ?? findMatchingColumn(allKeys, ["expense", "operating_expense", "fee", "shipping_cost"]);
+    options?.expenseColumn ??
+    findMatchingColumn(allKeys, ["expense", "operating_expense", "fee", "shipping_cost"]);
   const qtyCol =
-    options?.quantityColumn ?? findMatchingColumn(allKeys, ["quantity", "qty", "units", "units_sold"]);
+    options?.quantityColumn ??
+    findMatchingColumn(allKeys, ["quantity", "qty", "units", "units_sold"]);
   const stockCol =
-    options?.stockColumn ?? findMatchingColumn(allKeys, ["stock", "inventory", "on_hand", "stock_qty"]);
+    options?.stockColumn ??
+    findMatchingColumn(allKeys, ["stock", "inventory", "on_hand", "stock_qty"]);
   const statusCol =
     options?.statusColumn ?? findMatchingColumn(allKeys, ["status", "order_status", "state"]);
   const skuCol =
@@ -777,10 +787,12 @@ export function computeBusinessMetrics(
     const netProfit = Number((grossProfit - expTotal).toFixed(2));
     metrics.netProfit = {
       value: netProfit,
-      formula: expCol && expCol !== costCol
-        ? `SUM(${revCol}) - SUM(${costCol}) - SUM(${expCol})`
-        : `SUM(${revCol}) - SUM(${costCol})`,
-      sourceColumns: expCol && expCol !== costCol ? [revCol!, costCol!, expCol] : [revCol!, costCol!],
+      formula:
+        expCol && expCol !== costCol
+          ? `SUM(${revCol}) - SUM(${costCol}) - SUM(${expCol})`
+          : `SUM(${revCol}) - SUM(${costCol})`,
+      sourceColumns:
+        expCol && expCol !== costCol ? [revCol!, costCol!, expCol] : [revCol!, costCol!],
       provenance: "calculated",
     };
 
@@ -876,7 +888,10 @@ export function computeBusinessMetrics(
     }
   } else {
     missingColumns.push("stock");
-    missingMetrics.push({ metric: "inventoryTurnover", reason: "No stock/inventory column found." });
+    missingMetrics.push({
+      metric: "inventoryTurnover",
+      reason: "No stock/inventory column found.",
+    });
   }
 
   const computedNames = Object.keys(metrics);

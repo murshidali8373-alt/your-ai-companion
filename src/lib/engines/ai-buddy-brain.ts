@@ -127,11 +127,7 @@ export interface BrainExecutionStep {
 }
 
 export type EpistemicCategory =
-  | "observed_fact"
-  | "verified_external"
-  | "calculated"
-  | "inferred"
-  | "unknown";
+  "observed_fact" | "verified_external" | "calculated" | "inferred" | "unknown";
 
 export interface EpistemicStatement {
   statement: string;
@@ -573,7 +569,10 @@ export function generatePlanAlternatives(params: {
     riskLevel: "low",
     estimatedLatencyMs: 500,
     estimatedCostUsd: 0.0005,
-    constraints: ["Zero page mutations", hasDocument ? "Reads uploaded files read-only" : "Non-mutating"],
+    constraints: [
+      "Zero page mutations",
+      hasDocument ? "Reads uploaded files read-only" : "Non-mutating",
+    ],
     recommended: false,
   };
 
@@ -628,7 +627,8 @@ export function buildEpistemicBreakdown(params: {
   }
   if (statements.length === 0) {
     statements.push({
-      statement: "No live webpage DOM or tabular dataset attached; reply relies on conversational reasoning.",
+      statement:
+        "No live webpage DOM or tabular dataset attached; reply relies on conversational reasoning.",
       category: "inferred",
     });
   }
@@ -644,7 +644,9 @@ export function recommendOptimalModel(
   configuredProviders?: string[],
 ): string {
   const isAllowed = (provider: string) =>
-    !configuredProviders || configuredProviders.length === 0 || configuredProviders.includes(provider);
+    !configuredProviders ||
+    configuredProviders.length === 0 ||
+    configuredProviders.includes(provider);
 
   if (hasVision || intent === "locate_element") {
     if (isAllowed("gemini")) return "gemini-3.8-flash";

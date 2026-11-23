@@ -977,10 +977,7 @@ export async function runUnifiedOrchestrator(
     }
   }
 
-  const reusablePatterns = findReusablePatterns(
-    input.instruction,
-    input.snapshot?.origin || "*",
-  );
+  const reusablePatterns = findReusablePatterns(input.instruction, input.snapshot?.origin || "*");
   const contextBudgetResult = buildBudgetedTaskContext({
     instruction: input.instruction,
     memoriesText: memoryContextBlock,
@@ -994,7 +991,9 @@ export async function runUnifiedOrchestrator(
     intent: decision.brainIntent,
     instruction: input.instruction,
     hasSnapshot: Boolean(input.snapshot),
-    hasDocument: Boolean(input.uploadedDocumentSummary || input.documents?.length || input.spreadsheetData?.length),
+    hasDocument: Boolean(
+      input.uploadedDocumentSummary || input.documents?.length || input.spreadsheetData?.length,
+    ),
   });
 
   let structuredPage: StructuredPageRepresentation | undefined;
@@ -1301,7 +1300,11 @@ export async function runUnifiedOrchestrator(
     crossFileResult,
   });
 
-  if (dagSummary.failedIds.length === 0 && dagSummary.completedIds.length > 0 && !input.privacyMode) {
+  if (
+    dagSummary.failedIds.length === 0 &&
+    dagSummary.completedIds.length > 0 &&
+    !input.privacyMode
+  ) {
     recordVerifiedExecutionPattern({
       intent: input.instruction,
       domainOrigin: input.snapshot?.origin || "*",

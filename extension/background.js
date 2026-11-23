@@ -624,7 +624,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     );
     return true;
   }
-  if (msg.type === "GET_ALL_TABS") {
+  if (msg.type === "GET_ALL_TABS" || msg.type === "GET_TABS") {
     getAllTabs().then(safeReply, (e) => safeReply({ ok: false, error: String(e?.message || e) }));
     return true;
   }

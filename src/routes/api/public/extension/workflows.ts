@@ -6,6 +6,7 @@
  * - Execution history, failure notifications, and honest scheduler infrastructure report
  */
 
+import crypto from "node:crypto";
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import {
@@ -197,24 +198,48 @@ export const Route = createFileRoute("/api/public/extension/workflows")({
           return extensionJsonResponse(request, res, res.ok ? 200 : 400);
         }
 
-        // run_due
-        const configuredSecret = process.env["WORKFLOW_CRON_SECRET"]?.trim();
-        if (configuredSecret) {
-          const supplied = request.headers.get("x-cron-secret")?.trim();
-          if (supplied !== configuredSecret) {
-            span.finish("blocked", "Unauthorized scheduled runner tick");
-            recordTelemetry({
-              type: "security.block",
-              outcome: "blocked",
-              userId,
-              detail: "Rejected run_due workflow tick due to invalid x-cron-secret",
-            });
-            return extensionJsonResponse(
-              request,
-              { ok: false, message: "Unauthorized scheduled runner tick." },
-              401,
-            );
-          }
+        // run_due (fail-closed unless WORKFLOW_CRON_SECRET / CRON_SECRET is configured and matches x-cron-secret)
+        const configuredSecret =
+          process.env["WORKFLOW_CRON_SECRET"]?.trim() || process.env["CRON_SECRET"]?.trim();
+        if (!configuredSecret) {
+          span.finish("blocked", "Scheduled runner disabled: WORKFLOW_CRON_SECRET not configured");
+          recordTelemetry({
+            type: "security.block",
+            outcome: "blocked",
+            userId,
+            detail: "Blocked unauthenticated run_due workflow tick because WORKFLOW_CRON_SECRET is unset",
+          });
+          return extensionJsonResponse(
+            request,
+            {
+              ok: false,
+              error: "cron_not_configured",
+              message:
+                "Scheduled workflow execution fails closed until WORKFLOW_CRON_SECRET is configured on the server.",
+            },
+            503,
+          );
+        }
+        const supplied = request.headers.get("x-cron-secret")?.trim() ?? "";
+        const suppliedBuf = crypto.createHash("sha256").update(supplied).digest();
+        const expectedBuf = crypto.createHash("sha256").update(configuredSecret).digest();
+        if (!supplied || !crypto.timingSafeEqual(suppliedBuf, expectedBuf)) {
+          span.finish("blocked", "Unauthorized scheduled runner tick");
+          recordTelemetry({
+            type: "security.block",
+            outcome: "blocked",
+            userId,
+            detail: "Rejected run_due workflow tick due to missing or invalid x-cron-secret",
+          });
+          return extensionJsonResponse(
+            request,
+            {
+              ok: false,
+              error: "unauthorized",
+              message: "Unauthorized scheduled runner tick.",
+            },
+            401,
+          );
         }
         const dueRes = await runDueWorkflows(body.nowIso);
         span.finish("ok", `Executed due workflows (${dueRes.executedCount})`);

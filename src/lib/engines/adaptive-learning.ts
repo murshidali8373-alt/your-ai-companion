@@ -135,7 +135,10 @@ export function findReusablePatterns(
   return matches.sort((a, b) => b.successCount - a.successCount);
 }
 
-export function invalidatePattern(patternId: string, reason = "User or verifier invalidated pattern"): boolean {
+export function invalidatePattern(
+  patternId: string,
+  reason = "User or verifier invalidated pattern",
+): boolean {
   for (const pat of getPatternStore().values()) {
     if (pat.patternId === patternId) {
       pat.invalidated = true;

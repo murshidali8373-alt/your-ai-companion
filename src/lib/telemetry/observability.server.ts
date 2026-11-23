@@ -74,7 +74,9 @@ function sanitizeMeta(meta?: Record<string, unknown>): Record<string, unknown> |
     } else if (Array.isArray(v)) {
       clean[k] = v
         .slice(0, 15)
-        .map((item) => (typeof item === "string" ? redactSensitiveText(item).text.slice(0, 120) : item));
+        .map((item) =>
+          typeof item === "string" ? redactSensitiveText(item).text.slice(0, 120) : item,
+        );
     } else if (typeof v === "object" && v !== null) {
       clean[k] = redactSensitiveText(JSON.stringify(v)).text.slice(0, 400);
     }
@@ -118,7 +120,11 @@ export function startTelemetrySpan(params: {
   detail: string;
 }): {
   correlationId: string;
-  finish: (outcome: TelemetryOutcome, extraDetail?: string, meta?: Record<string, unknown>) => TelemetryEvent;
+  finish: (
+    outcome: TelemetryOutcome,
+    extraDetail?: string,
+    meta?: Record<string, unknown>,
+  ) => TelemetryEvent;
 } {
   const correlationId = params.correlationId || createCorrelationId();
   const startedAt = Date.now();

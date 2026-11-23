@@ -51,7 +51,10 @@ export function inspectUntrustedContextSignals(text: string): string[] {
   return found;
 }
 
-function truncateToTokenBudget(text: string, maxTokens: number): { text: string; truncated: boolean } {
+function truncateToTokenBudget(
+  text: string,
+  maxTokens: number,
+): { text: string; truncated: boolean } {
   if (!text) return { text: "", truncated: false };
   const currentTokens = estimateTokens(text);
   if (currentTokens <= maxTokens) return { text, truncated: false };

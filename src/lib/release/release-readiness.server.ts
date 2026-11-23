@@ -54,9 +54,7 @@ const PROVIDER_NAMES = [
   "ollama",
 ] as const;
 
-export function evaluateReleaseReadiness(options?: {
-  repoRoot?: string;
-}): ReleaseReadinessReport {
+export function evaluateReleaseReadiness(options?: { repoRoot?: string }): ReleaseReadinessReport {
   const root = options?.repoRoot ?? process.cwd();
   const checks: ReleaseCheckItem[] = [];
 
@@ -96,7 +94,7 @@ export function evaluateReleaseReadiness(options?: {
           label: "Workflow Cron Authentication",
           status: "warning",
           detail:
-            "WORKFLOW_CRON_SECRET not configured; unauthenticated cron execution remains fail-closed (401/503).",
+            "WORKFLOW_CRON_SECRET not configured; unauthenticated run_due cron ticks fail closed (503/401).",
         },
   );
 

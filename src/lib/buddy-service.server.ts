@@ -1492,7 +1492,10 @@ export async function ask(db: Db, userId: string, input: AskInput): Promise<AskO
       outcome: "error",
       userId,
       detail: `Ask provider failure (${aiError.kind}): ${aiError.userMessage}`,
-      meta: { attribution: shRecord.report.attribution, failureCategory: shRecord.report.failureCategory },
+      meta: {
+        attribution: shRecord.report.attribution,
+        failureCategory: shRecord.report.failureCategory,
+      },
     });
     await event(db, taskId, userId, "recover", `${aiError.kind}: ${aiError.userMessage}`);
     if (taskId) {
@@ -1963,7 +1966,10 @@ export async function askGuest(input: AskInput): Promise<AskOutput> {
       outcome: "error",
       userId: "guest",
       detail: `Guest ask provider failure (${aiError.kind}): ${aiError.userMessage}`,
-      meta: { attribution: shRecord.report.attribution, failureCategory: shRecord.report.failureCategory },
+      meta: {
+        attribution: shRecord.report.attribution,
+        failureCategory: shRecord.report.failureCategory,
+      },
     });
     const failureDetails = buildProviderFailureDetails({
       aiError,

@@ -31,13 +31,7 @@ export type ModelCapability =
   "vision" | "reasoning" | "code" | "function_calling" | "streaming" | "multimodal_audio";
 
 export type ModalityType =
-  | "text"
-  | "image"
-  | "screenshot"
-  | "pdf"
-  | "audio_input"
-  | "audio_output"
-  | "realtime_voice";
+  "text" | "image" | "screenshot" | "pdf" | "audio_input" | "audio_output" | "realtime_voice";
 
 export interface ModelEntry {
   id: string;

@@ -63,7 +63,12 @@ export interface SkillExecutionResult {
   skillId: string;
   version: string;
   output?: Record<string, unknown> | undefined;
-  trace: Array<{ stepId: string; op: DeclarativeStepOp; status: "ok" | "blocked" | "error"; detail: string }>;
+  trace: Array<{
+    stepId: string;
+    op: DeclarativeStepOp;
+    status: "ok" | "blocked" | "error";
+    detail: string;
+  }>;
   provenance: "calculated" | "extracted" | "unknown";
   requiresApproval?: boolean | undefined;
   error?: string | undefined;
@@ -92,7 +97,8 @@ const BUILTIN_SKILLS: SkillContract[] = [
     id: "order_returns_audit",
     version: "1.0.0",
     name: "Order & Returns Audit Skill",
-    description: "Calculates return rate, RTO counts, revenue, and missing columns deterministically.",
+    description:
+      "Calculates return rate, RTO counts, revenue, and missing columns deterministically.",
     inputSchema: rowsInputSchema,
     outputSchema: genericOutputSchema,
     riskLevel: "read_only",
@@ -109,7 +115,8 @@ const BUILTIN_SKILLS: SkillContract[] = [
     id: "invoice_gst_summary",
     version: "1.0.0",
     name: "Invoice & GST Summary Skill",
-    description: "Filters invoice ledger rows, computes revenue/expense totals, and summarizes missing metrics.",
+    description:
+      "Filters invoice ledger rows, computes revenue/expense totals, and summarizes missing metrics.",
     inputSchema: rowsInputSchema,
     outputSchema: genericOutputSchema,
     riskLevel: "read_only",
@@ -127,7 +134,8 @@ const BUILTIN_SKILLS: SkillContract[] = [
     id: "inventory_restock_check",
     version: "1.0.0",
     name: "Inventory Restock Check Skill",
-    description: "Identifies low-stock SKUs below threshold and calculates inventory turnover honestly.",
+    description:
+      "Identifies low-stock SKUs below threshold and calculates inventory turnover honestly.",
     inputSchema: rowsInputSchema,
     outputSchema: genericOutputSchema,
     riskLevel: "read_only",
@@ -184,7 +192,10 @@ export function registerSkill(contract: SkillContract): {
 } {
   seedBuiltinSkills();
   if (!/^[a-z0-9_]{3,64}$/.test(contract.id)) {
-    return { ok: false, error: "Skill id must be 3-64 lowercase alphanumeric/underscore characters." };
+    return {
+      ok: false,
+      error: "Skill id must be 3-64 lowercase alphanumeric/underscore characters.",
+    };
   }
   if (!/^\d+\.\d+\.\d+$/.test(contract.version)) {
     return { ok: false, error: "Skill version must follow semver format (e.g. 1.0.0)." };
@@ -295,7 +306,14 @@ export async function executeDeclarativeSkill(
       ok: false,
       skillId: skill.id,
       version: skill.version,
-      trace: [{ stepId: "gate", op: "require_approval", status: "blocked", detail: "Insufficient permission level" }],
+      trace: [
+        {
+          stepId: "gate",
+          op: "require_approval",
+          status: "blocked",
+          detail: "Insufficient permission level",
+        },
+      ],
       provenance: "unknown",
       requiresApproval: true,
       error: `Permission denied: "${skill.id}" requires "${skill.requiredPermissions}" (current: "${context.permissionLevel}").`,
@@ -306,7 +324,14 @@ export async function executeDeclarativeSkill(
       ok: false,
       skillId: skill.id,
       version: skill.version,
-      trace: [{ stepId: "gate", op: "require_approval", status: "blocked", detail: "Missing user consent" }],
+      trace: [
+        {
+          stepId: "gate",
+          op: "require_approval",
+          status: "blocked",
+          detail: "Missing user consent",
+        },
+      ],
       provenance: "unknown",
       requiresApproval: true,
       error: `Consequential skill "${skill.id}" requires explicit consentGranted=true.`,
@@ -315,13 +340,22 @@ export async function executeDeclarativeSkill(
 
   // Connector allowlist enforcement
   if (context.requestedConnectors?.length) {
-    const disallowed = context.requestedConnectors.filter((c) => !skill.allowedConnectors.includes(c));
+    const disallowed = context.requestedConnectors.filter(
+      (c) => !skill.allowedConnectors.includes(c),
+    );
     if (disallowed.length > 0) {
       return {
         ok: false,
         skillId: skill.id,
         version: skill.version,
-        trace: [{ stepId: "connectors", op: "validate_input", status: "blocked", detail: `Disallowed connector(s): ${disallowed.join(", ")}` }],
+        trace: [
+          {
+            stepId: "connectors",
+            op: "validate_input",
+            status: "blocked",
+            detail: `Disallowed connector(s): ${disallowed.join(", ")}`,
+          },
+        ],
         provenance: "unknown",
         error: `Connector(s) not allowlisted for skill "${skill.id}": ${disallowed.join(", ")}.`,
       };
@@ -334,7 +368,14 @@ export async function executeDeclarativeSkill(
       ok: false,
       skillId: skill.id,
       version: skill.version,
-      trace: [{ stepId: "schema", op: "validate_input", status: "error", detail: parsedInput.error.message }],
+      trace: [
+        {
+          stepId: "schema",
+          op: "validate_input",
+          status: "error",
+          detail: parsedInput.error.message,
+        },
+      ],
       provenance: "unknown",
       error: `Skill input validation failed: ${parsedInput.error.message}`,
     };
@@ -356,7 +397,12 @@ export async function executeDeclarativeSkill(
 
   for (const step of skill.steps) {
     if (Date.now() - start > maxMs) {
-      trace.push({ stepId: step.id, op: step.op, status: "error", detail: "Skill execution timed out." });
+      trace.push({
+        stepId: step.id,
+        op: step.op,
+        status: "error",
+        detail: "Skill execution timed out.",
+      });
       return {
         ok: false,
         skillId: skill.id,
@@ -368,7 +414,12 @@ export async function executeDeclarativeSkill(
     }
 
     if (step.op === "validate_input") {
-      trace.push({ stepId: step.id, op: step.op, status: "ok", detail: `Validated ${workingRows.length} row(s).` });
+      trace.push({
+        stepId: step.id,
+        op: step.op,
+        status: "ok",
+        detail: `Validated ${workingRows.length} row(s).`,
+      });
     } else if (step.op === "filter_rows") {
       const filters = data.filters ?? (step.params?.["filters"] as FilterRule[] | undefined);
       if (filters && filters.length > 0) {
@@ -376,10 +427,17 @@ export async function executeDeclarativeSkill(
         workingRows = res.filteredRows;
         state["filteredRowCount"] = workingRows.length;
       }
-      trace.push({ stepId: step.id, op: step.op, status: "ok", detail: `${workingRows.length} row(s) after filter.` });
+      trace.push({
+        stepId: step.id,
+        op: step.op,
+        status: "ok",
+        detail: `${workingRows.length} row(s) after filter.`,
+      });
     } else if (step.op === "compute_kpis") {
       const kpis = computeBusinessMetrics(workingRows, {
-        lowStockThreshold: data.threshold ?? (typeof step.params?.["threshold"] === "number" ? step.params["threshold"] : undefined),
+        lowStockThreshold:
+          data.threshold ??
+          (typeof step.params?.["threshold"] === "number" ? step.params["threshold"] : undefined),
       });
       state["kpis"] = kpis;
       trace.push({ stepId: step.id, op: step.op, status: "ok", detail: kpis.summary });
@@ -389,7 +447,9 @@ export async function executeDeclarativeSkill(
       state["periodComparison"] = cmp;
       trace.push({ stepId: step.id, op: step.op, status: "ok", detail: cmp.summary });
     } else if (step.op === "extract_fields") {
-      const fields = data.fields ?? (Array.isArray(step.params?.["fields"]) ? (step.params["fields"] as string[]) : []);
+      const fields =
+        data.fields ??
+        (Array.isArray(step.params?.["fields"]) ? (step.params["fields"] as string[]) : []);
       const extracted = workingRows.map((r) => {
         if (!fields.length) return r;
         const proj: Record<string, unknown> = {};
@@ -397,10 +457,20 @@ export async function executeDeclarativeSkill(
         return proj;
       });
       state["extracted"] = extracted;
-      trace.push({ stepId: step.id, op: step.op, status: "ok", detail: `Extracted ${extracted.length} record(s).` });
+      trace.push({
+        stepId: step.id,
+        op: step.op,
+        status: "ok",
+        detail: `Extracted ${extracted.length} record(s).`,
+      });
     } else if (step.op === "require_approval") {
       if (!context.consentGranted) {
-        trace.push({ stepId: step.id, op: step.op, status: "blocked", detail: "Approval gate reached without consent." });
+        trace.push({
+          stepId: step.id,
+          op: step.op,
+          status: "blocked",
+          detail: "Approval gate reached without consent.",
+        });
         return {
           ok: false,
           skillId: skill.id,

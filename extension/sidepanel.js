@@ -3386,6 +3386,15 @@ function parseActionIntent(text) {
     return { type: "TAB_ACTION", action: "switch_tab", target: switchTabMatch[1].trim() };
   }
 
+  // 2b-4. COMPARE TWO PAGES ("compare two pages", "compare these two pages", "compare those two pages", "dono pages compare karo")
+  if (
+    /^(?:compare\s+(?:(?:the|these|those|both)\s+)?(?:two\s+)?(?:pages?|tabs?)|(?:in\s+|ye\s+)?dono\s+(?:pages?|tabs?)\s+(?:ko\s+)?compare(?:\s+(?:karo|kro|(?:kar|kr)\s*do))?|dono\s+(?:pages?|tabs?)\s+ka\s+compar(?:e|ison)(?:\s+(?:karo|kro|dikhao))?)[.!?\s]*$/i.test(
+      lower,
+    )
+  ) {
+    return { type: "COMPARE_TWO_PAGES" };
+  }
+
   // 2c. PAGE INVENTORY ("Is page par kya kya hai") — works locally without AI key
   if (
     /^(?:is\s+page\s+(?:par|pe|pr|mein|me|main)\s+kya\s+(?:kya\s+)?(?:hai|he)|page\s+(?:par|pe|pr|mein|me|main)\s+kya\s+(?:kya\s+)?(?:hai|he)|what\s+is\s+on\s+(?:this\s+)?page|what'?s\s+on\s+(?:this\s+)?page|list\s+(?:page\s+)?(?:elements|fields|buttons|controls))[.!?\s]*$/i.test(
@@ -5063,7 +5072,7 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       return true;
     }
     if (intent.action === "switch_tab") {
-      const tabsRes = await sendRuntimeMessage({ type: "GET_TABS" });
+      const tabsRes = await sendRuntimeMessage({ type: "GET_ALL_TABS" });
       const q = String(intent.target || "").toLowerCase();
       const matched = (tabsRes?.tabs || []).find(
         (t) => (t.title || "").toLowerCase().includes(q) || (t.url || "").toLowerCase().includes(q),
@@ -5081,6 +5090,106 @@ async function executeNaturalBrowserAction(intent, trimmed) {
       appendHistory("buddy", res?.ok ? `🗂️ Switched to tab "${matched.title}".` : `⚠️ ${res?.message || "Switch failed."}`);
       return true;
     }
+  }
+
+  if (intent.type === "COMPARE_TWO_PAGES") {
+    appendHistory("user", trimmed);
+    $("promptInput").value = "";
+    setRigEmotion("thinking", "Reading 2 Pages…");
+
+    const tabsRes = await sendRuntimeMessage({ type: "GET_ALL_TABS" });
+    const activeTab = await queryActiveWebTab().catch(() => null);
+    const accessibleTabs = (tabsRes?.tabs || []).filter(
+      (t) => t?.id && /^https?:\/\//i.test(String(t.url || "")),
+    );
+    const tabA =
+      accessibleTabs.find((t) => t.id === activeTab?.id) ||
+      accessibleTabs.find((t) => t.active) ||
+      accessibleTabs[0];
+    const preferredSecondaryId =
+      tabA?.id === sessionTaskContext.originalTabId
+        ? sessionTaskContext.openTabId
+        : sessionTaskContext.originalTabId || sessionTaskContext.openTabId;
+    const tabB =
+      (preferredSecondaryId
+        ? accessibleTabs.find((t) => t.id === preferredSecondaryId && t.id !== tabA?.id)
+        : null) || accessibleTabs.find((t) => t.id !== tabA?.id);
+
+    if (!tabA || !tabB || tabA.id === tabB.id) {
+      setRigEmotion("concerned", "Need 2 Tabs");
+      const errMsg = isHindi
+        ? "⚠️ Compare karne ke liye kam se kam 2 open webpage tabs (http/https) chahiye. Abhi sirf 1 accessible tab mila."
+        : "⚠️ Need at least two open accessible webpage tabs (http/https) to compare. Only one accessible tab was found.";
+      $("statusText").textContent = errMsg;
+      recordSessionAction(errMsg, "failed");
+      appendHistory("buddy", errMsg);
+      return true;
+    }
+
+    const [snapARes, snapBRes] = await Promise.all([
+      sendRuntimeMessage({ type: "READ_TAB_SNAPSHOT", tabId: tabA.id }),
+      sendRuntimeMessage({ type: "READ_TAB_SNAPSHOT", tabId: tabB.id }),
+    ]);
+
+    if (!snapARes?.ok || !snapARes.snapshot || !snapBRes?.ok || !snapBRes.snapshot) {
+      const failedPages = [];
+      if (!snapARes?.ok || !snapARes?.snapshot) {
+        failedPages.push(`Tab 1 ("${tabA.title || tabA.url}"): ${snapARes?.message || "unreadable"}`);
+      }
+      if (!snapBRes?.ok || !snapBRes?.snapshot) {
+        failedPages.push(`Tab 2 ("${tabB.title || tabB.url}"): ${snapBRes?.message || "unreadable"}`);
+      }
+      setRigEmotion("error", "Read Failed");
+      const errMsg = isHindi
+        ? `❌ Dono pages read nahi ho paaye, isliye comparison complete nahi hua:\n• ${failedPages.join("\n• ")}`
+        : `❌ Could not read both pages, so comparison was aborted:\n• ${failedPages.join("\n• ")}`;
+      $("statusText").textContent = errMsg;
+      recordSessionAction(errMsg, "failed");
+      appendHistory("buddy", errMsg);
+      return true;
+    }
+
+    const snapA = snapARes.snapshot;
+    const snapB = snapBRes.snapshot;
+    const hA = new Set((snapA.headings || []).map((h) => String(h.name || h.text || "").trim()).filter(Boolean));
+    const hB = new Set((snapB.headings || []).map((h) => String(h.name || h.text || "").trim()).filter(Boolean));
+    const sharedHeadings = [...hA].filter((h) => hB.has(h)).slice(0, 5);
+    const onlyA = [...hA].filter((h) => !hB.has(h)).slice(0, 4);
+    const onlyB = [...hB].filter((h) => !hA.has(h)).slice(0, 4);
+    const wordsA = String(snapA.text || "").trim().split(/\s+/).filter(Boolean).length;
+    const wordsB = String(snapB.text || "").trim().split(/\s+/).filter(Boolean).length;
+    const formsA = (snapA.forms || []).length;
+    const formsB = (snapB.forms || []).length;
+    const controlsA = (snapA.controls || []).length;
+    const controlsB = (snapB.controls || []).length;
+    const alertsA = (snapA.alerts || []).length;
+    const alertsB = (snapB.alerts || []).length;
+
+    const comparisonReport = [
+      isHindi ? "📊 **Two-Page Live Comparison:**" : "📊 **Two-Page Live Comparison:**",
+      `• **Page 1:** ${snapA.title || tabA.title} (${snapA.url || tabA.url})`,
+      `  Headings: ${hA.size} | Forms: ${formsA} | Controls: ${controlsA} | Alerts: ${alertsA} | Words: ~${wordsA}`,
+      `• **Page 2:** ${snapB.title || tabB.title} (${snapB.url || tabB.url})`,
+      `  Headings: ${hB.size} | Forms: ${formsB} | Controls: ${controlsB} | Alerts: ${alertsB} | Words: ~${wordsB}`,
+      sharedHeadings.length ? `• **Shared Headings:** ${sharedHeadings.join(", ")}` : null,
+      onlyA.length ? `• **Only on Page 1:** ${onlyA.join(", ")}` : null,
+      onlyB.length ? `• **Only on Page 2:** ${onlyB.join(", ")}` : null,
+      `• **Delta:** Forms (${formsA - formsB >= 0 ? "+" : ""}${formsA - formsB}), Controls (${controlsA - controlsB >= 0 ? "+" : ""}${controlsA - controlsB}), Words (${wordsA - wordsB >= 0 ? "+" : ""}${wordsA - wordsB}).`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    setRigEmotion("happy", "Compared");
+    $("statusText").textContent = `Compared "${snapA.title || tabA.title}" vs "${snapB.title || tabB.title}".`;
+    recordSessionAction(`Compared 2 pages: ${snapA.url || tabA.url} vs ${snapB.url || tabB.url}`, "confirmed");
+    appendHistory("buddy", comparisonReport);
+    speakResponse(
+      isHindi
+        ? `Dono pages compare kar diye hain: ${snapA.title || "Page 1"} aur ${snapB.title || "Page 2"}.`
+        : `Compared ${snapA.title || "Page 1"} and ${snapB.title || "Page 2"}.`,
+      "happy",
+    );
+    return true;
   }
 
   if (intent.type === "VALIDATE_FORM") {

@@ -75,12 +75,13 @@ export function buildAgentFromNaturalLanguage(prompt: string): CustomAgentSpec {
   const clean = prompt.trim();
   const lower = clean.toLowerCase();
 
-  const slugBase = lower
-    .replace(/[^a-z0-9\s]/g, " ")
-    .trim()
-    .split(/\s+/)
-    .slice(0, 4)
-    .join("_") || "helper";
+  const slugBase =
+    lower
+      .replace(/[^a-z0-9\s]/g, " ")
+      .trim()
+      .split(/\s+/)
+      .slice(0, 4)
+      .join("_") || "helper";
   const id = `custom_${slugBase}`.slice(0, 42);
 
   const skillIds: string[] = [];
@@ -122,7 +123,11 @@ export function validateCustomAgentContract(spec: CustomAgentSpec): AgentContrac
   }
 
   const combinedText = `${spec.name} ${spec.description} ${spec.responsibility}`.toLowerCase();
-  if (/\b(?:exfiltrate|steal|bypass\s+security|dump\s+password|ignore\s+approval)\b/i.test(combinedText)) {
+  if (
+    /\b(?:exfiltrate|steal|bypass\s+security|dump\s+password|ignore\s+approval)\b/i.test(
+      combinedText,
+    )
+  ) {
     errors.push("Security block: Agent specification contains disallowed intent.");
   }
 
@@ -134,7 +139,9 @@ export function validateCustomAgentContract(spec: CustomAgentSpec): AgentContrac
   }
 
   if (!spec.requiresApprovalBeforeExternal && spec.minPermission === "execute") {
-    warnings.push("External consequential permissions should keep requiresApprovalBeforeExternal=true.");
+    warnings.push(
+      "External consequential permissions should keep requiresApprovalBeforeExternal=true.",
+    );
   }
 
   return { valid: errors.length === 0, errors, warnings };
@@ -206,7 +213,8 @@ export function approveAndRegisterCustomAgent(
   if (!opts.approved) {
     return {
       ok: false,
-      error: "Approval required: Custom agents cannot register without explicit user approval (approved: true).",
+      error:
+        "Approval required: Custom agents cannot register without explicit user approval (approved: true).",
     };
   }
   const validation = validateCustomAgentContract(spec);
@@ -268,7 +276,10 @@ export async function executeCustomAgent(
   }
 
   const skillId = spec.skillIds[0] || "order_returns_audit";
-  const rows = env.spreadsheetData ?? (subtask.input?.["rows"] as Array<Record<string, unknown>> | undefined) ?? [];
+  const rows =
+    env.spreadsheetData ??
+    (subtask.input?.["rows"] as Array<Record<string, unknown>> | undefined) ??
+    [];
   const res = await executeDeclarativeSkill(
     skillId,
     { rows, previousRows: env.comparisonData ?? undefined },
@@ -280,7 +291,7 @@ export async function executeCustomAgent(
 
   return {
     ok: res.ok,
-    agentId: (spec.id as unknown as CanonicalAgentId),
+    agentId: spec.id as unknown as CanonicalAgentId,
     summary: String(res.output?.["summary"] ?? res.error ?? `Executed custom agent ${spec.name}`),
     provenance: res.provenance,
     verified: res.ok,

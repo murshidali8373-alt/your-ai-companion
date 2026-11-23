@@ -377,11 +377,7 @@ export function classifyRuntimeError(input: DiagnosticReportInput): {
   confidence: number;
   reason: string;
 } {
-  const wrap = (
-    attribution: ErrorAttribution,
-    confidence: number,
-    reason: string,
-  ) => {
+  const wrap = (attribution: ErrorAttribution, confidence: number, reason: string) => {
     const mapped = mapToStandardFailureCategory(attribution, input);
     return {
       attribution,

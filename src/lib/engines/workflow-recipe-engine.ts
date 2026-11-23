@@ -753,14 +753,47 @@ export const BUSINESS_WORKFLOW_TEMPLATES: BusinessWorkflowTemplate[] = [
       "Extract invoice rows, verify GST tax totals against uploaded accounting ledger, and flag mismatches without modifying source records.",
     requiredConnectors: ["google_sheets"],
     parameters: [
-      { key: "gstRatePercent", label: "Expected GST Rate (%)", type: "number", defaultValue: 18, required: true },
-      { key: "invoiceColumn", label: "Invoice ID Column", type: "string", defaultValue: "invoice_no", required: true },
+      {
+        key: "gstRatePercent",
+        label: "Expected GST Rate (%)",
+        type: "number",
+        defaultValue: 18,
+        required: true,
+      },
+      {
+        key: "invoiceColumn",
+        label: "Invoice ID Column",
+        type: "string",
+        defaultValue: "invoice_no",
+        required: true,
+      },
     ],
-    defaultSchedule: { type: "recurring", frequency: "weekly", dayOfWeek: "friday", timeOfDay: "17:00" },
+    defaultSchedule: {
+      type: "recurring",
+      frequency: "weekly",
+      dayOfWeek: "friday",
+      timeOfDay: "17:00",
+    },
     steps: [
-      { id: "gst_s1", order: 1, label: "Extract invoice table from portal or workspace", actionType: "extract_table" },
-      { id: "gst_s2", order: 2, label: "Reconcile GST sums & missing invoices", actionType: "extract", parameterKey: "invoiceColumn" },
-      { id: "gst_s3", order: 3, label: "Prepare discrepancy audit summary", actionType: "multi_step" },
+      {
+        id: "gst_s1",
+        order: 1,
+        label: "Extract invoice table from portal or workspace",
+        actionType: "extract_table",
+      },
+      {
+        id: "gst_s2",
+        order: 2,
+        label: "Reconcile GST sums & missing invoices",
+        actionType: "extract",
+        parameterKey: "invoiceColumn",
+      },
+      {
+        id: "gst_s3",
+        order: 3,
+        label: "Prepare discrepancy audit summary",
+        actionType: "multi_step",
+      },
     ],
   },
   {
@@ -771,13 +804,36 @@ export const BUSINESS_WORKFLOW_TEMPLATES: BusinessWorkflowTemplate[] = [
       "Compute return rate, RTO counts, and SKU return anomalies from seller order exports.",
     requiredConnectors: ["google_sheets"],
     parameters: [
-      { key: "returnThresholdPct", label: "Alert Threshold (%)", type: "number", defaultValue: 12, required: true },
+      {
+        key: "returnThresholdPct",
+        label: "Alert Threshold (%)",
+        type: "number",
+        defaultValue: 12,
+        required: true,
+      },
     ],
     defaultSchedule: { type: "recurring", frequency: "daily", timeOfDay: "09:30" },
     steps: [
-      { id: "ret_s1", order: 1, label: "Collect seller orders & return status rows", actionType: "extract_table" },
-      { id: "ret_s2", order: 2, label: "Calculate SKU return & RTO rate", actionType: "extract", parameterKey: "returnThresholdPct" },
-      { id: "ret_s3", order: 3, label: "Draft returns escalation report (approval required before send)", actionType: "click", isConsequential: true },
+      {
+        id: "ret_s1",
+        order: 1,
+        label: "Collect seller orders & return status rows",
+        actionType: "extract_table",
+      },
+      {
+        id: "ret_s2",
+        order: 2,
+        label: "Calculate SKU return & RTO rate",
+        actionType: "extract",
+        parameterKey: "returnThresholdPct",
+      },
+      {
+        id: "ret_s3",
+        order: 3,
+        label: "Draft returns escalation report (approval required before send)",
+        actionType: "click",
+        isConsequential: true,
+      },
     ],
   },
   {
@@ -788,13 +844,36 @@ export const BUSINESS_WORKFLOW_TEMPLATES: BusinessWorkflowTemplate[] = [
       "Scan stock quantities across warehouse sheets, flag SKUs below threshold, and stage supplier reorder draft.",
     requiredConnectors: ["slack"],
     parameters: [
-      { key: "minStockUnits", label: "Low Stock Threshold", type: "number", defaultValue: 10, required: true },
+      {
+        key: "minStockUnits",
+        label: "Low Stock Threshold",
+        type: "number",
+        defaultValue: 10,
+        required: true,
+      },
     ],
     defaultSchedule: { type: "recurring", frequency: "daily", timeOfDay: "08:00" },
     steps: [
-      { id: "inv_s1", order: 1, label: "Read inventory sheet & stock levels", actionType: "extract_table" },
-      { id: "inv_s2", order: 2, label: "Flag SKUs at or below threshold", actionType: "extract", parameterKey: "minStockUnits" },
-      { id: "inv_s3", order: 3, label: "Notify purchasing channel after approval", actionType: "click", isConsequential: true },
+      {
+        id: "inv_s1",
+        order: 1,
+        label: "Read inventory sheet & stock levels",
+        actionType: "extract_table",
+      },
+      {
+        id: "inv_s2",
+        order: 2,
+        label: "Flag SKUs at or below threshold",
+        actionType: "extract",
+        parameterKey: "minStockUnits",
+      },
+      {
+        id: "inv_s3",
+        order: 3,
+        label: "Notify purchasing channel after approval",
+        actionType: "click",
+        isConsequential: true,
+      },
     ],
   },
   {
@@ -805,12 +884,29 @@ export const BUSINESS_WORKFLOW_TEMPLATES: BusinessWorkflowTemplate[] = [
       "Compare current supplier quotes against historical PO rates and surface price hikes cleanly.",
     requiredConnectors: ["google_drive"],
     parameters: [
-      { key: "maxVariancePct", label: "Allowed Price Variance (%)", type: "number", defaultValue: 5, required: true },
+      {
+        key: "maxVariancePct",
+        label: "Allowed Price Variance (%)",
+        type: "number",
+        defaultValue: 5,
+        required: true,
+      },
     ],
     defaultSchedule: { type: "manual", frequency: "manual" },
     steps: [
-      { id: "sup_s1", order: 1, label: "Load supplier price sheet & historical baseline", actionType: "extract" },
-      { id: "sup_s2", order: 2, label: "Compute SKU-level price delta & variance %", actionType: "multi_step", parameterKey: "maxVariancePct" },
+      {
+        id: "sup_s1",
+        order: 1,
+        label: "Load supplier price sheet & historical baseline",
+        actionType: "extract",
+      },
+      {
+        id: "sup_s2",
+        order: 2,
+        label: "Compute SKU-level price delta & variance %",
+        actionType: "multi_step",
+        parameterKey: "maxVariancePct",
+      },
     ],
   },
   {
@@ -821,12 +917,29 @@ export const BUSINESS_WORKFLOW_TEMPLATES: BusinessWorkflowTemplate[] = [
       "Aggregate revenue, gross margin, return rate, and open alerts into an executive digest.",
     requiredConnectors: ["gmail", "google_sheets"],
     parameters: [
-      { key: "recipientEmail", label: "Digest Recipient", type: "string", defaultValue: "", required: false },
+      {
+        key: "recipientEmail",
+        label: "Digest Recipient",
+        type: "string",
+        defaultValue: "",
+        required: false,
+      },
     ],
     defaultSchedule: { type: "recurring", frequency: "daily", timeOfDay: "19:00" },
     steps: [
-      { id: "kpi_s1", order: 1, label: "Compute daily business KPIs deterministically", actionType: "extract" },
-      { id: "kpi_s2", order: 2, label: "Format executive digest & await send confirmation", actionType: "click", isConsequential: true },
+      {
+        id: "kpi_s1",
+        order: 1,
+        label: "Compute daily business KPIs deterministically",
+        actionType: "extract",
+      },
+      {
+        id: "kpi_s2",
+        order: 2,
+        label: "Format executive digest & await send confirmation",
+        actionType: "click",
+        isConsequential: true,
+      },
     ],
   },
 ];
