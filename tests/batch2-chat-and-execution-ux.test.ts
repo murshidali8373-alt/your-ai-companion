@@ -13,7 +13,12 @@ import {
   deriveExtractedItemsFromSnapshot,
   parseCapturedSnapshotJson,
 } from "../src/components/webpage-inspector";
-import { executeAgentDag, getDagController, skipDagSubtask } from "../src/lib/agents/dag-executor";
+import {
+  executeAgentDag,
+  getDagController,
+  isDagRunActive,
+  skipDagSubtask,
+} from "../src/lib/agents/dag-executor";
 import type { AgentDagRunState, AgentSubtaskSpec } from "../src/lib/agents/types";
 
 const ROOT = process.cwd();
@@ -338,5 +343,71 @@ describe("Batch 2 — Multi-Agent DAG Execution, Skip Step Integrity & Stop Cave
     expect(spJs).toContain("syncSettingsApiKeyUi");
     expect(spJs).not.toContain('settingsApiKeyInput").value = userApiKey');
     expect(modelHub).toContain("••••••••");
+  });
+
+  it("enforces Batch 2 review fixes: active-run guard, skip_step/retryFailed sync, MutationObserver cleanup, and Buddy scroll reset", async () => {
+    const hookSrc = readProjectFile("src/hooks/use-smart-auto-scroll.ts");
+    expect(hookSrc).toContain("MutationObserver");
+    expect(hookSrc).toContain("mo?.disconnect()");
+    expect(hookSrc).toContain("ro?.disconnect()");
+
+    const spJs = readProjectFile("extension/sidepanel.js");
+    expect(spJs).toContain("_mutationObserver");
+    expect(spJs).toContain("BuddyChatScroll.destroy()");
+
+    const voiceDemo = readProjectFile("src/components/voice-demo.tsx");
+    expect(voiceDemo).toContain("smartScroll.notifyUserMessageSent()");
+
+    const appFns = readProjectFile("src/lib/app.functions.ts");
+    const agentsApi = readProjectFile("src/routes/api/public/extension/agents.ts");
+    expect(appFns).toContain("isDagRunActive");
+    expect(appFns).toContain("ctrl?.retryFailed()");
+    expect(agentsApi).toContain("isDagRunActive");
+    expect(agentsApi).toContain("ctrl?.retryFailed()");
+
+    // Verify controller active-run tracking + skip/retryFailed behavior in live DAG execution
+    const runId = "run_batch2_review_regression";
+    expect(isDagRunActive(runId)).toBe(false);
+    let releaseFirst!: () => void;
+    let calls = 0;
+
+    const p = executeAgentDag({
+      runId,
+      userId: "user_1",
+      objective: "Batch 2 review verification",
+      subtasks: [
+        makeSubtask({ id: "a", title: "Step A" }),
+        makeSubtask({ id: "b", title: "Step B", dependencies: ["a"] }),
+      ],
+      runner: async (sub) => {
+        calls++;
+        if (sub.id === "a" && calls === 1) {
+          await new Promise<void>((r) => {
+            releaseFirst = r;
+          });
+          return { ok: false, summary: "First failure", confidence: 0, provenance: "test" };
+        }
+        return { ok: true, summary: "Done", confidence: 0.9, provenance: "test" };
+      },
+    });
+
+    await new Promise((r) => setTimeout(r, 15));
+    expect(isDagRunActive(runId)).toBe(true);
+    const ctrl = getDagController(runId);
+    expect(ctrl).toBeDefined();
+    expect(ctrl!.retryFailed()).toBe(false);
+
+    releaseFirst();
+    const state = await p;
+    expect(isDagRunActive(runId)).toBe(false);
+    expect(state.status).toBe("failed");
+    expect(state.subtasks[0]!.status).toBe("failed");
+    expect(state.subtasks[1]!.status).toBe("skipped");
+
+    // retryFailed on ctrl resets only the failed step and preserves non-failed steps
+    const didReset = ctrl!.retryFailed();
+    expect(didReset).toBe(true);
+    expect(ctrl!.getRunState().subtasks[0]!.status).toBe("pending");
+    expect(ctrl!.getRunState().subtasks[1]!.status).toBe("skipped");
   });
 });

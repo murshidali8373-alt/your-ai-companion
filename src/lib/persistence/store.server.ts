@@ -223,6 +223,22 @@ export async function listWorkspaceFiles(
   }
 }
 
+export async function deleteWorkspaceBinaryFile(
+  scopeId: string,
+  fileName: string,
+): Promise<boolean> {
+  const filePath = resolveSafeWorkspacePath(scopeId, "files", fileName);
+  try {
+    await fsp.unlink(filePath);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return false;
+    }
+    throw err;
+  }
+}
+
 export function clearScopedStoreForTests(scopeId?: string): void {
   const target = scopeId
     ? path.resolve(getDataRootDir(), sanitizeScopeId(scopeId))

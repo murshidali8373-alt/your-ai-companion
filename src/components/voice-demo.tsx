@@ -171,6 +171,7 @@ export function VoiceDemo() {
         ];
       }
 
+      smartScroll.notifyUserMessageSent();
       setTurns(existingTurns);
       buddy.setEmotion(BUDDY_EMOTION_STATES.HAPPY, {
         durationMs: 2000,
@@ -178,7 +179,7 @@ export function VoiceDemo() {
         reason: `Switched to ${newPreset.name}`,
       });
     },
-    [selectedSlug, buddy],
+    [selectedSlug, buddy, smartScroll],
   );
 
   // Listen for global Buddy selection events

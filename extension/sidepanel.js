@@ -1086,6 +1086,7 @@ function switchBuddy(slugOrId, { persist = true, silent = false } = {}) {
   document.querySelectorAll(".buddy-card").forEach((card) => {
     const isThis = card.dataset.slug === selectedBuddySlug;
     card.classList.toggle("active", isThis);
+    card.setAttribute("aria-pressed", isThis ? "true" : "false");
   });
 
   // 2. Update Active Persona Banner
@@ -1146,16 +1147,20 @@ function renderBuddyCarousel() {
   container.innerHTML = "";
 
   allBuddies.forEach((buddy) => {
-    const card = document.createElement("div");
-    card.className = `buddy-card ${buddy.slug === selectedBuddySlug ? "active" : ""} ${buddy.isCustom ? "custom-badge" : ""}`;
+    const isSelected = buddy.slug === selectedBuddySlug;
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = `buddy-card ${isSelected ? "active" : ""} ${buddy.isCustom ? "custom-badge" : ""}`;
     card.dataset.slug = buddy.slug;
+    card.setAttribute("aria-pressed", isSelected ? "true" : "false");
+    card.setAttribute("aria-label", `${buddy.name}: ${buddy.tagline}`);
     card.title = `${buddy.name} — ${buddy.tagline}`;
 
     const thumb = document.createElement("div");
     thumb.className = "buddy-thumb";
     const img = document.createElement("img");
     img.src = normalizeExtensionAssetUrl(buddy.image);
-    img.alt = buddy.name;
+    img.alt = "";
     img.loading = "lazy";
     img.onerror = () => {
       img.onerror = null;
@@ -1185,13 +1190,20 @@ function renderBuddyCarousel() {
   }
 }
 
-// Setup Gaze tracking across SVG fallback + 3D GLB Buddy
-window.addEventListener("mousemove", (e) => {
+// Setup Gaze tracking across SVG fallback + 3D GLB Buddy (throttled via rAF & skipped when hidden)
+let gazeRafId = 0;
+let pendingGazePoint = null;
+function applyGazeTrackingFrame() {
+  gazeRafId = 0;
+  if (document.hidden || $("tabChat")?.hidden) return;
+  const pt = pendingGazePoint;
+  if (!pt) return;
   const stage = $("characterStage");
-  if (!stage) return;
+  if (!stage || stage.style.display === "none") return;
   const rect = stage.getBoundingClientRect();
-  const nx = (e.clientX - (rect.left + rect.width / 2)) / (window.innerWidth / 2);
-  const ny = (e.clientY - (rect.top + rect.height * 0.4)) / (window.innerHeight / 2);
+  if (!rect.width || !rect.height) return;
+  const nx = (pt.x - (rect.left + rect.width / 2)) / (window.innerWidth / 2);
+  const ny = (pt.y - (rect.top + rect.height * 0.4)) / (window.innerHeight / 2);
   if (buddy3dViewer && currentEmotion !== "privacy") {
     buddy3dViewer.lookAt(Math.max(-1, Math.min(1, nx)), Math.max(-1, Math.min(1, ny)));
   }
@@ -1203,12 +1215,33 @@ window.addEventListener("mousemove", (e) => {
     pupilLeft.setAttribute("transform", `translate(${clampX.toFixed(2)}, ${clampY.toFixed(2)})`);
     pupilRight.setAttribute("transform", `translate(${clampX.toFixed(2)}, ${clampY.toFixed(2)})`);
   }
-});
+}
+
+window.addEventListener(
+  "mousemove",
+  (e) => {
+    if (document.hidden || $("tabChat")?.hidden) return;
+    pendingGazePoint = { x: e.clientX, y: e.clientY };
+    if (!gazeRafId && typeof requestAnimationFrame === "function") {
+      gazeRafId = requestAnimationFrame(applyGazeTrackingFrame);
+    }
+  },
+  { passive: true },
+);
+
+function stopBlinking() {
+  if (blinkInterval) {
+    clearInterval(blinkInterval);
+    blinkInterval = null;
+  }
+}
 
 // Setup Blinking
 function setupBlinking() {
-  if (blinkInterval) clearInterval(blinkInterval);
+  stopBlinking();
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
   blinkInterval = setInterval(() => {
+    if (document.hidden || $("tabChat")?.hidden) return;
     const lidLeft = $("rigLidLeft");
     const lidRight = $("rigLidRight");
     const pupilLeft = $("rigPupilLeft");
@@ -1557,7 +1590,7 @@ function appendAutoLinkedText(parent, text) {
 function appendSafeInlineNodes(parent, line) {
   const src = String(line || "");
   const tokenRe =
-    /(`[^`\n]+`)|(\[[^\]]+\]\([^)]+\))|(\*\*[^*\n]+\*\*|__[^_\n]+__)|(\*[^*\n]+\*)|(\~\~[^~\n]+\~\~)/g;
+    /(`[^`\n]+`)|(\[[^\]]+\]\([^)]+\))|(\*\*[^*\n]+\*\*|__[^_\n]+__)|(\*[^*\n]+\*)|(~~[^~\n]+~~)/g;
   let lastIdx = 0;
   let match;
   while ((match = tokenRe.exec(src)) !== null) {
@@ -1811,6 +1844,7 @@ const BuddyChatScroll = {
   _boundBtn: null,
   _onScrollHandler: null,
   _resizeObserver: null,
+  _mutationObserver: null,
 
   isNearBottom(box) {
     if (!box) return true;
@@ -1837,19 +1871,29 @@ const BuddyChatScroll = {
     }
   },
 
+  destroy() {
+    if (this._boundBox && this._onScrollHandler) {
+      this._boundBox.removeEventListener("scroll", this._onScrollHandler);
+    }
+    if (this._resizeObserver) {
+      this._resizeObserver.disconnect();
+      this._resizeObserver = null;
+    }
+    if (this._mutationObserver) {
+      this._mutationObserver.disconnect();
+      this._mutationObserver = null;
+    }
+    this._boundBox = null;
+    this._onScrollHandler = null;
+  },
+
   init() {
     const box = $("historyBox");
     const btn = $("historyJumpBtn");
     if (!box) return;
 
     if (this._boundBox !== box) {
-      if (this._boundBox && this._onScrollHandler) {
-        this._boundBox.removeEventListener("scroll", this._onScrollHandler);
-      }
-      if (this._resizeObserver) {
-        this._resizeObserver.disconnect();
-        this._resizeObserver = null;
-      }
+      this.destroy();
 
       this._onScrollHandler = () => {
         const pinned = this.isNearBottom(box);
@@ -1867,14 +1911,38 @@ const BuddyChatScroll = {
         }
       };
 
+      const syncBottomIfPinned = () => {
+        if (this.isPinnedToBottom) {
+          box.scrollTop = box.scrollHeight;
+        }
+      };
+
       box.addEventListener("scroll", this._onScrollHandler, { passive: true });
       if (typeof ResizeObserver !== "undefined") {
-        this._resizeObserver = new ResizeObserver(() => {
-          if (this.isPinnedToBottom) {
-            box.scrollTop = box.scrollHeight;
-          }
-        });
+        this._resizeObserver = new ResizeObserver(syncBottomIfPinned);
         this._resizeObserver.observe(box);
+        if (box.firstElementChild) {
+          Array.from(box.children).forEach((child) => this._resizeObserver.observe(child));
+        }
+      }
+      if (typeof MutationObserver !== "undefined") {
+        this._mutationObserver = new MutationObserver((mutations) => {
+          if (this._resizeObserver) {
+            for (const m of mutations) {
+              m.addedNodes.forEach((node) => {
+                if (node && node.nodeType === 1) {
+                  this._resizeObserver.observe(node);
+                }
+              });
+            }
+          }
+          syncBottomIfPinned();
+        });
+        this._mutationObserver.observe(box, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+        });
       }
       this._boundBox = box;
     }
@@ -9152,9 +9220,17 @@ const NATURAL_PLACEHOLDERS = [
 let naturalPlaceholderTimer = null;
 let placeholderIdx = 0;
 
+function stopRotatingPlaceholders() {
+  if (naturalPlaceholderTimer) {
+    clearInterval(naturalPlaceholderTimer);
+    naturalPlaceholderTimer = null;
+  }
+}
+
 function startRotatingPlaceholders() {
-  if (naturalPlaceholderTimer) clearInterval(naturalPlaceholderTimer);
+  stopRotatingPlaceholders();
   naturalPlaceholderTimer = setInterval(() => {
+    if (document.hidden || $("tabChat")?.hidden) return;
     const input = $("promptInput");
     if (input && !input.value.trim() && document.activeElement !== input) {
       placeholderIdx = (placeholderIdx + 1) % NATURAL_PLACEHOLDERS.length;
@@ -10021,11 +10097,15 @@ function switchTab(tabName) {
   if (btn) btn.click();
 }
 
-// Tab Switching
-document.querySelectorAll(".tab-btn").forEach((btn) => {
+// Tab Switching with ARIA sync & keyboard navigation
+const tabButtons = Array.from(document.querySelectorAll(".tab-btn"));
+tabButtons.forEach((btn, idx) => {
   btn.onclick = () => {
-    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
+    tabButtons.forEach((b) => {
+      const isSelected = b === btn;
+      b.classList.toggle("active", isSelected);
+      b.setAttribute("aria-selected", isSelected ? "true" : "false");
+    });
     const targetTab = btn.getAttribute("data-tab");
     if ($("tabChat")) $("tabChat").hidden = targetTab !== "chat";
     if ($("tabPage")) $("tabPage").hidden = targetTab !== "page";
@@ -10033,6 +10113,8 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     if ($("tabModels")) $("tabModels").hidden = targetTab !== "models";
     if ($("tabRig")) $("tabRig").hidden = targetTab !== "rig";
     if ($("tabSettings")) $("tabSettings").hidden = targetTab !== "settings";
+
+    buddy3dViewer?.setPaused?.(targetTab !== "chat" || $("sizeSelect")?.value === "hidden");
 
     if (targetTab === "page") loadPageContextSummary();
     if (targetTab === "tasks") {
@@ -10045,6 +10127,23 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     }
     if (targetTab === "models") loadModelHubStatus();
     if (targetTab === "settings") loadSettingsTab();
+  };
+
+  btn.onkeydown = (e) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft" && e.key !== "Home" && e.key !== "End") {
+      return;
+    }
+    e.preventDefault();
+    let nextIdx = idx;
+    if (e.key === "ArrowRight") nextIdx = (idx + 1) % tabButtons.length;
+    else if (e.key === "ArrowLeft") nextIdx = (idx - 1 + tabButtons.length) % tabButtons.length;
+    else if (e.key === "Home") nextIdx = 0;
+    else if (e.key === "End") nextIdx = tabButtons.length - 1;
+    const nextBtn = tabButtons[nextIdx];
+    if (nextBtn) {
+      nextBtn.focus();
+      nextBtn.click();
+    }
   };
 });
 
@@ -10292,6 +10391,23 @@ async function setLocalMemoriesStore(memories) {
   } catch {}
 }
 
+let pendingDeleteMemoryKey = null;
+
+function setMemoriesStatus(message, tone = "info") {
+  const el = $("memoriesStatusMsg");
+  if (!el) return;
+  if (!message) {
+    el.hidden = true;
+    el.textContent = "";
+    el.className = "inline-feedback";
+    return;
+  }
+  el.textContent = message;
+  el.className =
+    `inline-feedback ${tone === "error" ? "error" : tone === "success" ? "success" : ""}`.trim();
+  el.hidden = false;
+}
+
 function renderMemoriesListUI(memories) {
   const list = $("memoriesList");
   if (!list) return;
@@ -10300,8 +10416,19 @@ function renderMemoriesListUI(memories) {
     memories.forEach((m) => {
       const row = document.createElement("div");
       row.className = "item-row";
+      row.style.flexDirection = "column";
+      row.style.alignItems = "stretch";
+      row.style.gap = "5px";
+
+      const top = document.createElement("div");
+      top.style.display = "flex";
+      top.style.justifyContent = "space-between";
+      top.style.alignItems = "center";
+      top.style.gap = "6px";
+
       const left = document.createElement("div");
       left.style.overflow = "hidden";
+      left.style.minWidth = "0";
       const title = document.createElement("div");
       title.style.fontWeight = "600";
       title.style.color = "var(--text)";
@@ -10309,18 +10436,62 @@ function renderMemoriesListUI(memories) {
       const val = document.createElement("div");
       val.style.fontSize = "10px";
       val.style.color = "var(--text-muted)";
+      val.style.overflowWrap = "anywhere";
       val.textContent = m.value || "";
       left.append(title, val);
 
       const delBtn = document.createElement("button");
+      delBtn.type = "button";
       delBtn.className = "ghost delete-mem-btn";
-      delBtn.style.padding = "2px 5px";
+      delBtn.style.padding = "2px 6px";
       delBtn.style.fontSize = "10px";
-      delBtn.style.color = "var(--destructive)";
+      delBtn.style.color = "var(--destructive-text)";
+      delBtn.setAttribute("aria-label", `Forget memory ${m.key || ""}`);
       delBtn.textContent = "🗑️";
-      delBtn.onclick = () => deleteMemory(m.key);
+      delBtn.onclick = () => {
+        pendingDeleteMemoryKey = m.key;
+        renderMemoriesListUI(memories);
+      };
 
-      row.append(left, delBtn);
+      top.append(left, delBtn);
+      row.appendChild(top);
+
+      if (pendingDeleteMemoryKey === m.key) {
+        const confirmRow = document.createElement("div");
+        confirmRow.className = "confirm-inline-row";
+        confirmRow.setAttribute("role", "alertdialog");
+        const promptSpan = document.createElement("span");
+        promptSpan.textContent = `Forget "${m.key}"?`;
+        const btns = document.createElement("div");
+        btns.style.display = "flex";
+        btns.style.gap = "4px";
+
+        const confirmBtn = document.createElement("button");
+        confirmBtn.type = "button";
+        confirmBtn.className = "confirm-danger-btn";
+        confirmBtn.textContent = "Confirm";
+        confirmBtn.onclick = async () => {
+          confirmBtn.disabled = true;
+          confirmBtn.textContent = "Deleting…";
+          await deleteMemory(m.key);
+        };
+
+        const cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "ghost";
+        cancelBtn.style.padding = "2px 7px";
+        cancelBtn.style.fontSize = "10px";
+        cancelBtn.textContent = "Cancel";
+        cancelBtn.onclick = () => {
+          pendingDeleteMemoryKey = null;
+          renderMemoriesListUI(memories);
+        };
+
+        btns.append(confirmBtn, cancelBtn);
+        confirmRow.append(promptSpan, btns);
+        row.appendChild(confirmRow);
+      }
+
       list.appendChild(row);
     });
   } else {
@@ -10354,11 +10525,12 @@ async function loadMemories() {
         if (!merged.some((m) => m.key === lm.key)) merged.push(lm);
       }
       await setLocalMemoriesStore(merged);
+      setMemoriesStatus("");
       renderMemoriesListUI(merged);
       return;
     }
   } catch {
-    // Fall back to local extension storage memories seamlessly
+    setMemoriesStatus("Using locally cached memories (backend unreachable).");
   }
   const fallbackList = await getLocalMemoriesStore();
   renderMemoriesListUI(fallbackList);
@@ -10381,8 +10553,13 @@ async function deleteMemory(key) {
       { method: "DELETE", headers },
       5000,
     ).catch(() => {});
+    pendingDeleteMemoryKey = null;
+    setMemoriesStatus(`Forgot "${key}".`, "success");
+    if ($("statusText")) $("statusText").textContent = `✓ Forgot memory "${key}".`;
     loadMemories();
   } catch (err) {
+    pendingDeleteMemoryKey = null;
+    setMemoriesStatus("Could not delete memory right now.", "error");
     if ($("statusText")) $("statusText").textContent = "Could not delete memory right now.";
     console.error("deleteMemory error", err);
   }
@@ -10807,22 +10984,29 @@ function renderProactiveSuggestionsUI(suggestions) {
   card.hidden = false;
 }
 
-async function loadWorkspaceArtifacts() {
-  const list = $("workspaceArtifactsList");
-  if (!list) return;
-  const res = await sendRuntimeMessage({ type: "WORKSPACE_API", action: "list" }).catch(() => null);
-  if (!res?.ok) {
-    list.textContent = "";
-    const msg = document.createElement("div");
-    msg.style.color = "var(--text-muted)";
-    msg.style.fontSize = "10px";
-    msg.textContent = res?.message || "Workspace API offline.";
-    list.appendChild(msg);
+let pendingDeleteArtifactId = null;
+let pendingDeleteWorkflowId = null;
+
+function setInlineStatus(elId, message, tone = "info") {
+  const el = $(elId);
+  if (!el) return;
+  if (!message) {
+    el.hidden = true;
+    el.textContent = "";
+    el.className = "inline-feedback";
     return;
   }
-  cachedWorkspaceArtifacts = Array.isArray(res.artifacts) ? res.artifacts : [];
+  el.textContent = message;
+  el.className =
+    `inline-feedback ${tone === "error" ? "error" : tone === "success" ? "success" : ""}`.trim();
+  el.hidden = false;
+}
+
+function renderWorkspaceArtifactsList(artifacts) {
+  const list = $("workspaceArtifactsList");
+  if (!list) return;
   list.textContent = "";
-  if (cachedWorkspaceArtifacts.length === 0) {
+  if (!Array.isArray(artifacts) || artifacts.length === 0) {
     const empty = document.createElement("div");
     empty.style.color = "var(--text-muted)";
     empty.style.fontSize = "10px";
@@ -10830,16 +11014,29 @@ async function loadWorkspaceArtifacts() {
     list.appendChild(empty);
     return;
   }
-  cachedWorkspaceArtifacts.forEach((art) => {
+
+  artifacts.forEach((art) => {
     const row = document.createElement("div");
     row.className = "item-row";
+    row.style.flexDirection = "column";
+    row.style.alignItems = "stretch";
+    row.style.gap = "5px";
+
+    const top = document.createElement("div");
+    top.style.display = "flex";
+    top.style.justifyContent = "space-between";
+    top.style.alignItems = "center";
+    top.style.gap = "6px";
+
     const left = document.createElement("div");
     left.style.overflow = "hidden";
-    left.style.maxWidth = "62%";
+    left.style.minWidth = "0";
+    left.style.flex = "1";
     const name = document.createElement("div");
     name.style.fontWeight = "600";
     name.style.fontSize = "10px";
     name.style.color = "var(--text)";
+    name.style.overflowWrap = "anywhere";
     name.textContent = `${art.filename} (${Math.max(1, Math.round((art.sizeBytes || 0) / 1024))} KB)`;
     const summary = document.createElement("div");
     summary.style.fontSize = "9px";
@@ -10850,69 +11047,179 @@ async function loadWorkspaceArtifacts() {
     const actions = document.createElement("div");
     actions.style.display = "flex";
     actions.style.gap = "3px";
+    actions.style.flexShrink = "0";
 
     const inspectBtn = document.createElement("button");
+    inspectBtn.type = "button";
     inspectBtn.className = "ghost";
     inspectBtn.style.padding = "2px 5px";
     inspectBtn.style.fontSize = "9px";
     inspectBtn.textContent = "View";
+    inspectBtn.setAttribute("aria-label", `Inspect ${art.filename}`);
     inspectBtn.onclick = async () => {
-      const insp = await sendRuntimeMessage({
-        type: "WORKSPACE_API",
-        action: "inspect",
-        artifactId: art.artifactId,
-      });
-      if (insp?.ok && insp.artifact && $("extractedDataCard") && $("extractedContent")) {
-        $("extractedDataCard").hidden = false;
-        if ($("extractedCountTitle"))
-          $("extractedCountTitle").textContent = `📂 ${insp.artifact.filename}`;
-        $("extractedContent").textContent = JSON.stringify(
-          insp.artifact.parsedPreview || insp.artifact,
-          null,
-          2,
-        );
+      inspectBtn.disabled = true;
+      inspectBtn.textContent = "…";
+      try {
+        const insp = await sendRuntimeMessage({
+          type: "WORKSPACE_API",
+          action: "inspect",
+          artifactId: art.artifactId,
+        });
+        if (insp?.ok && insp.artifact && $("extractedDataCard") && $("extractedContent")) {
+          $("extractedDataCard").hidden = false;
+          if ($("extractedCountTitle"))
+            $("extractedCountTitle").textContent = `📂 ${insp.artifact.filename}`;
+          $("extractedContent").textContent = JSON.stringify(
+            insp.artifact.parsedPreview || insp.artifact,
+            null,
+            2,
+          );
+          setInlineStatus("workspaceStatusMsg", `Loaded preview for ${art.filename}.`, "success");
+        } else {
+          setInlineStatus(
+            "workspaceStatusMsg",
+            insp?.message || `Could not inspect ${art.filename}.`,
+            "error",
+          );
+        }
+      } finally {
+        inspectBtn.disabled = false;
+        inspectBtn.textContent = "View";
       }
     };
 
     const dlBtn = document.createElement("button");
+    dlBtn.type = "button";
     dlBtn.className = "ghost";
     dlBtn.style.padding = "2px 5px";
     dlBtn.style.fontSize = "9px";
     dlBtn.textContent = "⬇️";
+    dlBtn.setAttribute("aria-label", `Download ${art.filename}`);
     dlBtn.onclick = async () => {
-      const dlRes = await sendRuntimeMessage({
-        type: "WORKSPACE_API",
-        action: "download",
-        artifactId: art.artifactId,
-        filenameHint: art.filename,
-      });
-      if ($("workspaceStatusMsg")) {
-        $("workspaceStatusMsg").textContent = dlRes?.ok
-          ? `Downloaded ${art.filename}.`
-          : dlRes?.message || "Download failed.";
-        $("workspaceStatusMsg").hidden = false;
+      dlBtn.disabled = true;
+      try {
+        const dlRes = await sendRuntimeMessage({
+          type: "WORKSPACE_API",
+          action: "download",
+          artifactId: art.artifactId,
+          filenameHint: art.filename,
+        });
+        setInlineStatus(
+          "workspaceStatusMsg",
+          dlRes?.ok ? `Downloaded ${art.filename}.` : dlRes?.message || "Download failed.",
+          dlRes?.ok ? "success" : "error",
+        );
+      } finally {
+        dlBtn.disabled = false;
       }
     };
 
     const delBtn = document.createElement("button");
+    delBtn.type = "button";
     delBtn.className = "ghost";
     delBtn.style.padding = "2px 5px";
     delBtn.style.fontSize = "9px";
-    delBtn.style.color = "var(--destructive)";
+    delBtn.style.color = "var(--destructive-text)";
     delBtn.textContent = "🗑️";
-    delBtn.onclick = async () => {
-      await sendRuntimeMessage({
-        type: "WORKSPACE_API",
-        action: "delete",
-        artifactId: art.artifactId,
-      });
-      loadWorkspaceArtifacts();
+    delBtn.setAttribute("aria-label", `Delete ${art.filename}`);
+    delBtn.onclick = () => {
+      pendingDeleteArtifactId = art.artifactId;
+      renderWorkspaceArtifactsList(cachedWorkspaceArtifacts);
     };
 
     actions.append(inspectBtn, dlBtn, delBtn);
-    row.append(left, actions);
+    top.append(left, actions);
+    row.appendChild(top);
+
+    if (pendingDeleteArtifactId === art.artifactId) {
+      const confirmRow = document.createElement("div");
+      confirmRow.className = "confirm-inline-row";
+      confirmRow.setAttribute("role", "alertdialog");
+      const promptSpan = document.createElement("span");
+      promptSpan.textContent = `Delete "${art.filename}"?`;
+      const btns = document.createElement("div");
+      btns.style.display = "flex";
+      btns.style.gap = "4px";
+
+      const confirmBtn = document.createElement("button");
+      confirmBtn.type = "button";
+      confirmBtn.className = "confirm-danger-btn";
+      confirmBtn.textContent = "Confirm";
+      confirmBtn.onclick = async () => {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = "Deleting…";
+        const delRes = await sendRuntimeMessage({
+          type: "WORKSPACE_API",
+          action: "delete",
+          artifactId: art.artifactId,
+        }).catch(() => null);
+        pendingDeleteArtifactId = null;
+        if (delRes?.ok === false) {
+          setInlineStatus("workspaceStatusMsg", delRes.message || "Delete failed.", "error");
+        } else {
+          setInlineStatus("workspaceStatusMsg", `Deleted ${art.filename}.`, "success");
+        }
+        loadWorkspaceArtifacts();
+      };
+
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "ghost";
+      cancelBtn.style.padding = "2px 7px";
+      cancelBtn.style.fontSize = "10px";
+      cancelBtn.textContent = "Cancel";
+      cancelBtn.onclick = () => {
+        pendingDeleteArtifactId = null;
+        renderWorkspaceArtifactsList(cachedWorkspaceArtifacts);
+      };
+
+      btns.append(confirmBtn, cancelBtn);
+      confirmRow.append(promptSpan, btns);
+      row.appendChild(confirmRow);
+    }
+
     list.appendChild(row);
   });
+}
+
+async function loadWorkspaceArtifacts() {
+  const list = $("workspaceArtifactsList");
+  const refreshBtn = $("refreshWorkspaceBtn");
+  if (!list) return;
+  if (refreshBtn) refreshBtn.disabled = true;
+  list.innerHTML =
+    '<div style="color: var(--text-muted); font-size: 10px;">Loading workspace files…</div>';
+  try {
+    const res = await sendRuntimeMessage({ type: "WORKSPACE_API", action: "list" }).catch(
+      () => null,
+    );
+    if (!res?.ok) {
+      list.textContent = "";
+      const errWrap = document.createElement("div");
+      errWrap.style.display = "flex";
+      errWrap.style.justifyContent = "space-between";
+      errWrap.style.alignItems = "center";
+      errWrap.style.gap = "6px";
+      const msg = document.createElement("span");
+      msg.style.color = "var(--destructive-text)";
+      msg.style.fontSize = "10px";
+      msg.textContent = res?.message || "Workspace API offline.";
+      const retryBtn = document.createElement("button");
+      retryBtn.type = "button";
+      retryBtn.className = "ghost";
+      retryBtn.style.padding = "2px 7px";
+      retryBtn.style.fontSize = "9px";
+      retryBtn.textContent = "Retry";
+      retryBtn.onclick = () => loadWorkspaceArtifacts();
+      errWrap.append(msg, retryBtn);
+      list.appendChild(errWrap);
+      return;
+    }
+    cachedWorkspaceArtifacts = Array.isArray(res.artifacts) ? res.artifacts : [];
+    renderWorkspaceArtifactsList(cachedWorkspaceArtifacts);
+  } finally {
+    if (refreshBtn) refreshBtn.disabled = false;
+  }
 }
 
 if ($("refreshWorkspaceBtn")) $("refreshWorkspaceBtn").onclick = loadWorkspaceArtifacts;
@@ -10921,172 +11228,259 @@ if ($("workspaceUploadTriggerBtn")) {
 }
 if ($("workspaceCompareBtn")) {
   $("workspaceCompareBtn").onclick = async () => {
+    const btn = $("workspaceCompareBtn");
     const sheets = cachedWorkspaceArtifacts.filter((a) =>
       /^(xlsx|csv|tsv)$/i.test(a.extension || ""),
     );
-    const statusEl = $("workspaceStatusMsg");
     if (sheets.length < 2) {
-      if (statusEl) {
-        statusEl.textContent = "Upload at least 2 CSV/TSV/XLSX files to compare.";
-        statusEl.hidden = false;
-      }
+      setInlineStatus(
+        "workspaceStatusMsg",
+        "Upload at least 2 CSV/TSV/XLSX files to compare.",
+        "error",
+      );
       return;
     }
-    const cmpRes = await sendRuntimeMessage({
-      type: "WORKSPACE_API",
-      action: "compare",
-      payload: {
-        baseArtifactId: sheets[1].artifactId,
-        compareArtifactId: sheets[0].artifactId,
-      },
-    });
-    if (cmpRes?.ok && $("extractedDataCard") && $("extractedContent")) {
-      $("extractedDataCard").hidden = false;
-      if ($("extractedCountTitle")) $("extractedCountTitle").textContent = "⚖️ Sheet Comparison";
-      $("extractedContent").textContent = JSON.stringify(cmpRes.comparison || cmpRes, null, 2);
-      if (statusEl) {
-        statusEl.textContent = `Compared ${sheets[1].filename} vs ${sheets[0].filename}.`;
-        statusEl.hidden = false;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Comparing…";
+    }
+    try {
+      const cmpRes = await sendRuntimeMessage({
+        type: "WORKSPACE_API",
+        action: "compare",
+        payload: {
+          baseArtifactId: sheets[1].artifactId,
+          compareArtifactId: sheets[0].artifactId,
+        },
+      });
+      if (cmpRes?.ok && $("extractedDataCard") && $("extractedContent")) {
+        $("extractedDataCard").hidden = false;
+        if ($("extractedCountTitle")) $("extractedCountTitle").textContent = "⚖️ Sheet Comparison";
+        $("extractedContent").textContent = JSON.stringify(cmpRes.comparison || cmpRes, null, 2);
+        setInlineStatus(
+          "workspaceStatusMsg",
+          `Compared ${sheets[1].filename} vs ${sheets[0].filename}.`,
+          "success",
+        );
+      } else {
+        setInlineStatus("workspaceStatusMsg", cmpRes?.message || "Comparison failed.", "error");
       }
-    } else if (statusEl) {
-      statusEl.textContent = cmpRes?.message || "Comparison failed.";
-      statusEl.hidden = false;
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "⚖️ Compare Latest 2 Sheets";
+      }
     }
   };
 }
 if ($("workspaceExportReportBtn")) {
   $("workspaceExportReportBtn").onclick = async () => {
-    const statusEl = $("workspaceStatusMsg");
+    const btn = $("workspaceExportReportBtn");
     const title = activePlan?.title || "AI Buddy Verified Report";
     const bodyText =
       $("extractedContent")?.textContent?.trim() ||
       cachedWorkspaceArtifacts.map((a) => `${a.filename}: ${a.summary}`).join("\n") ||
       "Generated from AI Buddy File Workspace.";
-    const genRes = await sendRuntimeMessage({
-      type: "WORKSPACE_API",
-      action: "generate",
-      payload: {
-        format: "pdf",
-        filename: `ai-buddy-report-${Date.now()}.pdf`,
-        title,
-        sections: [{ heading: title, body: bodyText.slice(0, 6000) }],
-      },
-    });
-    if (genRes?.ok && genRes.artifactId) {
-      await sendRuntimeMessage({
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Exporting…";
+    }
+    try {
+      const genRes = await sendRuntimeMessage({
         type: "WORKSPACE_API",
-        action: "download",
-        artifactId: genRes.artifactId,
-        filenameHint: genRes.filename,
+        action: "generate",
+        payload: {
+          format: "pdf",
+          filename: `ai-buddy-report-${Date.now()}.pdf`,
+          title,
+          sections: [{ heading: title, body: bodyText.slice(0, 6000) }],
+        },
       });
-      if (statusEl) {
-        statusEl.textContent = `${genRes.summary} Download started.`;
-        statusEl.hidden = false;
+      if (genRes?.ok && genRes.artifactId) {
+        await sendRuntimeMessage({
+          type: "WORKSPACE_API",
+          action: "download",
+          artifactId: genRes.artifactId,
+          filenameHint: genRes.filename,
+        });
+        setInlineStatus("workspaceStatusMsg", `${genRes.summary} Download started.`, "success");
+        loadWorkspaceArtifacts();
+      } else {
+        setInlineStatus("workspaceStatusMsg", genRes?.message || "PDF export failed.", "error");
       }
-      loadWorkspaceArtifacts();
-    } else if (statusEl) {
-      statusEl.textContent = genRes?.message || "PDF export failed.";
-      statusEl.hidden = false;
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "📄 Export Verified PDF";
+      }
     }
   };
 }
 
 async function loadConnectorsStatus() {
   const list = $("connectedAppsList");
+  const refreshBtn = $("refreshConnectorsBtn");
   if (!list) return;
-  const res = await sendRuntimeMessage({ type: "CONNECTORS_API", action: "list" }).catch(
-    () => null,
-  );
-  list.textContent = "";
-  if (!res?.ok || !Array.isArray(res.connectors)) {
-    const msg = document.createElement("div");
-    msg.style.color = "var(--text-muted)";
-    msg.style.fontSize = "10px";
-    msg.textContent = res?.message || "Connectors status unavailable.";
-    list.appendChild(msg);
-    return;
+  if (refreshBtn) refreshBtn.disabled = true;
+  list.innerHTML =
+    '<div style="color: var(--text-muted); font-size: 10px;">Loading connector status…</div>';
+  try {
+    const res = await sendRuntimeMessage({ type: "CONNECTORS_API", action: "list" }).catch(
+      () => null,
+    );
+    list.textContent = "";
+    if (!res?.ok || !Array.isArray(res.connectors)) {
+      const errWrap = document.createElement("div");
+      errWrap.style.display = "flex";
+      errWrap.style.justifyContent = "space-between";
+      errWrap.style.alignItems = "center";
+      errWrap.style.gap = "6px";
+      const msg = document.createElement("span");
+      msg.style.color = "var(--destructive-text)";
+      msg.style.fontSize = "10px";
+      msg.textContent = res?.message || "Connectors status unavailable.";
+      const retryBtn = document.createElement("button");
+      retryBtn.type = "button";
+      retryBtn.className = "ghost";
+      retryBtn.style.padding = "2px 7px";
+      retryBtn.style.fontSize = "9px";
+      retryBtn.textContent = "Retry";
+      retryBtn.onclick = () => loadConnectorsStatus();
+      errWrap.append(msg, retryBtn);
+      list.appendChild(errWrap);
+      return;
+    }
+    if (res.connectors.length === 0) {
+      const empty = document.createElement("div");
+      empty.style.color = "var(--text-muted)";
+      empty.style.fontSize = "10px";
+      empty.textContent = "No external connectors configured.";
+      list.appendChild(empty);
+      return;
+    }
+    res.connectors.forEach((c) => {
+      const row = document.createElement("div");
+      row.className = "item-row";
+      row.style.flexDirection = "column";
+      row.style.alignItems = "stretch";
+      row.style.gap = "4px";
+
+      const top = document.createElement("div");
+      top.style.display = "flex";
+      top.style.justifyContent = "space-between";
+      top.style.alignItems = "center";
+      top.style.gap = "6px";
+
+      const info = document.createElement("div");
+      info.style.minWidth = "0";
+      const title = document.createElement("div");
+      title.style.fontWeight = "600";
+      title.style.fontSize = "10px";
+      title.style.color = "var(--text)";
+      title.textContent = `${c.name} · ${c.operational ? "Connected" : c.authState || "Not Authorized"}`;
+      const sub = document.createElement("div");
+      sub.style.fontSize = "9px";
+      sub.style.color = "var(--text-muted)";
+      sub.textContent =
+        Array.isArray(c.missingRequirements) && c.missingRequirements.length > 0
+          ? c.missingRequirements.join("; ")
+          : c.description || c.reason || (c.requiredScopes || []).join(", ");
+      info.append(title, sub);
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "ghost";
+      btn.style.padding = "2px 6px";
+      btn.style.fontSize = "9px";
+      btn.style.flexShrink = "0";
+      btn.textContent = c.operational ? "Disconnect" : "Connect Token";
+
+      const tokenForm = document.createElement("div");
+      tokenForm.hidden = true;
+      tokenForm.style.display = "flex";
+      tokenForm.style.gap = "4px";
+      const tokIn = document.createElement("input");
+      tokIn.type = "password";
+      tokIn.autocomplete = "off";
+      tokIn.spellcheck = false;
+      tokIn.setAttribute("aria-label", `${c.name} access token`);
+      tokIn.placeholder = `Paste ${c.name} token (stored server-side)`;
+      tokIn.className = "sp-input";
+      tokIn.style.flex = "1";
+      tokIn.style.fontSize = "10px";
+      tokIn.style.padding = "4px";
+      const saveTokBtn = document.createElement("button");
+      saveTokBtn.type = "button";
+      saveTokBtn.className = "ghost";
+      saveTokBtn.style.fontSize = "9px";
+      saveTokBtn.style.padding = "2px 6px";
+      saveTokBtn.textContent = "Save";
+      saveTokBtn.onclick = async () => {
+        const accessToken = tokIn.value.trim();
+        if (!accessToken) {
+          setInlineStatus("connectorsStatusMsg", `Enter a valid ${c.name} token first.`, "error");
+          return;
+        }
+        saveTokBtn.disabled = true;
+        saveTokBtn.textContent = "Saving…";
+        try {
+          const connRes = await sendRuntimeMessage({
+            type: "CONNECTORS_API",
+            action: "connect",
+            payload: { connectorId: c.id, accessToken },
+          }).catch(() => null);
+          tokIn.value = "";
+          if (connRes?.ok === false) {
+            setInlineStatus(
+              "connectorsStatusMsg",
+              connRes.message || `Failed to connect ${c.name}.`,
+              "error",
+            );
+          } else {
+            setInlineStatus("connectorsStatusMsg", `Connected ${c.name}.`, "success");
+          }
+          loadConnectorsStatus();
+        } finally {
+          saveTokBtn.disabled = false;
+          saveTokBtn.textContent = "Save";
+        }
+      };
+      tokenForm.append(tokIn, saveTokBtn);
+
+      btn.onclick = async () => {
+        if (c.operational) {
+          btn.disabled = true;
+          btn.textContent = "Disconnecting…";
+          try {
+            const discRes = await sendRuntimeMessage({
+              type: "CONNECTORS_API",
+              action: "disconnect",
+              connectorId: c.id,
+            }).catch(() => null);
+            setInlineStatus(
+              "connectorsStatusMsg",
+              discRes?.ok === false
+                ? discRes.message || `Failed to disconnect ${c.name}.`
+                : `Disconnected ${c.name}.`,
+              discRes?.ok === false ? "error" : "success",
+            );
+            loadConnectorsStatus();
+          } finally {
+            btn.disabled = false;
+          }
+        } else {
+          tokenForm.hidden = !tokenForm.hidden;
+          if (!tokenForm.hidden) tokIn.focus();
+        }
+      };
+
+      top.append(info, btn);
+      row.append(top, tokenForm);
+      list.appendChild(row);
+    });
+  } finally {
+    if (refreshBtn) refreshBtn.disabled = false;
   }
-  res.connectors.forEach((c) => {
-    const row = document.createElement("div");
-    row.className = "item-row";
-    row.style.flexDirection = "column";
-    row.style.alignItems = "stretch";
-    row.style.gap = "4px";
-
-    const top = document.createElement("div");
-    top.style.display = "flex";
-    top.style.justifyContent = "space-between";
-    top.style.alignItems = "center";
-
-    const info = document.createElement("div");
-    const title = document.createElement("div");
-    title.style.fontWeight = "600";
-    title.style.fontSize = "10px";
-    title.style.color = "var(--text)";
-    title.textContent = `${c.name} · ${c.operational ? "Connected" : c.authState || "Not Authorized"}`;
-    const sub = document.createElement("div");
-    sub.style.fontSize = "9px";
-    sub.style.color = "var(--text-muted)";
-    sub.textContent =
-      Array.isArray(c.missingRequirements) && c.missingRequirements.length > 0
-        ? c.missingRequirements.join("; ")
-        : c.description || c.reason || (c.requiredScopes || []).join(", ");
-    info.append(title, sub);
-
-    const btn = document.createElement("button");
-    btn.className = "ghost";
-    btn.style.padding = "2px 6px";
-    btn.style.fontSize = "9px";
-    btn.textContent = c.operational ? "Disconnect" : "Connect Token";
-
-    const tokenForm = document.createElement("div");
-    tokenForm.hidden = true;
-    tokenForm.style.display = "flex";
-    tokenForm.style.gap = "4px";
-    const tokIn = document.createElement("input");
-    tokIn.type = "password";
-    tokIn.placeholder = `Paste ${c.name} token (stored server-side)`;
-    tokIn.style.flex = "1";
-    tokIn.style.fontSize = "10px";
-    tokIn.style.padding = "4px";
-    tokIn.style.background = "var(--bg-inset)";
-    tokIn.style.color = "var(--text)";
-    tokIn.style.border = "1px solid var(--border)";
-    tokIn.style.borderRadius = "var(--radius-sm)";
-    const saveTokBtn = document.createElement("button");
-    saveTokBtn.className = "ghost";
-    saveTokBtn.style.fontSize = "9px";
-    saveTokBtn.style.padding = "2px 6px";
-    saveTokBtn.textContent = "Save";
-    saveTokBtn.onclick = async () => {
-      const accessToken = tokIn.value.trim();
-      if (!accessToken) return;
-      await sendRuntimeMessage({
-        type: "CONNECTORS_API",
-        action: "connect",
-        payload: { connectorId: c.id, accessToken },
-      });
-      loadConnectorsStatus();
-    };
-    tokenForm.append(tokIn, saveTokBtn);
-
-    btn.onclick = async () => {
-      if (c.operational) {
-        await sendRuntimeMessage({
-          type: "CONNECTORS_API",
-          action: "disconnect",
-          connectorId: c.id,
-        });
-        loadConnectorsStatus();
-      } else {
-        tokenForm.hidden = !tokenForm.hidden;
-      }
-    };
-
-    top.append(info, btn);
-    row.append(top, tokenForm);
-    list.appendChild(row);
-  });
 }
 
 if ($("refreshConnectorsBtn")) $("refreshConnectorsBtn").onclick = loadConnectorsStatus;
@@ -11112,18 +11506,36 @@ function showWorkflowDraftPreview(draft) {
 
 if ($("previewWorkflowBtn")) {
   $("previewWorkflowBtn").onclick = async () => {
+    const btn = $("previewWorkflowBtn");
     const prompt = $("nlWorkflowInput")?.value.trim();
-    if (!prompt) return;
-    const res = await sendRuntimeMessage({
-      type: "WORKFLOWS_API",
-      action: "parse",
-      payload: {
-        prompt,
-        availableFiles: cachedWorkspaceArtifacts.map((a) => a.filename),
-      },
-    });
-    if (res?.ok && res.draft) {
-      showWorkflowDraftPreview({ ...res.draft, sourcePrompt: prompt });
+    if (!prompt) {
+      setInlineStatus("workflowsStatusMsg", "Enter a workflow description first.", "error");
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "Building…";
+    try {
+      const res = await sendRuntimeMessage({
+        type: "WORKFLOWS_API",
+        action: "parse",
+        payload: {
+          prompt,
+          availableFiles: cachedWorkspaceArtifacts.map((a) => a.filename),
+        },
+      }).catch(() => null);
+      if (res?.ok && res.draft) {
+        setInlineStatus("workflowsStatusMsg", "");
+        showWorkflowDraftPreview({ ...res.draft, sourcePrompt: prompt });
+      } else {
+        setInlineStatus(
+          "workflowsStatusMsg",
+          res?.message || "Could not compile workflow draft.",
+          "error",
+        );
+      }
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Build";
     }
   };
 }
@@ -11137,41 +11549,50 @@ if ($("discardWorkflowDraftBtn")) {
 
 if ($("approveWorkflowBtn")) {
   $("approveWorkflowBtn").onclick = async () => {
+    const btn = $("approveWorkflowBtn");
     const prompt = pendingWorkflowDraft?.sourcePrompt || $("nlWorkflowInput")?.value.trim();
     if (!prompt) return;
-    const created = await sendRuntimeMessage({
-      type: "WORKFLOWS_API",
-      action: "create",
-      payload: {
-        prompt,
-        availableFiles: cachedWorkspaceArtifacts.map((a) => a.filename),
-      },
-    });
-    if (created?.ok && created.workflow?.id) {
-      await sendRuntimeMessage({
+    btn.disabled = true;
+    btn.textContent = "Saving…";
+    try {
+      const created = await sendRuntimeMessage({
         type: "WORKFLOWS_API",
-        action: "approve",
-        payload: { workflowId: created.workflow.id },
-      });
-      pendingWorkflowDraft = null;
-      if ($("workflowDraftPreview")) $("workflowDraftPreview").hidden = true;
-      if ($("nlWorkflowInput")) $("nlWorkflowInput").value = "";
-      loadWorkflowsList();
+        action: "create",
+        payload: {
+          prompt,
+          availableFiles: cachedWorkspaceArtifacts.map((a) => a.filename),
+        },
+      }).catch(() => null);
+      if (created?.ok && created.workflow?.id) {
+        await sendRuntimeMessage({
+          type: "WORKFLOWS_API",
+          action: "approve",
+          payload: { workflowId: created.workflow.id },
+        });
+        pendingWorkflowDraft = null;
+        if ($("workflowDraftPreview")) $("workflowDraftPreview").hidden = true;
+        if ($("nlWorkflowInput")) $("nlWorkflowInput").value = "";
+        setInlineStatus("workflowsStatusMsg", "Workflow approved and saved.", "success");
+        loadWorkflowsList();
+      } else {
+        setInlineStatus(
+          "workflowsStatusMsg",
+          created?.message || "Could not save workflow.",
+          "error",
+        );
+      }
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "✅ Approve & Save";
     }
   };
 }
 
-async function loadWorkflowsList() {
+function renderWorkflowsList(wfs) {
   const list = $("workflowsList");
-  const noteEl = $("schedulerInfraNote");
   if (!list) return;
-  const res = await sendRuntimeMessage({ type: "WORKFLOWS_API", action: "list" }).catch(() => null);
   list.textContent = "";
-  if (noteEl && res?.schedulerInfrastructure?.honestLimitation) {
-    noteEl.textContent = res.schedulerInfrastructure.honestLimitation;
-  }
-  const wfs = Array.isArray(res?.workflows) ? res.workflows : [];
-  if (wfs.length === 0) {
+  if (!Array.isArray(wfs) || wfs.length === 0) {
     const empty = document.createElement("div");
     empty.style.color = "var(--text-muted)";
     empty.style.fontSize = "10px";
@@ -11179,15 +11600,29 @@ async function loadWorkflowsList() {
     list.appendChild(empty);
     return;
   }
+
   wfs.forEach((wf) => {
     const row = document.createElement("div");
     row.className = "item-row";
+    row.style.flexDirection = "column";
+    row.style.alignItems = "stretch";
+    row.style.gap = "5px";
+
+    const top = document.createElement("div");
+    top.style.display = "flex";
+    top.style.justifyContent = "space-between";
+    top.style.alignItems = "center";
+    top.style.gap = "6px";
+
     const left = document.createElement("div");
     left.style.overflow = "hidden";
+    left.style.minWidth = "0";
+    left.style.flex = "1";
     const title = document.createElement("div");
     title.style.fontWeight = "600";
     title.style.fontSize = "10px";
     title.style.color = "var(--text)";
+    title.style.overflowWrap = "anywhere";
     title.textContent = `${wf.name} (${wf.enabled ? "Active" : "Paused"})`;
     const sub = document.createElement("div");
     sub.style.fontSize = "9px";
@@ -11205,50 +11640,154 @@ async function loadWorkflowsList() {
     const actions = document.createElement("div");
     actions.style.display = "flex";
     actions.style.gap = "3px";
+    actions.style.flexShrink = "0";
 
     const runBtn = document.createElement("button");
+    runBtn.type = "button";
     runBtn.className = "ghost";
     runBtn.style.padding = "2px 5px";
     runBtn.style.fontSize = "9px";
     runBtn.textContent = "▶";
+    runBtn.setAttribute("aria-label", `Run workflow ${wf.name}`);
     runBtn.onclick = async () => {
-      await sendRuntimeMessage({
-        type: "WORKFLOWS_API",
-        action: "run_now",
-        payload: { workflowId: wf.id },
-      });
-      loadWorkflowsList();
+      runBtn.disabled = true;
+      runBtn.textContent = "…";
+      try {
+        const r = await sendRuntimeMessage({
+          type: "WORKFLOWS_API",
+          action: "run_now",
+          payload: { workflowId: wf.id },
+        }).catch(() => null);
+        setInlineStatus(
+          "workflowsStatusMsg",
+          r?.ok === false ? r.message || "Run failed." : `Executed "${wf.name}".`,
+          r?.ok === false ? "error" : "success",
+        );
+        loadWorkflowsList();
+      } finally {
+        runBtn.disabled = false;
+      }
     };
 
     const toggleBtn = document.createElement("button");
+    toggleBtn.type = "button";
     toggleBtn.className = "ghost";
     toggleBtn.style.padding = "2px 5px";
     toggleBtn.style.fontSize = "9px";
     toggleBtn.textContent = wf.enabled ? "⏸" : "▶";
+    toggleBtn.setAttribute("aria-label", `${wf.enabled ? "Pause" : "Resume"} workflow ${wf.name}`);
     toggleBtn.onclick = async () => {
-      await sendRuntimeMessage({
-        type: "WORKFLOWS_API",
-        action: wf.enabled ? "pause" : "resume",
-        payload: { workflowId: wf.id },
-      });
-      loadWorkflowsList();
+      toggleBtn.disabled = true;
+      try {
+        await sendRuntimeMessage({
+          type: "WORKFLOWS_API",
+          action: wf.enabled ? "pause" : "resume",
+          payload: { workflowId: wf.id },
+        });
+        loadWorkflowsList();
+      } finally {
+        toggleBtn.disabled = false;
+      }
     };
 
     const delBtn = document.createElement("button");
+    delBtn.type = "button";
     delBtn.className = "ghost";
     delBtn.style.padding = "2px 5px";
     delBtn.style.fontSize = "9px";
-    delBtn.style.color = "var(--destructive)";
+    delBtn.style.color = "var(--destructive-text)";
     delBtn.textContent = "🗑️";
-    delBtn.onclick = async () => {
-      await sendRuntimeMessage({ type: "WORKFLOWS_API", action: "delete", workflowId: wf.id });
-      loadWorkflowsList();
+    delBtn.setAttribute("aria-label", `Delete workflow ${wf.name}`);
+    delBtn.onclick = () => {
+      pendingDeleteWorkflowId = wf.id;
+      renderWorkflowsList(wfs);
     };
 
     actions.append(runBtn, toggleBtn, delBtn);
-    row.append(left, actions);
+    top.append(left, actions);
+    row.appendChild(top);
+
+    if (pendingDeleteWorkflowId === wf.id) {
+      const confirmRow = document.createElement("div");
+      confirmRow.className = "confirm-inline-row";
+      confirmRow.setAttribute("role", "alertdialog");
+      const promptSpan = document.createElement("span");
+      promptSpan.textContent = `Delete "${wf.name}"?`;
+      const btns = document.createElement("div");
+      btns.style.display = "flex";
+      btns.style.gap = "4px";
+
+      const confirmBtn = document.createElement("button");
+      confirmBtn.type = "button";
+      confirmBtn.className = "confirm-danger-btn";
+      confirmBtn.textContent = "Confirm";
+      confirmBtn.onclick = async () => {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = "Deleting…";
+        await sendRuntimeMessage({
+          type: "WORKFLOWS_API",
+          action: "delete",
+          workflowId: wf.id,
+        }).catch(() => null);
+        pendingDeleteWorkflowId = null;
+        setInlineStatus("workflowsStatusMsg", `Deleted "${wf.name}".`, "success");
+        loadWorkflowsList();
+      };
+
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "ghost";
+      cancelBtn.style.padding = "2px 7px";
+      cancelBtn.style.fontSize = "10px";
+      cancelBtn.textContent = "Cancel";
+      cancelBtn.onclick = () => {
+        pendingDeleteWorkflowId = null;
+        renderWorkflowsList(wfs);
+      };
+
+      btns.append(confirmBtn, cancelBtn);
+      confirmRow.append(promptSpan, btns);
+      row.appendChild(confirmRow);
+    }
+
     list.appendChild(row);
   });
+}
+
+async function loadWorkflowsList() {
+  const list = $("workflowsList");
+  const noteEl = $("schedulerInfraNote");
+  if (!list) return;
+  list.innerHTML =
+    '<div style="color: var(--text-muted); font-size: 10px;">Loading workflows…</div>';
+  const res = await sendRuntimeMessage({ type: "WORKFLOWS_API", action: "list" }).catch(() => null);
+  list.textContent = "";
+  if (noteEl && res?.schedulerInfrastructure?.honestLimitation) {
+    noteEl.textContent = res.schedulerInfrastructure.honestLimitation;
+  }
+  if (!res?.ok) {
+    const errWrap = document.createElement("div");
+    errWrap.style.display = "flex";
+    errWrap.style.justifyContent = "space-between";
+    errWrap.style.alignItems = "center";
+    errWrap.style.gap = "6px";
+    const msg = document.createElement("span");
+    msg.style.color = "var(--destructive-text)";
+    msg.style.fontSize = "10px";
+    msg.textContent = res?.message || "Workflows unavailable.";
+    const retryBtn = document.createElement("button");
+    retryBtn.type = "button";
+    retryBtn.className = "ghost";
+    retryBtn.style.padding = "2px 7px";
+    retryBtn.style.fontSize = "9px";
+    retryBtn.textContent = "Retry";
+    retryBtn.onclick = () => loadWorkflowsList();
+    errWrap.append(msg, retryBtn);
+    list.appendChild(errWrap);
+    return;
+  }
+  const wfs = Array.isArray(res?.workflows) ? res.workflows : [];
+  renderWorkflowsList(wfs);
 }
 
 // Models & Providers Handlers
@@ -11701,6 +12240,9 @@ async function loadSettingsTab() {
   if ($("settingsVoiceToggleBtn")) {
     $("settingsVoiceToggleBtn").textContent = isMuted ? "🔇 Muted" : "🔊 Unmuted";
   }
+  if ($("settingsClearStorageConfirmRow")) {
+    $("settingsClearStorageConfirmRow").hidden = true;
+  }
 }
 
 if ($("settingsUpdateApiKeyBtn")) {
@@ -11794,7 +12336,10 @@ if ($("settingsSaveApiBaseBtn")) {
 
 if ($("settingsDetectHostBtn")) {
   $("settingsDetectHostBtn").onclick = async () => {
+    const btn = $("settingsDetectHostBtn");
     const feedbackEl = $("settingsHostFeedback");
+    btn.disabled = true;
+    btn.textContent = "Checking…";
     if (feedbackEl) {
       feedbackEl.textContent = "🔍 Probing healthy AI Buddy backend…";
       feedbackEl.style.display = "block";
@@ -11846,6 +12391,8 @@ if ($("settingsDetectHostBtn")) {
         feedbackEl.textContent = "⚠️ Could not probe backend right now.";
       }
     } finally {
+      btn.disabled = false;
+      btn.textContent = "Auto";
       if (feedbackEl) {
         setTimeout(() => {
           if ($("settingsHostFeedback")) $("settingsHostFeedback").style.display = "none";
@@ -11901,20 +12448,47 @@ if ($("settingsClearBufferBtn")) {
 }
 
 if ($("settingsClearStorageBtn")) {
-  $("settingsClearStorageBtn").onclick = async () => {
-    const { session } = await chrome.storage.local.get("session");
-    await chrome.storage.local.clear();
-    if (session) await chrome.storage.local.set({ session });
-    conversationBuffer.length = 0;
-    if ($("settingsStorageFeedback")) {
-      $("settingsStorageFeedback").textContent = "✓ Local storage refreshed";
-      $("settingsStorageFeedback").style.display = "block";
-      setTimeout(() => {
-        if ($("settingsStorageFeedback")) $("settingsStorageFeedback").style.display = "none";
-      }, 2500);
+  $("settingsClearStorageBtn").onclick = () => {
+    if ($("settingsClearStorageConfirmRow")) {
+      $("settingsClearStorageConfirmRow").hidden = false;
     }
-    render();
-    loadSettingsTab();
+  };
+}
+
+if ($("settingsCancelClearStorageBtn")) {
+  $("settingsCancelClearStorageBtn").onclick = () => {
+    if ($("settingsClearStorageConfirmRow")) {
+      $("settingsClearStorageConfirmRow").hidden = true;
+    }
+  };
+}
+
+if ($("settingsConfirmClearStorageBtn")) {
+  $("settingsConfirmClearStorageBtn").onclick = async () => {
+    const confirmBtn = $("settingsConfirmClearStorageBtn");
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = "Resetting…";
+    try {
+      const { session } = await chrome.storage.local.get("session");
+      await chrome.storage.local.clear();
+      if (session) await chrome.storage.local.set({ session });
+      conversationBuffer.length = 0;
+      if ($("settingsClearStorageConfirmRow")) {
+        $("settingsClearStorageConfirmRow").hidden = true;
+      }
+      if ($("settingsStorageFeedback")) {
+        $("settingsStorageFeedback").textContent = "✓ Local storage reset";
+        $("settingsStorageFeedback").style.display = "block";
+        setTimeout(() => {
+          if ($("settingsStorageFeedback")) $("settingsStorageFeedback").style.display = "none";
+        }, 2500);
+      }
+      render();
+      loadSettingsTab();
+    } finally {
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = "Confirm Reset";
+    }
   };
 }
 
@@ -12071,33 +12645,41 @@ if ($("selfHealCancelBtn")) {
 
 if ($("settingsSelfHealStatusBtn")) {
   $("settingsSelfHealStatusBtn").onclick = async () => {
+    const btn = $("settingsSelfHealStatusBtn");
     const fb = $("settingsSelfHealFeedback");
+    btn.disabled = true;
+    btn.textContent = "Checking…";
     if (fb) {
       fb.textContent = "Checking Self-Healing telemetry & Knowledge Base...";
       fb.style.display = "block";
     }
-    const res = await sendRuntimeMessage({ type: "SELF_HEAL_GET_STATUS" });
-    if (fb) {
-      if (res?.usage) {
-        fb.textContent = `KB: ${res.kbCount || 0} repairs · Local recoveries: ${res.usage.localRecoveriesCount} · Suppressed dupes: ${res.usage.suppressedDuplicatesCount} · AI calls/hr: ${res.usage.aiCallsThisHour}`;
-      } else {
-        fb.textContent = res?.offline
-          ? `Offline mode · ${(res.recentReports || []).length} local buffered report(s).`
-          : "Self-Healing telemetry ready.";
+    try {
+      const res = await sendRuntimeMessage({ type: "SELF_HEAL_GET_STATUS" });
+      if (fb) {
+        if (res?.usage) {
+          fb.textContent = `KB: ${res.kbCount || 0} repairs · Local recoveries: ${res.usage.localRecoveriesCount} · Suppressed dupes: ${res.usage.suppressedDuplicatesCount} · AI calls/hr: ${res.usage.aiCallsThisHour}`;
+        } else {
+          fb.textContent = res?.offline
+            ? `Offline mode · ${(res.recentReports || []).length} local buffered report(s).`
+            : "Self-Healing telemetry ready.";
+        }
       }
-    }
-    if (res?.sessions?.length) {
-      const latest = res.sessions[0];
-      if (latest && latest.status !== "cancelled") {
-        renderSelfHealCard(
-          {
-            repairId: latest.repairId,
-            status: latest.status,
-            report: { attribution: latest.attribution, errorMessage: latest.errorMessage },
-          },
-          "",
-        );
+      if (res?.sessions?.length) {
+        const latest = res.sessions[0];
+        if (latest && latest.status !== "cancelled") {
+          renderSelfHealCard(
+            {
+              repairId: latest.repairId,
+              status: latest.status,
+              report: { attribution: latest.attribution, errorMessage: latest.errorMessage },
+            },
+            "",
+          );
+        }
       }
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "🩺 Self-Heal Status";
     }
   };
 }
@@ -12137,15 +12719,39 @@ window.addEventListener("unhandledrejection", (ev) => {
   );
 });
 
-// Guard against blank states on window focus and tab visibility transitions
+// Guard against blank states and pause background timers/renderers when panel is hidden
 window.addEventListener("focus", () => {
   BuddyStateManager.ensureNonBlankState();
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) {
+  if (document.hidden) {
+    if (gazeRafId && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(gazeRafId);
+      gazeRafId = 0;
+    }
+    stopBlinking();
+    stopRotatingPlaceholders();
+    buddy3dViewer?.setPaused?.(true);
+  } else {
     BuddyStateManager.ensureNonBlankState();
+    setupBlinking();
+    startRotatingPlaceholders();
+    const wantPaused3d = $("tabChat")?.hidden || $("sizeSelect")?.value === "hidden";
+    buddy3dViewer?.setPaused?.(Boolean(wantPaused3d));
   }
+});
+
+window.addEventListener("pagehide", () => {
+  if (gazeRafId && typeof cancelAnimationFrame === "function") {
+    cancelAnimationFrame(gazeRafId);
+    gazeRafId = 0;
+  }
+  stopBlinking();
+  stopRotatingPlaceholders();
+  stopSpeechMouthCycle();
+  BuddyChatScroll.destroy();
+  buddy3dViewer?.setPaused?.(true);
 });
 
 chrome.storage?.onChanged?.addListener?.((changes, area) => {

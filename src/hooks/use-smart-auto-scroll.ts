@@ -129,15 +129,43 @@ export function useSmartAutoScroll<T extends HTMLElement = HTMLDivElement>({
   // Keep pinned if inner content expands dynamically while user is already at bottom
   useEffect(() => {
     const el = containerRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => {
+    if (!el) return;
+
+    const snapIfPinned = () => {
       if (isAtBottomRef.current) {
         el.scrollTop = el.scrollHeight;
       }
-    });
-    ro.observe(el);
+    };
+
+    const ro =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            snapIfPinned();
+          })
+        : null;
+
+    if (ro) {
+      ro.observe(el);
+      Array.from(el.children).forEach((child) => ro.observe(child));
+    }
+
+    const mo =
+      typeof MutationObserver !== "undefined"
+        ? new MutationObserver(() => {
+            if (ro) {
+              Array.from(el.children).forEach((child) => ro.observe(child));
+            }
+            snapIfPinned();
+          })
+        : null;
+
+    if (mo) {
+      mo.observe(el, { childList: true, subtree: true, characterData: true });
+    }
+
     return () => {
-      ro.disconnect();
+      ro?.disconnect();
+      mo?.disconnect();
     };
   }, []);
 

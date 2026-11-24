@@ -31,6 +31,8 @@ function Gallery() {
   const buddies = useQuery({ queryKey: ["buddies"], queryFn: () => fetchBuddies() });
   const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: () => fetchDashboard() });
   const [preview, setPreview] = useState<string | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const pick = useMutation({
     mutationFn: (v: { slug: string | null; customId: string | null }) => choose({ data: v }),
@@ -115,38 +117,75 @@ function Gallery() {
                   name: string;
                   tagline?: string | null;
                   personality?: string | null;
-                }) => (
-                  <div key={c.id} className="panel flex items-center justify-between gap-3 p-4">
-                    <div>
-                      <h3 className="font-semibold">{c.name}</h3>
-                      <p className="text-xs text-muted-foreground">{c.tagline || c.personality}</p>
+                }) => {
+                  const isConfirming = pendingDeleteId === c.id;
+                  const isDeleting = deletingId === c.id;
+                  return (
+                    <div
+                      key={c.id}
+                      className="panel flex flex-wrap items-center justify-between gap-3 p-4"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <h3 className="font-semibold truncate">{c.name}</h3>
+                        <p className="text-xs text-muted-foreground break-words">
+                          {c.tagline || c.personality}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {isConfirming ? (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              disabled={isDeleting}
+                              onClick={async () => {
+                                setDeletingId(c.id);
+                                try {
+                                  await remove({ data: { id: c.id } });
+                                  setPendingDeleteId(null);
+                                  toast.success(`Deleted "${c.name}".`);
+                                  queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+                                } catch {
+                                  toast.error("Could not delete that Buddy.");
+                                } finally {
+                                  setDeletingId(null);
+                                }
+                              }}
+                            >
+                              {isDeleting ? "Deleting…" : "Confirm"}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={isDeleting}
+                              onClick={() => setPendingDeleteId(null)}
+                            >
+                              Cancel
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <Button
+                              size="sm"
+                              disabled={current === c.id}
+                              onClick={() => pick.mutate({ slug: null, customId: c.id })}
+                            >
+                              {current === c.id ? "Current" : "Use"}
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              aria-label={`Delete ${c.name}`}
+                              onClick={() => setPendingDeleteId(c.id)}
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex gap-1">
-                      <Button
-                        size="sm"
-                        disabled={current === c.id}
-                        onClick={() => pick.mutate({ slug: null, customId: c.id })}
-                      >
-                        {current === c.id ? "Current" : "Use"}
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        aria-label={`Delete ${c.name}`}
-                        onClick={async () => {
-                          try {
-                            await remove({ data: { id: c.id } });
-                            queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-                          } catch {
-                            toast.error("Could not delete that Buddy.");
-                          }
-                        }}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ),
+                  );
+                },
               )}
             </div>
           )}

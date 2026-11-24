@@ -33,6 +33,8 @@ export interface DagController {
   cancel: () => void;
   approveStep: (subtaskId: string) => void;
   skipStep: (subtaskId: string) => { ok: boolean; reason?: string; completedRun?: boolean };
+  retryFailed: () => boolean;
+  getRunState: () => AgentDagRunState;
   isPaused: () => boolean;
   isCancelled: () => boolean;
 }
@@ -164,6 +166,7 @@ function releaseLocks(locks: DagExecutionLocks, subtaskId: string): void {
 }
 
 const CONTROLLERS_KEY = "__aiBuddyDagControllersV1";
+const ACTIVE_RUNS_KEY = "__aiBuddyDagActiveRunsV1";
 
 function getControllerRegistry(): Map<string, DagController> {
   const g = globalThis as Record<string, unknown>;
@@ -173,8 +176,20 @@ function getControllerRegistry(): Map<string, DagController> {
   return g[CONTROLLERS_KEY] as Map<string, DagController>;
 }
 
+function getActiveRunsRegistry(): Set<string> {
+  const g = globalThis as Record<string, unknown>;
+  if (!g[ACTIVE_RUNS_KEY]) {
+    g[ACTIVE_RUNS_KEY] = new Set<string>();
+  }
+  return g[ACTIVE_RUNS_KEY] as Set<string>;
+}
+
 export function getDagController(runId: string): DagController | undefined {
   return getControllerRegistry().get(runId);
+}
+
+export function isDagRunActive(runId: string): boolean {
+  return getActiveRunsRegistry().has(runId);
 }
 
 export function skipDagSubtask(
@@ -298,6 +313,23 @@ export function createDagController(runState: AgentDagRunState): DagController {
     skipStep(subtaskId: string) {
       return skipDagSubtask(runState, subtaskId);
     },
+    retryFailed() {
+      let reset = false;
+      for (const st of runState.subtasks) {
+        if (st.status === "failed") {
+          st.status = "pending";
+          st.retryCount = 0;
+          st.error = undefined;
+          reset = true;
+        }
+      }
+      if (reset) {
+        runState.status = "running";
+        runState.updatedAt = new Date().toISOString();
+      }
+      return reset;
+    },
+    getRunState: () => runState,
     isPaused: () => paused,
     isCancelled: () => cancelled,
   };
@@ -351,223 +383,229 @@ export async function executeAgentDag(params: {
       };
 
   const controller = createDagController(runState);
+  const activeRuns = getActiveRunsRegistry();
+  activeRuns.add(runState.runId);
   const locks: DagExecutionLocks = { tabs: new Map(), files: new Map() };
   const maxIterations = runState.subtasks.length * 4 + 8;
 
-  for (let pass = 0; pass < maxIterations; pass++) {
-    if (controller.isCancelled()) {
-      runState.status = "cancelled";
-      break;
-    }
-
-    if (controller.isPaused()) {
-      runState.status = "paused";
-      runState.checkpoints.unshift(captureCheckpoint(runState));
-      runState.checkpoints = runState.checkpoints.slice(0, 12);
-      await params.onCheckpoint?.(runState);
-      break;
-    }
-
-    const doneIds = new Set(
-      runState.subtasks
-        .filter((s) => s.status === "completed" || s.status === "skipped")
-        .map((s) => s.id),
-    );
-    const failedIds = new Set(
-      runState.subtasks
-        .filter((s) => s.status === "failed" || s.status === "cancelled")
-        .map((s) => s.id),
-    );
-
-    // Isolate downstream nodes whose required dependency permanently failed/cancelled
-    for (const st of runState.subtasks) {
-      if (st.status === "pending" || st.status === "ready") {
-        if (st.dependencies.some((d) => failedIds.has(d))) {
-          st.status = "skipped";
-          st.error = "Skipped because an upstream dependency did not succeed.";
-        }
-      }
-    }
-
-    // Check approval gates before queuing ready batch
-    let blockedForApproval = false;
-    const readyBatch: AgentSubtaskSpec[] = [];
-
-    const candidates = runState.subtasks
-      .filter((s) => s.status === "pending" || s.status === "ready")
-      .sort((a, b) => b.priority - a.priority);
-
-    for (const st of candidates) {
-      if (!st.dependencies.every((d) => doneIds.has(d))) continue;
-
-      if (st.requiresApproval && !st.approved) {
-        st.status = "awaiting_approval";
-        blockedForApproval = true;
-        continue;
+  try {
+    for (let pass = 0; pass < maxIterations; pass++) {
+      if (controller.isCancelled()) {
+        runState.status = "cancelled";
+        break;
       }
 
-      if (readyBatch.length >= maxConcurrency) break;
-      if (!tryAcquireLocks(locks, st)) continue;
-
-      st.status = "running";
-      st.startedAt = new Date().toISOString();
-      readyBatch.push(st);
-    }
-
-    if (readyBatch.length === 0) {
-      if (blockedForApproval || runState.subtasks.some((s) => s.status === "awaiting_approval")) {
-        runState.status = "awaiting_approval";
+      if (controller.isPaused()) {
+        runState.status = "paused";
         runState.checkpoints.unshift(captureCheckpoint(runState));
         runState.checkpoints = runState.checkpoints.slice(0, 12);
         await params.onCheckpoint?.(runState);
+        break;
       }
-      break;
-    }
 
-    // Execute independent subtasks truly concurrently
-    await Promise.all(
-      readyBatch.map(async (st) => {
-        const startMs = Date.now();
-        let attempt = 0;
-        let lastErr: unknown = null;
+      const doneIds = new Set(
+        runState.subtasks
+          .filter((s) => s.status === "completed" || s.status === "skipped")
+          .map((s) => s.id),
+      );
+      const failedIds = new Set(
+        runState.subtasks
+          .filter((s) => s.status === "failed" || s.status === "cancelled")
+          .map((s) => s.id),
+      );
 
-        while (attempt <= st.retryLimit) {
-          if (controller.isCancelled()) {
-            st.status = "cancelled";
-            releaseLocks(locks, st.id);
-            return;
+      // Isolate downstream nodes whose required dependency permanently failed/cancelled
+      for (const st of runState.subtasks) {
+        if (st.status === "pending" || st.status === "ready") {
+          if (st.dependencies.some((d) => failedIds.has(d))) {
+            st.status = "skipped";
+            st.error = "Skipped because an upstream dependency did not succeed.";
           }
-          try {
-            const result = await params.runner(st, runState);
-            st.output = result;
+        }
+      }
 
+      // Check approval gates before queuing ready batch
+      let blockedForApproval = false;
+      const readyBatch: AgentSubtaskSpec[] = [];
+
+      const candidates = runState.subtasks
+        .filter((s) => s.status === "pending" || s.status === "ready")
+        .sort((a, b) => b.priority - a.priority);
+
+      for (const st of candidates) {
+        if (!st.dependencies.every((d) => doneIds.has(d))) continue;
+
+        if (st.requiresApproval && !st.approved) {
+          st.status = "awaiting_approval";
+          blockedForApproval = true;
+          continue;
+        }
+
+        if (readyBatch.length >= maxConcurrency) break;
+        if (!tryAcquireLocks(locks, st)) continue;
+
+        st.status = "running";
+        st.startedAt = new Date().toISOString();
+        readyBatch.push(st);
+      }
+
+      if (readyBatch.length === 0) {
+        if (blockedForApproval || runState.subtasks.some((s) => s.status === "awaiting_approval")) {
+          runState.status = "awaiting_approval";
+          runState.checkpoints.unshift(captureCheckpoint(runState));
+          runState.checkpoints = runState.checkpoints.slice(0, 12);
+          await params.onCheckpoint?.(runState);
+        }
+        break;
+      }
+
+      // Execute independent subtasks truly concurrently
+      await Promise.all(
+        readyBatch.map(async (st) => {
+          const startMs = Date.now();
+          let attempt = 0;
+          let lastErr: unknown = null;
+
+          while (attempt <= st.retryLimit) {
             if (controller.isCancelled()) {
-              st.status = result.ok ? "completed" : "cancelled";
-              st.completedAt = new Date().toISOString();
-              st.durationMs = Date.now() - startMs;
-              runState.unconfirmedStopNote =
-                "Stop requested while this step was in flight; side-effects already dispatched cannot be automatically rolled back.";
+              st.status = "cancelled";
               releaseLocks(locks, st.id);
               return;
             }
+            try {
+              const result = await params.runner(st, runState);
+              st.output = result;
 
-            if (result.requiresApproval && !st.approved) {
-              st.status = "awaiting_approval";
-              st.requiresApproval = true;
-              releaseLocks(locks, st.id);
-              return;
-            }
+              if (controller.isCancelled()) {
+                st.status = result.ok ? "completed" : "cancelled";
+                st.completedAt = new Date().toISOString();
+                st.durationMs = Date.now() - startMs;
+                runState.unconfirmedStopNote =
+                  "Stop requested while this step was in flight; side-effects already dispatched cannot be automatically rolled back.";
+                releaseLocks(locks, st.id);
+                return;
+              }
 
-            if (result.ok) {
-              st.status = "completed";
-              st.completedAt = new Date().toISOString();
-              st.durationMs = Date.now() - startMs;
-              if (result.artifacts?.length) {
-                for (const art of result.artifacts) {
-                  if (!runState.artifacts.some((a) => a.id === art.id)) {
-                    runState.artifacts.push(art);
+              if (result.requiresApproval && !st.approved) {
+                st.status = "awaiting_approval";
+                st.requiresApproval = true;
+                releaseLocks(locks, st.id);
+                return;
+              }
+
+              if (result.ok) {
+                st.status = "completed";
+                st.completedAt = new Date().toISOString();
+                st.durationMs = Date.now() - startMs;
+                if (result.artifacts?.length) {
+                  for (const art of result.artifacts) {
+                    if (!runState.artifacts.some((a) => a.id === art.id)) {
+                      runState.artifacts.push(art);
+                    }
                   }
                 }
+                if (result.verifications?.length) {
+                  runState.verifications.push(...result.verifications);
+                }
+                releaseLocks(locks, st.id);
+                return;
               }
-              if (result.verifications?.length) {
-                runState.verifications.push(...result.verifications);
-              }
+
+              lastErr = new Error(result.summary || "Agent subtask returned unsuccessful result.");
+            } catch (err) {
+              lastErr = err;
+            }
+
+            if (controller.isCancelled()) {
+              st.status = "cancelled";
+              runState.unconfirmedStopNote =
+                "Stop requested while this step was in flight; any external work started before stop cannot be undone automatically.";
               releaseLocks(locks, st.id);
               return;
             }
 
-            lastErr = new Error(result.summary || "Agent subtask returned unsuccessful result.");
-          } catch (err) {
-            lastErr = err;
-          }
-
-          if (controller.isCancelled()) {
-            st.status = "cancelled";
-            runState.unconfirmedStopNote =
-              "Stop requested while this step was in flight; any external work started before stop cannot be undone automatically.";
-            releaseLocks(locks, st.id);
-            return;
-          }
-
-          attempt += 1;
-          st.retryCount = attempt;
-          if (attempt <= st.retryLimit && retryDelayMs > 0) {
-            await new Promise((r) => setTimeout(r, retryDelayMs * attempt));
-          }
-        }
-
-        // Exhausted retries — mark failed safely without crashing sibling branches
-        st.status = "failed";
-        st.completedAt = new Date().toISOString();
-        st.durationMs = Date.now() - startMs;
-        st.error =
-          lastErr instanceof Error ? lastErr.message : String(lastErr || "Subtask failed.");
-        releaseLocks(locks, st.id);
-
-        if (params.allowReplan && params.onReplan && runState.replanCount < 2) {
-          try {
-            const replacementNodes = await params.onReplan(st, runState);
-            if (replacementNodes && replacementNodes.length > 0) {
-              const candidateGraph = [...runState.subtasks, ...replacementNodes];
-              const check = validateAgentDag(candidateGraph);
-              if (check.valid) {
-                runState.subtasks.push(...replacementNodes);
-                runState.replanCount += 1;
-              }
+            attempt += 1;
+            st.retryCount = attempt;
+            if (attempt <= st.retryLimit && retryDelayMs > 0) {
+              await new Promise((r) => setTimeout(r, retryDelayMs * attempt));
             }
-          } catch {
-            // Replanning failure stays contained
           }
-        }
-      }),
-    );
+
+          // Exhausted retries — mark failed safely without crashing sibling branches
+          st.status = "failed";
+          st.completedAt = new Date().toISOString();
+          st.durationMs = Date.now() - startMs;
+          st.error =
+            lastErr instanceof Error ? lastErr.message : String(lastErr || "Subtask failed.");
+          releaseLocks(locks, st.id);
+
+          if (params.allowReplan && params.onReplan && runState.replanCount < 2) {
+            try {
+              const replacementNodes = await params.onReplan(st, runState);
+              if (replacementNodes && replacementNodes.length > 0) {
+                const candidateGraph = [...runState.subtasks, ...replacementNodes];
+                const check = validateAgentDag(candidateGraph);
+                if (check.valid) {
+                  runState.subtasks.push(...replacementNodes);
+                  runState.replanCount += 1;
+                }
+              }
+            } catch {
+              // Replanning failure stays contained
+            }
+          }
+        }),
+      );
+
+      runState.updatedAt = new Date().toISOString();
+      runState.checkpoints.unshift(captureCheckpoint(runState));
+      runState.checkpoints = runState.checkpoints.slice(0, 12);
+      await params.onCheckpoint?.(runState);
+
+      if (controller.isCancelled()) {
+        runState.status = "cancelled";
+        break;
+      }
+      if (controller.isPaused()) {
+        runState.status = "paused";
+        break;
+      }
+    }
+
+    // Final status reconciliation
+    if (runState.status !== "cancelled" && runState.status !== "paused") {
+      const hasAwaiting = runState.subtasks.some((s) => s.status === "awaiting_approval");
+      const hasFailed = runState.subtasks.some((s) => s.status === "failed");
+      const hasCompleted = runState.subtasks.some((s) => s.status === "completed");
+      const hasPending = runState.subtasks.some(
+        (s) => s.status === "pending" || s.status === "ready" || s.status === "running",
+      );
+
+      if (hasAwaiting) {
+        runState.status = "awaiting_approval";
+      } else if (hasFailed) {
+        runState.status = hasCompleted ? "partially_completed" : "failed";
+      } else if (hasPending) {
+        runState.status = "partially_completed";
+      } else {
+        runState.status = "completed";
+        runState.completedAt = new Date().toISOString();
+      }
+    }
+
+    const completedSummaries = runState.subtasks
+      .filter((s) => s.status === "completed" && s.output?.summary)
+      .map((s) => `• ${s.title}: ${s.output!.summary}`);
+
+    runState.finalSummary =
+      completedSummaries.length > 0
+        ? completedSummaries.join("\n")
+        : `Task status: ${runState.status}`;
 
     runState.updatedAt = new Date().toISOString();
-    runState.checkpoints.unshift(captureCheckpoint(runState));
-    runState.checkpoints = runState.checkpoints.slice(0, 12);
     await params.onCheckpoint?.(runState);
-
-    if (controller.isCancelled()) {
-      runState.status = "cancelled";
-      break;
-    }
-    if (controller.isPaused()) {
-      runState.status = "paused";
-      break;
-    }
+    return runState;
+  } finally {
+    activeRuns.delete(runState.runId);
   }
-
-  // Final status reconciliation
-  if (runState.status !== "cancelled" && runState.status !== "paused") {
-    const hasAwaiting = runState.subtasks.some((s) => s.status === "awaiting_approval");
-    const hasFailed = runState.subtasks.some((s) => s.status === "failed");
-    const hasCompleted = runState.subtasks.some((s) => s.status === "completed");
-    const hasPending = runState.subtasks.some(
-      (s) => s.status === "pending" || s.status === "ready" || s.status === "running",
-    );
-
-    if (hasAwaiting) {
-      runState.status = "awaiting_approval";
-    } else if (hasFailed) {
-      runState.status = hasCompleted ? "partially_completed" : "failed";
-    } else if (hasPending) {
-      runState.status = "partially_completed";
-    } else {
-      runState.status = "completed";
-      runState.completedAt = new Date().toISOString();
-    }
-  }
-
-  const completedSummaries = runState.subtasks
-    .filter((s) => s.status === "completed" && s.output?.summary)
-    .map((s) => `• ${s.title}: ${s.output!.summary}`);
-
-  runState.finalSummary =
-    completedSummaries.length > 0
-      ? completedSummaries.join("\n")
-      : `Task status: ${runState.status}`;
-
-  runState.updatedAt = new Date().toISOString();
-  await params.onCheckpoint?.(runState);
-  return runState;
 }

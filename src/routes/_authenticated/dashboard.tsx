@@ -82,6 +82,10 @@ function Dashboard() {
   } | null>(null);
   const [memoryKey, setMemoryKey] = useState("");
   const [memoryValue, setMemoryValue] = useState("");
+  const [confirmClearMemories, setConfirmClearMemories] = useState(false);
+  const [isClearingMemories, setIsClearingMemories] = useState(false);
+  const [pendingDeleteMemoryId, setPendingDeleteMemoryId] = useState<string | null>(null);
+  const [deletingMemoryId, setDeletingMemoryId] = useState<string | null>(null);
   const [checks, setChecks] = useState<Array<{ name: string; ok: boolean; detail: string }> | null>(
     null,
   );
@@ -614,34 +618,66 @@ function Dashboard() {
             </section>
 
             <section className="panel p-5">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="font-semibold">Memory</h2>
-                {memories.length > 0 && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={async () => {
-                      try {
-                        await wipeMemory();
-                        toast.success("Memory cleared.");
-                        queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-                      } catch {
-                        toast.error("Could not clear memory.");
-                      }
-                    }}
-                  >
+                {memories.length > 0 && !confirmClearMemories && (
+                  <Button variant="ghost" size="sm" onClick={() => setConfirmClearMemories(true)}>
                     Clear all
                   </Button>
                 )}
               </div>
+              {confirmClearMemories && memories.length > 0 && (
+                <div
+                  role="alertdialog"
+                  aria-label="Confirm clear all memories"
+                  className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs"
+                >
+                  <span className="font-medium text-foreground">
+                    Clear all {memories.length} saved memories? This cannot be undone.
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={isClearingMemories}
+                      onClick={async () => {
+                        setIsClearingMemories(true);
+                        try {
+                          await wipeMemory();
+                          setConfirmClearMemories(false);
+                          setPendingDeleteMemoryId(null);
+                          toast.success("Memory cleared.");
+                          queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+                        } catch {
+                          toast.error("Could not clear memory.");
+                        } finally {
+                          setIsClearingMemories(false);
+                        }
+                      }}
+                    >
+                      {isClearingMemories ? "Clearing…" : "Confirm Clear All"}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={isClearingMemories}
+                      onClick={() => setConfirmClearMemories(false)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
               <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                 <Input
+                  aria-label="Memory key"
                   placeholder="What to remember (e.g. GST state)"
                   value={memoryKey}
                   onChange={(e) => setMemoryKey(e.target.value)}
                   maxLength={120}
                 />
                 <Input
+                  aria-label="Memory value"
                   placeholder="Value (e.g. Maharashtra)"
                   value={memoryValue}
                   onChange={(e) => setMemoryValue(e.target.value)}
@@ -658,32 +694,62 @@ function Dashboard() {
                 Passwords, OTPs, PINs, cards and keys are refused — by the app and by the database.
               </p>
               <ul className="mt-3 space-y-2">
-                {memories.slice(0, 8).map((memory: { id: string; key: string; value: string }) => (
-                  <li
-                    key={memory.id}
-                    className="flex items-start justify-between gap-2 rounded-md border border-border/70 p-3 text-sm"
-                  >
-                    <div>
-                      <p className="font-medium">{memory.key}</p>
-                      <p className="text-muted-foreground">{memory.value}</p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`Forget ${memory.key}`}
-                      onClick={async () => {
-                        try {
-                          await forgetMemory({ data: { id: memory.id } });
-                          queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-                        } catch {
-                          toast.error("Could not forget that.");
-                        }
-                      }}
+                {memories.slice(0, 8).map((memory: { id: string; key: string; value: string }) => {
+                  const isConfirming = pendingDeleteMemoryId === memory.id;
+                  const isDeleting = deletingMemoryId === memory.id;
+                  return (
+                    <li
+                      key={memory.id}
+                      className="flex flex-wrap items-start justify-between gap-2 rounded-md border border-border/70 p-3 text-sm"
                     >
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </li>
-                ))}
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium break-words">{memory.key}</p>
+                        <p className="text-muted-foreground break-words">{memory.value}</p>
+                      </div>
+                      {isConfirming ? (
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            disabled={isDeleting}
+                            onClick={async () => {
+                              setDeletingMemoryId(memory.id);
+                              try {
+                                await forgetMemory({ data: { id: memory.id } });
+                                setPendingDeleteMemoryId(null);
+                                toast.success(`Forgot "${memory.key}".`);
+                                queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+                              } catch {
+                                toast.error("Could not forget that.");
+                              } finally {
+                                setDeletingMemoryId(null);
+                              }
+                            }}
+                          >
+                            {isDeleting ? "Removing…" : "Confirm"}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={isDeleting}
+                            onClick={() => setPendingDeleteMemoryId(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Forget ${memory.key}`}
+                          onClick={() => setPendingDeleteMemoryId(memory.id)}
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             </section>
           </div>

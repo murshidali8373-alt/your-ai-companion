@@ -207,15 +207,20 @@
         border-radius: var(--radius-md);
         padding: 3px;
         gap: 2px;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      .command-tabs::-webkit-scrollbar {
+        display: none;
       }
       .tab-btn {
-        flex: 1;
-        padding: 5px 2px;
+        flex: 1 0 auto;
+        padding: 5px 4px;
         font-size: 11px;
         font-weight: 600;
         color: var(--text-muted);
         background: transparent;
-        border: none;
+        border: 1px solid transparent;
         border-radius: var(--radius-sm);
         cursor: pointer;
         transition: all 0.15s ease;
@@ -1127,15 +1132,105 @@
         min-height: 14px;
       }
 
+      /* Responsive, Accessible Forms & Inline Confirmation Helpers */
+      .sp-input,
+      .sp-select {
+        background: var(--bg-inset);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 5px 7px;
+        font-size: 11px;
+        font-family: inherit;
+      }
+      .sp-input:focus-visible,
+      .sp-select:focus-visible {
+        border-color: var(--accent);
+        outline: 2px solid var(--ring);
+        outline-offset: 1px;
+      }
+      .confirm-inline-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 6px 8px;
+        background: var(--destructive-soft);
+        border: 1px solid rgba(239, 68, 68, 0.35);
+        border-radius: var(--radius-sm);
+        font-size: 10px;
+        color: var(--destructive-text);
+      }
+      .confirm-danger-btn {
+        padding: 3px 8px;
+        font-size: 10px;
+        font-weight: 600;
+        background: var(--destructive);
+        color: #ffffff;
+        border: none;
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+      }
+      .confirm-danger-btn:disabled,
+      .ghost:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      .inline-feedback {
+        font-size: 10px;
+        color: var(--text-muted);
+        line-height: 1.4;
+      }
+      .inline-feedback.error {
+        color: var(--destructive-text);
+      }
+      .inline-feedback.success {
+        color: var(--success-text);
+      }
+
       /* Footer */
       footer {
         display: flex;
         align-items: center;
         justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 6px;
         padding-top: 6px;
         border-top: 1px solid var(--border);
         font-size: 10px;
         color: var(--text-dim);
+      }
+
+      @media (max-width: 360px) {
+        .panel-wrap {
+          padding: 8px 9px;
+          gap: 8px;
+        }
+        header {
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+        .header-actions {
+          flex-wrap: wrap;
+          justify-content: flex-end;
+        }
+        .tab-btn {
+          font-size: 10.5px;
+          padding: 5px 6px;
+        }
+        .composer-footer {
+          flex-wrap: wrap;
+        }
+        .item-row,
+        .plan-step-row,
+        .section-card-title {
+          flex-wrap: wrap;
+          gap: 5px;
+        }
+        .quick-actions-grid {
+          grid-template-columns: 1fr;
+        }
       }
 
       [hidden] {
@@ -1170,19 +1265,25 @@
           </div>
         </div>
         <div class="header-actions">
-          <span
+          <button
+            type="button"
             id="headerModelPill"
             class="header-model-pill"
             title="Click to inspect model routing"
+            aria-label="Inspect AI model routing"
           >
             ⚡ <span id="headerModelLabel">Auto Model</span>
-          </span>
-          <span class="status-badge" id="buddyEmotionBadge">Ready</span>
+          </button>
+          <span class="status-badge" id="buddyEmotionBadge" role="status" aria-live="polite"
+            >Ready</span
+          >
           <button
+            type="button"
             id="clearChatBtn"
             class="ghost"
             style="padding: 3px 6px; font-size: 11px"
             title="New Conversation / Clear Chat"
+            aria-label="New conversation or clear chat"
           >
             ✨
           </button>
@@ -1190,13 +1291,73 @@
       </header>
 
       <!-- ================= NAVIGATION TABS ================= -->
-      <nav class="command-tabs">
-        <button class="tab-btn active" data-tab="chat">💬 Chat</button>
-        <button class="tab-btn" data-tab="page">🌐 Page</button>
-        <button class="tab-btn" data-tab="tasks">🧠 Tasks</button>
-        <button class="tab-btn" data-tab="models">⚡ Models</button>
-        <button class="tab-btn" data-tab="rig">🎨 Rig</button>
-        <button class="tab-btn" data-tab="settings">⚙️ Settings</button>
+      <nav class="command-tabs" role="tablist" aria-label="AI Buddy Sections">
+        <button
+          type="button"
+          id="tabBtnChat"
+          class="tab-btn active"
+          role="tab"
+          aria-selected="true"
+          aria-controls="tabChat"
+          data-tab="chat"
+        >
+          💬 Chat
+        </button>
+        <button
+          type="button"
+          id="tabBtnPage"
+          class="tab-btn"
+          role="tab"
+          aria-selected="false"
+          aria-controls="tabPage"
+          data-tab="page"
+        >
+          🌐 Page
+        </button>
+        <button
+          type="button"
+          id="tabBtnTasks"
+          class="tab-btn"
+          role="tab"
+          aria-selected="false"
+          aria-controls="tabTasks"
+          data-tab="tasks"
+        >
+          🧠 Tasks
+        </button>
+        <button
+          type="button"
+          id="tabBtnModels"
+          class="tab-btn"
+          role="tab"
+          aria-selected="false"
+          aria-controls="tabModels"
+          data-tab="models"
+        >
+          ⚡ Models
+        </button>
+        <button
+          type="button"
+          id="tabBtnRig"
+          class="tab-btn"
+          role="tab"
+          aria-selected="false"
+          aria-controls="tabRig"
+          data-tab="rig"
+        >
+          🎨 Rig
+        </button>
+        <button
+          type="button"
+          id="tabBtnSettings"
+          class="tab-btn"
+          role="tab"
+          aria-selected="false"
+          aria-controls="tabSettings"
+          data-tab="settings"
+        >
+          ⚙️ Settings
+        </button>
       </nav>
 
       <!-- ================= ALL 16 BUDDIES SELECTOR CAROUSEL ================= -->
@@ -1227,7 +1388,7 @@
       </div>
 
       <!-- ================= TAB 1: CHAT (PRIMARY COMPANION WORKSPACE) ================= -->
-      <div id="tabChat" class="tab-panel">
+      <div id="tabChat" class="tab-panel" role="tabpanel" aria-labelledby="tabBtnChat">
         <!-- INTELLIGENT CONTEXTUAL GREETING & QUICK ACTIONS -->
         <div class="greeting-card">
           <div class="greeting-title" id="greetingTitle">
@@ -1237,22 +1398,22 @@
             Active on current webpage · Ready for navigation, research, and analysis.
           </div>
           <div class="quick-actions-grid" hidden style="display: none">
-            <div class="qa-btn" id="qaExplainPage">
+            <button type="button" class="qa-btn" id="qaExplainPage">
               <span class="qa-btn-title">🔍 Understand Page</span>
               <span class="qa-btn-desc">Analyze DOM structure & inputs</span>
-            </div>
-            <div class="qa-btn" id="qaResearch">
+            </button>
+            <button type="button" class="qa-btn" id="qaResearch">
               <span class="qa-btn-title">🌐 Research Anything</span>
               <span class="qa-btn-desc">Cross-reference verified facts</span>
-            </div>
-            <div class="qa-btn" id="qaWorkWithFiles">
+            </button>
+            <button type="button" class="qa-btn" id="qaWorkWithFiles">
               <span class="qa-btn-title">📑 Work With Files</span>
               <span class="qa-btn-desc">Spreadsheets, CSV & audits</span>
-            </div>
-            <div class="qa-btn" id="qaAutomateTask">
+            </button>
+            <button type="button" class="qa-btn" id="qaAutomateTask">
               <span class="qa-btn-title">⚡ Automate a Task</span>
               <span class="qa-btn-desc">Multi-step autonomous workflow</span>
-            </div>
+            </button>
           </div>
         </div>
 
@@ -1459,11 +1620,13 @@
             id="promptInput"
             class="composer-input"
             rows="2"
+            aria-label="Ask AI Buddy or enter a browser task"
             placeholder="Ask anything... or command: 'Check pending Meesho orders'"
           ></textarea>
           <div class="composer-footer">
             <div class="composer-tools">
               <button
+                type="button"
                 id="attachFileBtn"
                 class="tool-btn"
                 title="Upload Aadhaar, PAN, invoice, PDF, image, or spreadsheet"
@@ -1473,10 +1636,12 @@
               <input
                 type="file"
                 id="composerFileInput"
+                aria-label="Upload document or spreadsheet"
                 style="display: none"
                 accept="image/*,.png,.jpg,.jpeg,.webp,.pdf,.csv,.tsv,.xlsx,.xls,.docx,.txt,.json"
               />
               <button
+                type="button"
                 id="pageContextToggle"
                 class="tool-btn active"
                 title="Send live page snapshot to Buddy"
@@ -1484,6 +1649,7 @@
                 🌐 <span style="font-size: 10px" id="pageContextStatus">Page Vision On</span>
               </button>
               <button
+                type="button"
                 id="highlightBtn"
                 class="tool-btn"
                 title="Highlight target element on page"
@@ -1491,36 +1657,50 @@
               >
                 🎯 Point
               </button>
-              <button id="speakAnswerBtn" class="tool-btn" title="Read response aloud" hidden>
+              <button
+                type="button"
+                id="speakAnswerBtn"
+                class="tool-btn"
+                title="Read response aloud"
+                hidden
+              >
                 🔊 Read
               </button>
             </div>
             <div style="display: flex; align-items: center; gap: 4px">
               <button
+                type="button"
                 id="liveVoiceBtn"
                 class="voice-btn"
                 title="Start or stop continuous live voice conversation with Buddy"
               >
                 🎙️ Live
               </button>
-              <button id="voiceBtn" class="voice-btn" title="Push to talk or interrupt Buddy">
+              <button
+                type="button"
+                id="voiceBtn"
+                class="voice-btn"
+                title="Push to talk or interrupt Buddy"
+              >
                 🎤 Talk
               </button>
-              <button id="sendBtn" class="send-btn">Send ↵</button>
+              <button type="button" id="sendBtn" class="send-btn">Send ↵</button>
             </div>
           </div>
         </div>
-        <div id="statusText" class="status-msg"></div>
+        <div id="statusText" class="status-msg" role="status" aria-live="polite"></div>
       </div>
 
       <!-- ================= TAB 2: PAGE & ACTIONS ================= -->
-      <div id="tabPage" class="tab-panel" hidden>
+      <div id="tabPage" class="tab-panel" role="tabpanel" aria-labelledby="tabBtnPage" hidden>
         <div class="section-card">
           <div class="section-card-title">
             <span>🌐 Webpage Intelligence</span>
             <button
+              type="button"
               id="refreshPageContextBtn"
               class="ghost"
+              aria-label="Refresh webpage intelligence"
               style="padding: 2px 7px; font-size: 10px"
             >
               🔄 Refresh
@@ -1579,10 +1759,12 @@
                 >Zero Risk</span
               >
               <button
+                type="button"
                 id="closeFormFillBtn"
                 class="ghost"
                 style="padding: 1px 5px; font-size: 10px; cursor: pointer"
                 title="Dismiss"
+                aria-label="Dismiss Smart Form Filler"
               >
                 ✕
               </button>
@@ -1634,7 +1816,7 @@
       </div>
 
       <!-- ================= TAB 3: TASKS & MEMORY ================= -->
-      <div id="tabTasks" class="tab-panel" hidden>
+      <div id="tabTasks" class="tab-panel" role="tabpanel" aria-labelledby="tabBtnTasks" hidden>
         <!-- Proactive Assistant & Saved Checkpoints -->
         <div
           id="savedCheckpointCard"
@@ -1719,6 +1901,7 @@
             <span>📂 Real File Workspace</span>
             <div style="display: flex; gap: 4px">
               <button
+                type="button"
                 id="workspaceUploadTriggerBtn"
                 class="ghost"
                 style="padding: 2px 7px; font-size: 10px"
@@ -1726,8 +1909,10 @@
                 ⬆️ Upload
               </button>
               <button
+                type="button"
                 id="refreshWorkspaceBtn"
                 class="ghost"
+                aria-label="Refresh workspace files"
                 style="padding: 2px 7px; font-size: 10px"
               >
                 🔄
@@ -1736,6 +1921,7 @@
           </div>
           <div style="display: flex; gap: 4px; flex-wrap: wrap">
             <button
+              type="button"
               id="workspaceCompareBtn"
               class="ghost"
               style="padding: 3px 8px; font-size: 10px; flex: 1"
@@ -1743,6 +1929,7 @@
               ⚖️ Compare Latest 2 Sheets
             </button>
             <button
+              type="button"
               id="workspaceExportReportBtn"
               class="ghost"
               style="padding: 3px 8px; font-size: 10px; flex: 1"
@@ -1752,7 +1939,9 @@
           </div>
           <div
             id="workspaceStatusMsg"
-            style="font-size: 10px; color: var(--text-muted)"
+            class="inline-feedback"
+            role="status"
+            aria-live="polite"
             hidden
           ></div>
           <div id="workspaceArtifactsList" class="items-list">
@@ -1768,13 +1957,22 @@
           <div class="section-card-title">
             <span>🔌 Connected Apps & OAuth</span>
             <button
+              type="button"
               id="refreshConnectorsBtn"
               class="ghost"
+              aria-label="Refresh connected apps status"
               style="padding: 2px 7px; font-size: 10px"
             >
               🔄
             </button>
           </div>
+          <div
+            id="connectorsStatusMsg"
+            class="inline-feedback"
+            role="status"
+            aria-live="polite"
+            hidden
+          ></div>
           <div id="connectedAppsList" class="items-list">
             <div style="color: var(--text-muted); font-size: 10px">Loading connector status…</div>
           </div>
@@ -1788,18 +1986,13 @@
           <div style="display: flex; gap: 4px">
             <input
               id="nlWorkflowInput"
+              class="sp-input"
+              aria-label="Describe workflow automation rule"
               placeholder='e.g. "Har roz subah 9 baje orders check karo"'
-              style="
-                flex: 1;
-                background: #0b0f19;
-                color: var(--text);
-                border: 1px solid var(--border);
-                border-radius: var(--radius-sm);
-                padding: 5px;
-                font-size: 11px;
-              "
+              style="flex: 1"
             />
             <button
+              type="button"
               id="previewWorkflowBtn"
               style="
                 padding: 4px 10px;
@@ -1814,6 +2007,13 @@
               Build
             </button>
           </div>
+          <div
+            id="workflowsStatusMsg"
+            class="inline-feedback"
+            role="status"
+            aria-live="polite"
+            hidden
+          ></div>
           <div
             id="workflowDraftPreview"
             style="
@@ -1831,6 +2031,7 @@
             <div id="workflowDraftSummary" style="color: var(--text)"></div>
             <div style="display: flex; gap: 4px">
               <button
+                type="button"
                 id="approveWorkflowBtn"
                 style="
                   padding: 3px 8px;
@@ -1845,6 +2046,7 @@
                 ✅ Approve & Save
               </button>
               <button
+                type="button"
                 id="discardWorkflowDraftBtn"
                 class="ghost"
                 style="padding: 3px 8px; font-size: 10px"
@@ -1901,22 +2103,24 @@
         <div class="section-card">
           <div class="section-card-title">
             <span>🧠 Buddy Memory & Preferences</span>
-            <button id="addMemoryToggleBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">
+            <button
+              type="button"
+              id="addMemoryToggleBtn"
+              class="ghost"
+              style="padding: 2px 7px; font-size: 10px"
+            >
               ➕ Add
             </button>
           </div>
+          <div
+            id="memoriesStatusMsg"
+            class="inline-feedback"
+            role="status"
+            aria-live="polite"
+            hidden
+          ></div>
           <div id="addMemoryForm" style="display: flex; flex-direction: column; gap: 4px" hidden>
-            <select
-              id="memKindSelect"
-              style="
-                background: #0b0f19;
-                color: var(--text);
-                border: 1px solid var(--border);
-                border-radius: var(--radius-sm);
-                padding: 5px;
-                font-size: 11px;
-              "
-            >
+            <select id="memKindSelect" class="sp-select" aria-label="Memory category">
               <option value="user_preference">User Preference</option>
               <option value="communication_preference">Communication Preference</option>
               <option value="business_context">Business Context</option>
@@ -1928,35 +2132,25 @@
             </select>
             <input
               id="memKeyInput"
+              class="sp-input"
+              aria-label="Memory key"
               placeholder="Key (e.g. seller_gstin, city)"
-              style="
-                background: #0b0f19;
-                color: var(--text);
-                border: 1px solid var(--border);
-                border-radius: var(--radius-sm);
-                padding: 5px;
-                font-size: 11px;
-              "
             />
             <input
               id="memValInput"
+              class="sp-input"
+              aria-label="Memory value"
               placeholder="Value (e.g. 24AAAAA0000A1Z5)"
-              style="
-                background: #0b0f19;
-                color: var(--text);
-                border: 1px solid var(--border);
-                border-radius: var(--radius-sm);
-                padding: 5px;
-                font-size: 11px;
-              "
             />
             <div
               id="memErrorMsg"
-              style="font-size: 10px; color: var(--destructive); padding: 2px 0"
+              role="alert"
+              style="font-size: 10px; color: var(--destructive-text); padding: 2px 0"
               hidden
             ></div>
             <div style="display: flex; gap: 4px">
               <button
+                type="button"
                 id="saveMemoryBtn"
                 style="
                   padding: 4px 10px;
@@ -1969,7 +2163,12 @@
               >
                 Save
               </button>
-              <button id="cancelMemoryBtn" class="ghost" style="padding: 4px 10px; font-size: 10px">
+              <button
+                type="button"
+                id="cancelMemoryBtn"
+                class="ghost"
+                style="padding: 4px 10px; font-size: 10px"
+              >
                 Cancel
               </button>
             </div>
@@ -1984,8 +2183,10 @@
           <div class="section-card-title">
             <span>📜 Recent Task History</span>
             <button
+              type="button"
               id="refreshTasksHistoryBtn"
               class="ghost"
+              aria-label="Refresh recent task history"
               style="padding: 2px 7px; font-size: 10px"
             >
               🔄
@@ -1998,7 +2199,7 @@
       </div>
 
       <!-- ================= TAB 4: AI MODELS ================= -->
-      <div id="tabModels" class="tab-panel" hidden>
+      <div id="tabModels" class="tab-panel" role="tabpanel" aria-labelledby="tabBtnModels" hidden>
         <!-- Intelligent Routing Policy Card -->
         <div
           class="section-card"
@@ -2038,15 +2239,9 @@
           </div>
           <select
             id="providerSelector"
-            style="
-              background: #0b0f19;
-              color: var(--text);
-              border: 1px solid var(--border);
-              border-radius: var(--radius-sm);
-              padding: 6px;
-              font-size: 11px;
-              width: 100%;
-            "
+            class="sp-select"
+            aria-label="AI Provider Selection"
+            style="padding: 6px; width: 100%"
           >
             <option value="auto" selected>Auto (Smart Provider Routing)</option>
             <option value="gemini">Google Gemini (Default)</option>
@@ -2079,6 +2274,7 @@
           <div class="section-card-title">
             <span>⚡ Model Selection</span>
             <button
+              type="button"
               id="toggleModelComparisonBtn"
               class="ghost"
               style="padding: 2px 7px; font-size: 10px"
@@ -2088,14 +2284,9 @@
           </div>
           <select
             id="modelSelector"
-            style="
-              background: #0b0f19;
-              color: var(--text);
-              border: 1px solid var(--border);
-              border-radius: var(--radius-sm);
-              padding: 6px;
-              font-size: 11px;
-            "
+            class="sp-select"
+            aria-label="AI Model Selection"
+            style="padding: 6px"
           >
             <option value="auto">Auto Select (Brain Decides)</option>
             <option value="gemini-4-hydrogen">Google Gemini 4 Hydrogen (Multimodal Primary)</option>
@@ -2174,49 +2365,29 @@
       </div>
 
       <!-- ================= TAB 5: BUDDY RIG CONTROLS ================= -->
-      <div id="tabRig" class="tab-panel" hidden>
+      <div id="tabRig" class="tab-panel" role="tabpanel" aria-labelledby="tabBtnRig" hidden>
         <div class="section-card">
           <div class="section-card-title">
             <span>🎨 Mascot & Visual Rig</span>
           </div>
-          <div style="display: flex; justify-content: space-between; align-items: center">
-            <span style="font-size: 11px">Render Mode:</span>
-            <select
-              id="avatarRenderMode"
-              style="
-                background: #0b0f19;
-                color: var(--text);
-                border: 1px solid var(--border);
-                border-radius: 4px;
-                padding: 4px;
-                font-size: 11px;
-              "
-            >
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px">
+            <label for="avatarRenderMode" style="font-size: 11px">Render Mode:</label>
+            <select id="avatarRenderMode" class="sp-select">
               <option value="3d" selected>Real-time 3D Companion (WebGL)</option>
               <option value="rigged">2D Vector Rig (Fallback)</option>
               <option value="artwork">Static 3D Artwork</option>
             </select>
           </div>
-          <div style="display: flex; justify-content: space-between; align-items: center">
-            <span style="font-size: 11px">Character Scale:</span>
-            <select
-              id="sizeSelect"
-              style="
-                background: #0b0f19;
-                color: var(--text);
-                border: 1px solid var(--border);
-                border-radius: 4px;
-                padding: 4px;
-                font-size: 11px;
-              "
-            >
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px">
+            <label for="sizeSelect" style="font-size: 11px">Character Scale:</label>
+            <select id="sizeSelect" class="sp-select">
               <option value="normal">Standard</option>
               <option value="compact">Compact</option>
               <option value="hidden">Hidden</option>
             </select>
           </div>
-          <div style="display: flex; justify-content: space-between; align-items: center">
-            <span style="font-size: 11px">Mute Voice Speech:</span>
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px">
+            <label for="muteToggle" style="font-size: 11px">Mute Voice Speech:</label>
             <input type="checkbox" id="muteToggle" />
           </div>
           <p style="font-size: 10px; color: var(--text-muted); line-height: 1.4; margin-top: 4px">
@@ -2227,7 +2398,13 @@
       </div>
 
       <!-- ================= TAB 6: SETTINGS & PREFERENCES ================= -->
-      <div id="tabSettings" class="tab-panel" hidden>
+      <div
+        id="tabSettings"
+        class="tab-panel"
+        role="tabpanel"
+        aria-labelledby="tabBtnSettings"
+        hidden
+      >
         <!-- Account & Session Status Card -->
         <div class="section-card">
           <div class="section-card-title">
@@ -2240,6 +2417,7 @@
 
           <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px">
             <label
+              for="settingsApiBaseInput"
               style="
                 font-size: 10px;
                 font-weight: 600;
@@ -2476,6 +2654,7 @@
           <div style="display: flex; flex-direction: column; gap: 8px">
             <div>
               <label
+                for="settingsPermissionLevel"
                 style="
                   font-size: 10px;
                   font-weight: 600;
@@ -2486,18 +2665,7 @@
                 "
                 >Browser Permission Ladder</label
               >
-              <select
-                id="settingsPermissionLevel"
-                style="
-                  width: 100%;
-                  padding: 5px 8px;
-                  font-size: 11px;
-                  background: var(--bg);
-                  border: 1px solid var(--border);
-                  border-radius: var(--radius-sm);
-                  color: var(--text);
-                "
-              >
+              <select id="settingsPermissionLevel" class="sp-select" style="width: 100%">
                 <option value="observe">Level 1: Observe (Read page content only)</option>
                 <option value="explain">Level 2: Explain (Highlight elements & explain)</option>
                 <option value="suggest">Level 3: Suggest (Propose action plans)</option>
@@ -2517,14 +2685,14 @@
                 border-top: 1px solid var(--border);
               "
             >
-              <div>
+              <label for="settingsConsequentialGate" style="cursor: pointer">
                 <span style="font-size: 11px; font-weight: 500; display: block"
                   >Consequential Action Gates</span
                 >
                 <span style="font-size: 9px; color: var(--text-dim)"
                   >Require approval for checkout, deletes, & submit</span
                 >
-              </div>
+              </label>
               <input
                 id="settingsConsequentialGate"
                 type="checkbox"
@@ -2590,6 +2758,7 @@
           </p>
           <div style="display: flex; gap: 6px; flex-wrap: wrap">
             <button
+              type="button"
               id="settingsClearBufferBtn"
               class="ghost"
               style="padding: 4px 8px; font-size: 10px"
@@ -2597,13 +2766,15 @@
               Clear 3-Turn Context
             </button>
             <button
+              type="button"
               id="settingsClearStorageBtn"
               class="ghost"
-              style="padding: 4px 8px; font-size: 10px"
+              style="padding: 4px 8px; font-size: 10px; color: var(--destructive-text)"
             >
               Reset Local Storage
             </button>
             <button
+              type="button"
               id="settingsOpenDashboardBtn"
               class="ghost"
               style="padding: 4px 8px; font-size: 10px"
@@ -2611,6 +2782,7 @@
               🖥️ Open Dashboard
             </button>
             <button
+              type="button"
               id="settingsSelfHealStatusBtn"
               class="ghost"
               style="padding: 4px 8px; font-size: 10px"
@@ -2618,12 +2790,39 @@
               🩺 Self-Heal Status
             </button>
           </div>
+          <div
+            id="settingsClearStorageConfirmRow"
+            class="confirm-inline-row"
+            role="alertdialog"
+            aria-label="Confirm local storage reset"
+            hidden
+            style="margin-top: 6px"
+          >
+            <span>Reset all local cache, preferences, and saved direct keys?</span>
+            <div style="display: flex; gap: 4px">
+              <button type="button" id="settingsConfirmClearStorageBtn" class="confirm-danger-btn">
+                Confirm Reset
+              </button>
+              <button
+                type="button"
+                id="settingsCancelClearStorageBtn"
+                class="ghost"
+                style="padding: 3px 8px; font-size: 10px"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
           <span
             id="settingsStorageFeedback"
+            role="status"
+            aria-live="polite"
             style="font-size: 10px; color: var(--accent-cyan); display: none; margin-top: 4px"
           ></span>
           <span
             id="settingsSelfHealFeedback"
+            role="status"
+            aria-live="polite"
             style="font-size: 10px; color: var(--text-muted); display: none; margin-top: 4px"
           ></span>
         </div>

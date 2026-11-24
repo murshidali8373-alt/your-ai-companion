@@ -28,6 +28,7 @@ import {
   ShieldAlert,
   SkipForward,
   Square,
+  Trash2,
   Upload,
 } from "lucide-react";
 import { useState } from "react";
@@ -37,11 +38,13 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
   approveWebDraft,
   compileOrSaveWebWorkflow,
   controlWebDagRun,
+  deleteWebWorkspaceFile,
   generateWebReportArtifact,
   getPhase4WorkCenterOverview,
   runWebMultiAgentObjective,
@@ -72,6 +75,7 @@ export function WorkCenterPanel() {
   const execObjective = useServerFn(runWebMultiAgentObjective);
   const ctrlDag = useServerFn(controlWebDagRun);
   const uploadFileFn = useServerFn(uploadAndAnalyzeWorkspaceFile);
+  const deleteFileFn = useServerFn(deleteWebWorkspaceFile);
   const genReportFn = useServerFn(generateWebReportArtifact);
   const workflowFn = useServerFn(compileOrSaveWebWorkflow);
   const testConnFn = useServerFn(testWebConnector);
@@ -86,6 +90,13 @@ export function WorkCenterPanel() {
 
   const [objective, setObjective] = useState("");
   const [outputFormat, setOutputFormat] = useState<"none" | "xlsx" | "docx" | "pdf">("xlsx");
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
+  const [workspaceFeedback, setWorkspaceFeedback] = useState<{
+    kind: "success" | "error";
+    text: string;
+  } | null>(null);
+  const [pendingDeleteFileName, setPendingDeleteFileName] = useState<string | null>(null);
+  const [deletingFileName, setDeletingFileName] = useState<string | null>(null);
   const [parsedDoc, setParsedDoc] = useState<{
     fileName: string;
     format: string;
@@ -96,6 +107,9 @@ export function WorkCenterPanel() {
   } | null>(null);
 
   const [nlWorkflowInput, setNlWorkflowInput] = useState("");
+  const [pendingDeleteWorkflowId, setPendingDeleteWorkflowId] = useState<string | null>(null);
+  const [busyWorkflowId, setBusyWorkflowId] = useState<string | null>(null);
+  const [testingConnectorId, setTestingConnectorId] = useState<string | null>(null);
   const [compiledPreview, setCompiledPreview] = useState<{
     name: string;
     description: string;
@@ -140,8 +154,15 @@ export function WorkCenterPanel() {
   });
 
   const handleFileUpload = async (file: File | undefined) => {
-    if (!file) return;
+    if (!file || isUploadingFile) return;
+    setIsUploadingFile(true);
+    setWorkspaceFeedback(null);
     const reader = new FileReader();
+    reader.onerror = () => {
+      setIsUploadingFile(false);
+      setWorkspaceFeedback({ kind: "error", text: `Could not read "${file.name}".` });
+      toast.error(`Could not read "${file.name}".`);
+    };
     reader.onload = async () => {
       try {
         const resultStr = typeof reader.result === "string" ? reader.result : "";
@@ -160,10 +181,18 @@ export function WorkCenterPanel() {
           warnings: res.warnings,
           summaryText: res.spreadsheetAnalysis?.summary || res.textContent?.slice(0, 400),
         });
+        setWorkspaceFeedback({
+          kind: "success",
+          text: `Uploaded and parsed ${res.fileName} (${res.format.toUpperCase()}).`,
+        });
         toast.success(`Parsed ${res.fileName} (${res.format.toUpperCase()}).`);
         queryClient.invalidateQueries({ queryKey: ["phase4-work-center"] });
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Failed to parse uploaded file.");
+        const message = err instanceof Error ? err.message : "Failed to parse uploaded file.";
+        setWorkspaceFeedback({ kind: "error", text: message });
+        toast.error(message);
+      } finally {
+        setIsUploadingFile(false);
       }
     };
     reader.readAsDataURL(file);
@@ -249,6 +278,20 @@ export function WorkCenterPanel() {
 
   return (
     <div className="space-y-6">
+      {overview.isError && (
+        <div
+          role="alert"
+          className="panel p-4 border-destructive/40 bg-destructive/10 flex flex-wrap items-center justify-between gap-2 text-xs"
+        >
+          <span className="text-foreground">
+            Could not load Work Center data. Check your session or network connection.
+          </span>
+          <Button size="sm" variant="outline" onClick={() => overview.refetch()}>
+            Retry
+          </Button>
+        </div>
+      )}
+
       {/* Row 1: Autonomous Multi-Agent Objective & Live Parallel DAG Monitor */}
       <section className="panel p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -486,25 +529,59 @@ export function WorkCenterPanel() {
       {/* Row 2: Real File Workspace + Persistent Workflows */}
       <div className="grid gap-4 lg:grid-cols-2">
         <section className="panel p-5 space-y-3">
-          <h2 className="text-sm font-semibold flex items-center gap-2">
-            <FileSpreadsheet className="size-4 text-primary" />
-            Real File Workspace (CSV, XLSX, DOCX, PDF, JSON)
-          </h2>
-          <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-border p-4 text-xs text-muted-foreground hover:border-foreground/40">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold flex items-center gap-2">
+              <FileSpreadsheet className="size-4 text-primary" />
+              Real File Workspace (CSV, XLSX, DOCX, PDF, JSON)
+            </h2>
+            <span className="text-[11px] text-muted-foreground tabular-nums">
+              {(data?.files ?? []).length} file(s)
+            </span>
+          </div>
+          <label
+            className={`flex items-center justify-center gap-2 rounded-md border border-dashed border-border p-4 text-xs text-muted-foreground transition-colors ${
+              isUploadingFile
+                ? "cursor-wait opacity-70"
+                : "cursor-pointer hover:border-foreground/40"
+            }`}
+          >
             <Upload className="size-4" />
-            <span>Upload CSV, TSV, TXT, JSON, XLSX, DOCX, or PDF to parse & analyze</span>
+            <span>
+              {isUploadingFile
+                ? "Uploading and analyzing file…"
+                : "Upload CSV, TSV, TXT, JSON, XLSX, DOCX, or PDF to parse & analyze"}
+            </span>
             <input
               type="file"
+              aria-label="Upload workspace file"
               accept=".csv,.tsv,.txt,.json,.xlsx,.docx,.pdf"
               className="hidden"
-              onChange={(e) => handleFileUpload(e.target.files?.[0])}
+              disabled={isUploadingFile}
+              onChange={(e) => {
+                handleFileUpload(e.target.files?.[0]);
+                e.target.value = "";
+              }}
             />
           </label>
 
+          {workspaceFeedback && (
+            <p
+              role="status"
+              aria-live="polite"
+              className={`rounded border px-2.5 py-1.5 text-xs ${
+                workspaceFeedback.kind === "error"
+                  ? "border-destructive/40 bg-destructive/10 text-destructive"
+                  : "border-border bg-secondary/40 text-foreground"
+              }`}
+            >
+              {workspaceFeedback.text}
+            </p>
+          )}
+
           {parsedDoc && (
             <div className="rounded border border-border p-3 text-xs space-y-1">
-              <div className="flex items-center justify-between font-medium">
-                <span>{parsedDoc.fileName}</span>
+              <div className="flex flex-wrap items-center justify-between gap-2 font-medium">
+                <span className="break-all">{parsedDoc.fileName}</span>
                 <span className="font-mono uppercase text-muted-foreground">
                   {parsedDoc.format} · {parsedDoc.rowCount} row(s)
                 </span>
@@ -520,6 +597,104 @@ export function WorkCenterPanel() {
             </div>
           )}
 
+          <div className="space-y-1.5">
+            {overview.isLoading ? (
+              <div className="space-y-1.5">
+                <Skeleton className="h-9 w-full" />
+                <Skeleton className="h-9 w-full" />
+              </div>
+            ) : (data?.files ?? []).length === 0 ? (
+              <p className="rounded border border-dashed border-border p-2.5 text-xs text-muted-foreground">
+                No workspace files stored yet. Upload a CSV, XLSX, DOCX, or PDF above.
+              </p>
+            ) : (
+              <ul className="space-y-1.5 max-h-44 overflow-y-auto">
+                {(data?.files ?? []).map((f) => {
+                  const isConfirming = pendingDeleteFileName === f.fileName;
+                  const isDeleting = deletingFileName === f.fileName;
+                  return (
+                    <li
+                      key={f.fileName}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded border border-border/70 px-2.5 py-1.5 text-xs"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium truncate">{f.fileName}</p>
+                        <p className="text-[11px] text-muted-foreground tabular-nums">
+                          {Math.max(1, Math.round(f.sizeBytes / 1024))} KB
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {isConfirming ? (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              className="h-6 px-2 text-[11px]"
+                              disabled={isDeleting}
+                              onClick={async () => {
+                                setDeletingFileName(f.fileName);
+                                try {
+                                  const res = await deleteFileFn({
+                                    data: { fileName: f.fileName },
+                                  });
+                                  setPendingDeleteFileName(null);
+                                  if (res.ok) {
+                                    if (parsedDoc?.fileName === f.fileName) setParsedDoc(null);
+                                    setWorkspaceFeedback({
+                                      kind: "success",
+                                      text: `Deleted workspace file "${f.fileName}".`,
+                                    });
+                                    toast.success(`Deleted "${f.fileName}".`);
+                                  } else {
+                                    setWorkspaceFeedback({
+                                      kind: "error",
+                                      text: `"${f.fileName}" was not found or already removed.`,
+                                    });
+                                  }
+                                  queryClient.invalidateQueries({
+                                    queryKey: ["phase4-work-center"],
+                                  });
+                                } catch (err) {
+                                  const msg =
+                                    err instanceof Error ? err.message : "Could not delete file.";
+                                  setWorkspaceFeedback({ kind: "error", text: msg });
+                                  toast.error(msg);
+                                } finally {
+                                  setDeletingFileName(null);
+                                }
+                              }}
+                            >
+                              {isDeleting ? "Deleting…" : "Confirm"}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 px-2 text-[11px]"
+                              disabled={isDeleting}
+                              onClick={() => setPendingDeleteFileName(null)}
+                            >
+                              Cancel
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="size-7"
+                            aria-label={`Delete ${f.fileName}`}
+                            onClick={() => setPendingDeleteFileName(f.fileName)}
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
@@ -528,7 +703,7 @@ export function WorkCenterPanel() {
               onClick={() => generateReport.mutate("xlsx")}
             >
               <Download className="mr-1.5 size-3.5" />
-              Export XLSX
+              {generateReport.isPending ? "Generating…" : "Export XLSX"}
             </Button>
             <Button
               size="sm"
@@ -556,8 +731,9 @@ export function WorkCenterPanel() {
             <CalendarClock className="size-4 text-primary" />
             Persistent Workflow Builder (Croner)
           </h2>
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row">
             <Input
+              aria-label="Workflow instruction"
               value={nlWorkflowInput}
               onChange={(e) => setNlWorkflowInput(e.target.value)}
               placeholder="e.g. Every day at 9 AM check Meesho pending orders and export XLSX report"
@@ -569,7 +745,7 @@ export function WorkCenterPanel() {
               disabled={compileWorkflow.isPending || nlWorkflowInput.trim().length < 4}
               onClick={() => compileWorkflow.mutate()}
             >
-              Compile
+              {compileWorkflow.isPending ? "Compiling…" : "Compile"}
             </Button>
           </div>
 
@@ -584,7 +760,7 @@ export function WorkCenterPanel() {
                   disabled={saveWorkflow.isPending}
                   onClick={() => saveWorkflow.mutate()}
                 >
-                  Confirm & Activate
+                  {saveWorkflow.isPending ? "Saving…" : "Confirm & Activate"}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setCompiledPreview(null)}>
                   Discard
@@ -597,53 +773,137 @@ export function WorkCenterPanel() {
             <p className="text-[11px] text-muted-foreground">{data.environmentNotice}</p>
           )}
 
-          <ul className="space-y-2">
-            {(data?.workflows || []).slice(0, 4).map((wf) => (
-              <li
-                key={wf.id}
-                className="flex items-center justify-between gap-2 rounded border border-border/70 p-2.5 text-xs"
-              >
-                <div className="min-w-0">
-                  <p className="font-medium truncate">{wf.name}</p>
-                  <p className="text-[11px] text-muted-foreground font-mono tabular-nums">
-                    {wf.triggerType}
-                    {wf.cronExpression ? ` · ${wf.cronExpression}` : ""} · Runs: {wf.runCount}
-                  </p>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 px-2 text-[11px]"
-                    onClick={async () => {
-                      await workflowFn({ data: { mode: "run", workflowId: wf.id } });
-                      queryClient.invalidateQueries({ queryKey: ["phase4-work-center"] });
-                      toast.success(`Executed "${wf.name}"`);
-                    }}
+          {overview.isLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+            </div>
+          ) : (data?.workflows || []).length === 0 ? (
+            <p className="rounded border border-dashed border-border p-2.5 text-xs text-muted-foreground">
+              No saved workflows yet. Describe a schedule above and compile it first.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {(data?.workflows || []).slice(0, 4).map((wf) => {
+                const isConfirmingDel = pendingDeleteWorkflowId === wf.id;
+                const isBusy = busyWorkflowId === wf.id;
+                return (
+                  <li
+                    key={wf.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded border border-border/70 p-2.5 text-xs"
                   >
-                    Run Now
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 px-2 text-[11px]"
-                    onClick={async () => {
-                      await workflowFn({
-                        data: {
-                          mode: "toggle",
-                          workflowId: wf.id,
-                          nextStatus: wf.status === "active" ? "paused" : "active",
-                        },
-                      });
-                      queryClient.invalidateQueries({ queryKey: ["phase4-work-center"] });
-                    }}
-                  >
-                    {wf.status === "active" ? "Pause" : "Resume"}
-                  </Button>
-                </div>
-              </li>
-            ))}
-          </ul>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium truncate">{wf.name}</p>
+                      <p className="text-[11px] text-muted-foreground font-mono tabular-nums">
+                        {wf.triggerType}
+                        {wf.cronExpression ? ` · ${wf.cronExpression}` : ""} · Runs: {wf.runCount}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                      {isConfirmingDel ? (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            className="h-7 px-2 text-[11px]"
+                            disabled={isBusy}
+                            onClick={async () => {
+                              setBusyWorkflowId(wf.id);
+                              try {
+                                await workflowFn({ data: { mode: "delete", workflowId: wf.id } });
+                                setPendingDeleteWorkflowId(null);
+                                toast.success(`Deleted workflow "${wf.name}".`);
+                                queryClient.invalidateQueries({
+                                  queryKey: ["phase4-work-center"],
+                                });
+                              } catch {
+                                toast.error(`Could not delete "${wf.name}".`);
+                              } finally {
+                                setBusyWorkflowId(null);
+                              }
+                            }}
+                          >
+                            {isBusy ? "Deleting…" : "Confirm"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-[11px]"
+                            disabled={isBusy}
+                            onClick={() => setPendingDeleteWorkflowId(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-[11px]"
+                            disabled={isBusy}
+                            onClick={async () => {
+                              setBusyWorkflowId(wf.id);
+                              try {
+                                await workflowFn({ data: { mode: "run", workflowId: wf.id } });
+                                queryClient.invalidateQueries({
+                                  queryKey: ["phase4-work-center"],
+                                });
+                                toast.success(`Executed "${wf.name}"`);
+                              } catch {
+                                toast.error(`Failed to execute "${wf.name}".`);
+                              } finally {
+                                setBusyWorkflowId(null);
+                              }
+                            }}
+                          >
+                            {isBusy ? "Running…" : "Run Now"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-[11px]"
+                            disabled={isBusy}
+                            onClick={async () => {
+                              setBusyWorkflowId(wf.id);
+                              try {
+                                await workflowFn({
+                                  data: {
+                                    mode: "toggle",
+                                    workflowId: wf.id,
+                                    nextStatus: wf.status === "active" ? "paused" : "active",
+                                  },
+                                });
+                                queryClient.invalidateQueries({
+                                  queryKey: ["phase4-work-center"],
+                                });
+                              } catch {
+                                toast.error(`Could not update "${wf.name}".`);
+                              } finally {
+                                setBusyWorkflowId(null);
+                              }
+                            }}
+                          >
+                            {wf.status === "active" ? "Pause" : "Resume"}
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="size-7"
+                            aria-label={`Delete workflow ${wf.name}`}
+                            disabled={isBusy}
+                            onClick={() => setPendingDeleteWorkflowId(wf.id)}
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </section>
       </div>
 
@@ -655,35 +915,49 @@ export function WorkCenterPanel() {
             Connected Apps (Truthful Health)
           </h2>
           <div className="grid gap-2 sm:grid-cols-2">
-            {(data?.connectors || []).map((c) => (
-              <div key={c.id} className="rounded border border-border p-2.5 text-xs space-y-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium truncate">{c.name}</span>
-                  <Badge variant={c.operational ? "secondary" : "outline"} className="text-[10px]">
-                    {c.status}
-                  </Badge>
+            {(data?.connectors || []).map((c) => {
+              const isTesting = testingConnectorId === c.id;
+              return (
+                <div key={c.id} className="rounded border border-border p-2.5 text-xs space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium truncate">{c.name}</span>
+                    <Badge
+                      variant={c.operational ? "secondary" : "outline"}
+                      className="text-[10px]"
+                    >
+                      {c.status}
+                    </Badge>
+                  </div>
+                  {c.missingRequirements[0] && (
+                    <p className="text-[11px] text-muted-foreground">{c.missingRequirements[0]}</p>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 px-2 text-[10px]"
+                    disabled={isTesting}
+                    onClick={async () => {
+                      setTestingConnectorId(c.id);
+                      try {
+                        const res = await testConnFn({ data: { connectorId: c.id as never } });
+                        toast[res.operational ? "success" : "info"](
+                          res.operational
+                            ? `${res.name} verified operational.`
+                            : res.missingRequirements[0] || `${res.name}: not connected.`,
+                        );
+                        queryClient.invalidateQueries({ queryKey: ["phase4-work-center"] });
+                      } catch {
+                        toast.error(`Could not test ${c.name} right now.`);
+                      } finally {
+                        setTestingConnectorId(null);
+                      }
+                    }}
+                  >
+                    {isTesting ? "Checking…" : "Test Health"}
+                  </Button>
                 </div>
-                {c.missingRequirements[0] && (
-                  <p className="text-[11px] text-muted-foreground">{c.missingRequirements[0]}</p>
-                )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-6 px-2 text-[10px]"
-                  onClick={async () => {
-                    const res = await testConnFn({ data: { connectorId: c.id as never } });
-                    toast[res.operational ? "success" : "info"](
-                      res.operational
-                        ? `${res.name} verified operational.`
-                        : res.missingRequirements[0] || `${res.name}: not connected.`,
-                    );
-                    queryClient.invalidateQueries({ queryKey: ["phase4-work-center"] });
-                  }}
-                >
-                  Test Health
-                </Button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
 

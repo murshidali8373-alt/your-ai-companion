@@ -472,6 +472,7 @@ export function useBuddyHealth(options: UseBuddyHealthOptions = {}) {
   useEffect(() => {
     if (!intervalMs || intervalMs <= 0) return;
     const interval = window.setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
       void runHealthCheck();
     }, intervalMs);
     return () => window.clearInterval(interval);

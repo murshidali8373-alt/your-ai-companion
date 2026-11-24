@@ -19,6 +19,7 @@ import {
 import {
   executeAgentDag,
   getDagController,
+  isDagRunActive,
   skipDagSubtask,
 } from "@/lib/agents/dag-executor";
 import { createSpecializedSubtaskRunner } from "@/lib/agents/specialized-agents";
@@ -207,6 +208,7 @@ export const Route = createFileRoute("/api/public/extension/agents")({
         }
 
         const ctrl = getDagController(body.runId);
+        const liveActive = isDagRunActive(body.runId);
 
         if (body.action === "pause") {
           ctrl?.pause();
@@ -257,14 +259,19 @@ export const Route = createFileRoute("/api/public/extension/agents")({
             );
           }
           if (ctrl) {
+            const liveState = ctrl.getRunState();
             const target = existing.subtasks.find((s) => s.id === body.subtaskId);
             if (target) {
               target.status = "skipped";
               target.error = "Skipped by user.";
+              target.completedAt = liveState.updatedAt;
             }
+            existing.status = liveState.status;
+            existing.completedAt = liveState.completedAt;
+            existing.updatedAt = liveState.updatedAt;
           }
           await persistRun(userId, existing);
-          if (skipRes.completedRun || existing.status !== "running") {
+          if (skipRes.completedRun || existing.status !== "running" || liveActive) {
             return extensionJsonResponse(request, { ok: true, run: existing, isGuest });
           }
         }
@@ -279,6 +286,7 @@ export const Route = createFileRoute("/api/public/extension/agents")({
             }
           }
         } else if (body.action === "retry_failed") {
+          ctrl?.retryFailed();
           for (const st of existing.subtasks) {
             if (st.status === "failed") {
               st.status = "pending";
@@ -291,6 +299,13 @@ export const Route = createFileRoute("/api/public/extension/agents")({
           for (const st of existing.subtasks) {
             if (st.status === "paused") st.status = "pending";
           }
+        }
+
+        if (liveActive) {
+          existing.status = "running";
+          existing.updatedAt = new Date().toISOString();
+          await persistRun(userId, existing);
+          return extensionJsonResponse(request, { ok: true, run: existing, isGuest });
         }
 
         const runner = createSpecializedSubtaskRunner({

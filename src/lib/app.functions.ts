@@ -859,7 +859,7 @@ export const controlWebDagRun = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }): Promise<SerializableDagRun> => {
-    const { executeAgentDag, getDagController, skipDagSubtask } =
+    const { executeAgentDag, getDagController, isDagRunActive, skipDagSubtask } =
       await import("./agents/dag-executor");
     const { createSpecializedSubtaskRunner } = await import("./agents/specialized-agents");
     const { readScopedCollection, updateScopedCollection } =
@@ -880,6 +880,8 @@ export const controlWebDagRun = createServerFn({ method: "POST" })
     };
 
     const ctrl = getDagController(data.runId);
+    const liveActive = isDagRunActive(data.runId);
+
     if (data.action === "pause") {
       ctrl?.pause();
       existing.status = "paused";
@@ -918,21 +920,26 @@ export const controlWebDagRun = createServerFn({ method: "POST" })
       if (!skipOutcome.ok) {
         throw new Error(skipOutcome.reason || "Cannot skip this subtask.");
       }
-      // Also mirror onto persisted copy if controller operated on a different reference
       if (ctrl) {
+        const liveState = ctrl.getRunState();
         const persistedTarget = existing.subtasks.find((s) => s.id === data.subtaskId);
         if (persistedTarget) {
           persistedTarget.status = "skipped";
           persistedTarget.error = "Skipped by user.";
+          persistedTarget.completedAt = liveState.updatedAt;
         }
+        existing.status = liveState.status;
+        existing.completedAt = liveState.completedAt;
+        existing.updatedAt = liveState.updatedAt;
       }
       await persist(existing);
-      if (skipOutcome.completedRun || existing.status !== "running") {
+      if (skipOutcome.completedRun || existing.status !== "running" || liveActive) {
         return existing as unknown as SerializableDagRun;
       }
     }
 
     if (data.action === "retry_failed") {
+      ctrl?.retryFailed();
       for (const st of existing.subtasks) {
         if (st.status === "failed") {
           st.status = "pending";
@@ -953,6 +960,13 @@ export const controlWebDagRun = createServerFn({ method: "POST" })
       for (const st of existing.subtasks) {
         if (st.status === "paused") st.status = "pending";
       }
+    }
+
+    if (liveActive) {
+      existing.status = "running";
+      existing.updatedAt = new Date().toISOString();
+      await persist(existing);
+      return existing as unknown as SerializableDagRun;
     }
 
     const runner = createSpecializedSubtaskRunner({
@@ -1004,6 +1018,21 @@ export const uploadAndAnalyzeWorkspaceFile = createServerFn({ method: "POST" })
       textContent: parsed.textContent,
       warnings: parsed.warnings,
     };
+  });
+
+export const deleteWebWorkspaceFile = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        fileName: z.string().min(1).max(260),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }): Promise<{ ok: boolean; fileName: string }> => {
+    const { deleteWorkspaceBinaryFile } = await import("./persistence/store.server");
+    const deleted = await deleteWorkspaceBinaryFile(context.userId, data.fileName);
+    return { ok: deleted, fileName: data.fileName };
   });
 
 export const generateWebReportArtifact = createServerFn({ method: "POST" })

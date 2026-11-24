@@ -144,13 +144,18 @@ export function TalkingBuddyCharacter({
   // Natural subtle blink generator (every 4.5 - 6s)
   useEffect(() => {
     if (reducedMotion) return;
-    let timeoutId: ReturnType<typeof setTimeout>;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let blinkDurationId: ReturnType<typeof setTimeout> | undefined;
 
     const scheduleBlink = () => {
       const delay = 3500 + Math.random() * 2500;
       timeoutId = setTimeout(() => {
+        if (typeof document !== "undefined" && document.hidden) {
+          scheduleBlink();
+          return;
+        }
         setBlinking(true);
-        setTimeout(() => {
+        blinkDurationId = setTimeout(() => {
           setBlinking(false);
           scheduleBlink();
         }, 140);
@@ -158,7 +163,10 @@ export function TalkingBuddyCharacter({
     };
 
     scheduleBlink();
-    return () => clearTimeout(timeoutId);
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (blinkDurationId) clearTimeout(blinkDurationId);
+    };
   }, [reducedMotion]);
 
   // Speaking mouth cadence animation
