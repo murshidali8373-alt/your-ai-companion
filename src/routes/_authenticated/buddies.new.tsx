@@ -148,9 +148,10 @@ function NewBuddy() {
           </div>
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="space-y-1.5">
-              <Label>Language</Label>
+              <Label htmlFor="lang">Language</Label>
               <select
-                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                id="lang"
+                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 value={form.language}
                 onChange={(e) => set("language", e.target.value as typeof form.language)}
               >
@@ -160,9 +161,10 @@ function NewBuddy() {
               </select>
             </div>
             <div className="space-y-1.5">
-              <Label>Teaching style</Label>
+              <Label htmlFor="teach">Teaching style</Label>
               <select
-                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                id="teach"
+                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 value={form.teaching_style}
                 onChange={(e) => set("teaching_style", e.target.value)}
               >
@@ -172,9 +174,10 @@ function NewBuddy() {
               </select>
             </div>
             <div className="space-y-1.5">
-              <Label>Permission level</Label>
+              <Label htmlFor="perm">Permission level</Label>
               <select
-                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                id="perm"
+                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 value={form.permission_level}
                 onChange={(e) => set("permission_level", e.target.value as PermissionLevel)}
               >
@@ -188,6 +191,7 @@ function NewBuddy() {
             <div className="space-y-2">
               <Label>Humour: {form.humor_level}/5</Label>
               <Slider
+                aria-label="Humour level"
                 min={1}
                 max={5}
                 step={1}
@@ -198,6 +202,7 @@ function NewBuddy() {
             <div className="space-y-2">
               <Label>Seriousness: {form.seriousness}/5</Label>
               <Slider
+                aria-label="Seriousness level"
                 min={1}
                 max={5}
                 step={1}
@@ -224,7 +229,7 @@ function NewBuddy() {
                           : [...form.allowed_tools, tool],
                       )
                     }
-                    className={`rounded-full border px-3 py-1 text-xs ${on ? "border-ring bg-secondary text-secondary-foreground" : "border-border text-muted-foreground"}`}
+                    className={`rounded-full border px-3 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${on ? "border-ring bg-secondary text-secondary-foreground" : "border-border text-muted-foreground"}`}
                   >
                     {tool}
                   </button>
@@ -254,8 +259,9 @@ function NewBuddy() {
               <button
                 type="button"
                 key={l.slug}
+                aria-pressed={form.look === l.slug}
                 onClick={() => set("look", l.slug)}
-                className={`rounded-md border px-2 py-1 text-xs ${form.look === l.slug ? "border-ring bg-secondary" : "border-border text-muted-foreground"}`}
+                className={`rounded-md border px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${form.look === l.slug ? "border-ring bg-secondary" : "border-border text-muted-foreground"}`}
               >
                 {l.label}
               </button>

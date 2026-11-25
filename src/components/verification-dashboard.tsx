@@ -184,12 +184,37 @@ export function VerificationDashboard() {
     });
   };
 
+  const copyTextWithFallback = async (value: string): Promise<boolean> => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        return true;
+      }
+    } catch {
+      // Fallback below
+    }
+    if (typeof document === "undefined") return false;
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = value;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      return Boolean(ok);
+    } catch {
+      return false;
+    }
+  };
+
   const handleCopyReport = async () => {
     const report = buildVerificationMarkdownReport(store);
-    try {
-      await navigator.clipboard.writeText(report);
+    const copied = await copyTextWithFallback(report);
+    if (copied) {
       toast.success("Verification report copied to clipboard.");
-    } catch {
+    } else {
       toast.error("Could not copy automatically. Use Export JSON instead.");
     }
   };
@@ -211,13 +236,13 @@ export function VerificationDashboard() {
   };
 
   const handleCopyCommand = async (cmd: string) => {
-    try {
-      await navigator.clipboard.writeText(cmd);
+    const copied = await copyTextWithFallback(cmd);
+    if (copied) {
       setCopiedCommand(cmd);
       setTimeout(() => {
         setCopiedCommand((prev) => (prev === cmd ? null : prev));
       }, 1500);
-    } catch {
+    } else {
       toast.error("Could not copy command.");
     }
   };
@@ -707,7 +732,7 @@ export function VerificationDashboard() {
                         chk.status === "pass"
                           ? "text-success"
                           : chk.status === "warning"
-                            ? "text-amber-500"
+                            ? "text-warning"
                             : "text-destructive"
                       }`}
                     >

@@ -691,11 +691,81 @@
         font-size: 11px;
         line-height: 1.45;
       }
+      .msg-md-pre-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 5px;
+        padding-bottom: 4px;
+        border-bottom: 1px solid var(--border);
+      }
       .msg-md-pre-lang {
         font-size: 9px;
         color: var(--text-dim);
         text-transform: uppercase;
-        margin-bottom: 4px;
+        letter-spacing: 0.04em;
+        margin-bottom: 0;
+      }
+      .msg-md-copy-btn {
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-muted);
+        font-size: 9px;
+        font-family: inherit;
+        padding: 1px 6px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .msg-md-copy-btn:hover {
+        color: var(--text);
+        border-color: var(--border-hover);
+        background: var(--surface-hover);
+      }
+      .msg-actions-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        margin-top: 6px;
+        padding-top: 4px;
+        border-top: 1px solid var(--border);
+      }
+      .msg-time {
+        font-size: 9px;
+        color: var(--text-dim);
+      }
+      .msg-actions-btns {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .msg-action-btn {
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--text-muted);
+        font-size: 9.5px;
+        padding: 1px 6px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .msg-action-btn:hover {
+        color: var(--text);
+        border-color: var(--border-hover);
+        background: var(--surface-hover);
+      }
+      .msg-provider-warning {
+        font-size: 10px;
+        border-color: rgba(245, 158, 11, 0.35);
+        background: var(--warning-soft);
+        color: var(--warning-text);
+      }
+      .msg-error {
+        border-color: rgba(239, 68, 68, 0.4);
+        background: var(--destructive-soft);
+        color: var(--text);
       }
       .msg-md-table-wrap {
         width: 100%;
@@ -719,7 +789,7 @@
         font-weight: 600;
       }
       .msg-md-link {
-        color: #7dd3fc;
+        color: var(--info-text);
         text-decoration: underline;
         text-underline-offset: 2px;
         overflow-wrap: anywhere;
@@ -867,6 +937,12 @@
           0 0 0 2px var(--accent-glow),
           0 4px 16px rgba(0, 0, 0, 0.2);
       }
+      .composer-card.drag-over {
+        border-color: var(--accent-cyan);
+        box-shadow:
+          0 0 0 2px rgba(6, 182, 212, 0.35),
+          0 4px 16px rgba(0, 0, 0, 0.25);
+      }
       .composer-input {
         width: 100%;
         min-height: 44px;
@@ -890,6 +966,7 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
+        flex-wrap: wrap;
         gap: 6px;
         padding-top: 4px;
         border-top: 1px solid rgba(255, 255, 255, 0.05);
@@ -897,6 +974,7 @@
       .composer-tools {
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: 4px;
       }
       .tool-btn {
@@ -946,13 +1024,13 @@
         border-color: var(--destructive);
       }
       .voice-btn.live-active {
-        background: rgba(16, 185, 129, 0.16);
-        color: #34d399;
+        background: var(--success-soft);
+        color: var(--success-text);
         border-color: rgba(16, 185, 129, 0.6);
       }
       .voice-btn.speaking-active {
-        background: rgba(245, 158, 11, 0.18);
-        color: #fbbf24;
+        background: var(--warning-soft);
+        color: var(--warning-text);
         border-color: rgba(245, 158, 11, 0.65);
       }
       .send-btn {
@@ -1115,6 +1193,24 @@
         border-radius: var(--radius-sm);
         font-size: 11px;
       }
+      .provider-row-item {
+        width: 100%;
+        text-align: left;
+        font-family: inherit;
+        color: var(--text);
+        cursor: pointer;
+        transition:
+          border-color 0.15s ease,
+          background 0.15s ease;
+      }
+      .provider-row-item:hover {
+        background: var(--surface-hover);
+        border-color: var(--border-hover);
+      }
+      .provider-row-item.active {
+        border-color: var(--accent-cyan);
+        background: rgba(6, 182, 212, 0.08);
+      }
 
       /* Confirmation Modal / Card */
       .confirm-card {
@@ -1125,11 +1221,14 @@
         display: flex;
         flex-direction: column;
         gap: 5px;
+        overflow-wrap: anywhere;
       }
       .status-msg {
         font-size: 11px;
         color: var(--text-muted);
         min-height: 14px;
+        overflow-wrap: anywhere;
+        word-break: break-word;
       }
 
       /* Responsive, Accessible Forms & Inline Confirmation Helpers */
@@ -1231,10 +1330,6 @@
         .quick-actions-grid {
           grid-template-columns: 1fr;
         }
-      }
-
-      [hidden] {
-        display: none !important;
       }
     </style>
   </head>
@@ -1591,7 +1686,7 @@
               background: rgba(20, 184, 166, 0.12);
               border: 1px solid rgba(20, 184, 166, 0.35);
               font-size: 11px;
-              color: #e2e8f0;
+              color: var(--text);
             "
           >
             <span
@@ -1607,7 +1702,7 @@
               style="
                 background: transparent;
                 border: none;
-                color: #94a3b8;
+                color: var(--text-muted);
                 cursor: pointer;
                 font-size: 12px;
                 padding: 0 4px;
@@ -1644,6 +1739,7 @@
                 type="button"
                 id="pageContextToggle"
                 class="tool-btn active"
+                aria-pressed="true"
                 title="Send live page snapshot to Buddy"
               >
                 🌐 <span style="font-size: 10px" id="pageContextStatus">Page Vision On</span>
@@ -1672,6 +1768,7 @@
                 type="button"
                 id="liveVoiceBtn"
                 class="voice-btn"
+                aria-pressed="false"
                 title="Start or stop continuous live voice conversation with Buddy"
               >
                 🎙️ Live
@@ -1680,6 +1777,7 @@
                 type="button"
                 id="voiceBtn"
                 class="voice-btn"
+                aria-pressed="false"
                 title="Push to talk or interrupt Buddy"
               >
                 🎤 Talk
@@ -1711,7 +1809,7 @@
             style="
               font-size: 11px;
               color: var(--text-muted);
-              background: #0b0f19;
+              background: var(--bg-inset);
               padding: 8px;
               border-radius: var(--radius-sm);
               border: 1px solid var(--border);
@@ -1721,6 +1819,7 @@
           </div>
           <div style="display: flex; gap: 4px; flex-wrap: wrap">
             <button
+              type="button"
               id="pageExplainActionBtn"
               class="ghost"
               style="font-size: 10px; padding: 4px 8px"
@@ -1728,6 +1827,7 @@
               🔍 Deep Explain
             </button>
             <button
+              type="button"
               id="pageCheckErrorsActionBtn"
               class="ghost"
               style="font-size: 10px; padding: 4px 8px"
@@ -1735,16 +1835,27 @@
               ⚠️ Find Page Errors
             </button>
             <button
+              type="button"
               id="pageExtractTableActionBtn"
               class="ghost"
               style="font-size: 10px; padding: 4px 8px"
             >
               📋 Extract Tables
             </button>
-            <button id="pageScrollDownBtn" class="ghost" style="font-size: 10px; padding: 4px 8px">
+            <button
+              type="button"
+              id="pageScrollDownBtn"
+              class="ghost"
+              style="font-size: 10px; padding: 4px 8px"
+            >
               ⬇️ Scroll Down
             </button>
-            <button id="pageScrollUpBtn" class="ghost" style="font-size: 10px; padding: 4px 8px">
+            <button
+              type="button"
+              id="pageScrollUpBtn"
+              class="ghost"
+              style="font-size: 10px; padding: 4px 8px"
+            >
               ⬆️ Scroll Up
             </button>
           </div>
@@ -1781,7 +1892,8 @@
               font-size: 10px;
               max-height: 80px;
               overflow-y: auto;
-              background: #0b0f19;
+              overflow-wrap: anywhere;
+              background: var(--bg-inset);
               padding: 6px;
               border-radius: var(--radius-sm);
               border: 1px solid var(--border);
@@ -1790,6 +1902,7 @@
           ></div>
           <div style="display: flex; gap: 6px">
             <button
+              type="button"
               id="autoFillSampleBtn"
               style="
                 flex: 1;
@@ -1805,6 +1918,7 @@
               ✨ Smart Fill Form
             </button>
             <button
+              type="button"
               id="verifyFormInputsBtn"
               class="ghost"
               style="flex: 1; font-size: 10px; padding: 5px"
@@ -1835,6 +1949,7 @@
           </p>
           <div style="display: flex; gap: 4px; margin-top: 4px">
             <button
+              type="button"
               id="resumeSavedTaskBtn"
               style="
                 padding: 4px 10px;
@@ -1849,6 +1964,7 @@
               ▶️ Resume Task
             </button>
             <button
+              type="button"
               id="discardSavedTaskBtn"
               class="ghost"
               style="padding: 4px 10px; font-size: 10px"
@@ -2017,7 +2133,7 @@
           <div
             id="workflowDraftPreview"
             style="
-              background: #0b0f19;
+              background: var(--bg-inset);
               border: 1px solid var(--border-accent);
               border-radius: var(--radius-sm);
               padding: 6px;
@@ -2069,6 +2185,7 @@
           </div>
           <div style="display: flex; flex-direction: column; gap: 4px">
             <button
+              type="button"
               id="runMeeshoWorkflowBtn"
               class="ghost"
               style="justify-content: flex-start; text-align: left; font-size: 11px; padding: 6px"
@@ -2076,6 +2193,7 @@
               📦 Meesho: Check Pending Orders & Prepare List
             </button>
             <button
+              type="button"
               id="runReconcileWorkflowBtn"
               class="ghost"
               style="justify-content: flex-start; text-align: left; font-size: 11px; padding: 6px"
@@ -2083,6 +2201,7 @@
               📑 Reconcile Orders with Spreadsheet (Non-Destructive)
             </button>
             <button
+              type="button"
               id="runResearchWorkflowBtn"
               class="ghost"
               style="justify-content: flex-start; text-align: left; font-size: 11px; padding: 6px"
@@ -2090,6 +2209,7 @@
               🔍 Multi-Source Research & Fact-Check
             </button>
             <button
+              type="button"
               id="runExtractTableWorkflowBtn"
               class="ghost"
               style="justify-content: flex-start; text-align: left; font-size: 11px; padding: 6px"
@@ -2350,6 +2470,7 @@
           <div class="section-card-title">
             <span>🔌 Provider Health & Latency</span>
             <button
+              type="button"
               id="testActiveProviderBtn"
               class="ghost"
               style="padding: 2px 7px; font-size: 10px"
@@ -2442,6 +2563,7 @@
                 "
               />
               <button
+                type="button"
                 id="settingsSaveApiBaseBtn"
                 class="ghost"
                 style="padding: 4px 8px; font-size: 10px; font-weight: 600"
@@ -2449,6 +2571,7 @@
                 Save
               </button>
               <button
+                type="button"
                 id="settingsDetectHostBtn"
                 class="ghost"
                 style="padding: 4px 8px; font-size: 10px"
@@ -2615,6 +2738,7 @@
 
           <div style="display: flex; gap: 6px; margin-top: 4px">
             <button
+              type="button"
               id="settingsConnectWebBtn"
               style="
                 flex: 1;
@@ -2631,6 +2755,7 @@
               🔗 Connect Web Session
             </button>
             <button
+              type="button"
               id="settingsSignOutBtn"
               class="ghost"
               style="padding: 6px 10px; font-size: 11px"
@@ -2718,7 +2843,9 @@
                   >Zero interaction with passwords, OTPs, CVVs</span
                 >
               </div>
-              <span style="font-size: 10px; font-weight: 600; color: #10b981">Always Active</span>
+              <span style="font-size: 10px; font-weight: 600; color: var(--success)"
+                >Always Active</span
+              >
             </div>
           </div>
         </div>
@@ -2738,6 +2865,7 @@
               >
             </div>
             <button
+              type="button"
               id="settingsVoiceToggleBtn"
               class="ghost"
               style="padding: 4px 8px; font-size: 10px; font-weight: 600"
@@ -2870,7 +2998,7 @@
             font-size: 9px;
             line-height: 1.35;
             color: var(--text-muted);
-            background: #0b0f19;
+            background: var(--bg-inset);
             padding: 5px;
             border-radius: var(--radius-sm);
             border: 1px solid var(--border);
@@ -2882,6 +3010,7 @@
         ></pre>
         <div style="display: flex; gap: 4px; margin-top: 2px; flex-wrap: wrap">
           <button
+            type="button"
             id="planApproveBtn"
             style="
               padding: 3px 8px;
@@ -2896,13 +3025,24 @@
           >
             ✅ Approve
           </button>
-          <button id="planPauseResumeBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
+          <button
+            type="button"
+            id="planPauseResumeBtn"
+            class="ghost"
+            style="padding: 3px 8px; font-size: 10px"
+          >
             ⏸️ Pause
           </button>
-          <button id="planSkipBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
+          <button
+            type="button"
+            id="planSkipBtn"
+            class="ghost"
+            style="padding: 3px 8px; font-size: 10px"
+          >
             ⏭️ Skip
           </button>
           <button
+            type="button"
             id="planRetryBtn"
             class="ghost"
             style="
@@ -2915,10 +3055,16 @@
           >
             🔄 Retry
           </button>
-          <button id="planInspectLogsBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
+          <button
+            type="button"
+            id="planInspectLogsBtn"
+            class="ghost"
+            style="padding: 3px 8px; font-size: 10px"
+          >
             🪵 Logs
           </button>
           <button
+            type="button"
             id="planStopBtn"
             class="ghost"
             style="
@@ -2937,7 +3083,12 @@
       <div id="extractedDataCard" class="section-card" hidden>
         <div class="section-card-title">
           <span id="extractedCountTitle">📊 Extracted Data</span>
-          <button id="copyExtractedBtn" class="ghost" style="padding: 2px 7px; font-size: 10px">
+          <button
+            type="button"
+            id="copyExtractedBtn"
+            class="ghost"
+            style="padding: 2px 7px; font-size: 10px"
+          >
             📋 Copy List
           </button>
         </div>
@@ -2948,7 +3099,7 @@
             font-size: 10px;
             line-height: 1.4;
             color: var(--text);
-            background: #0b0f19;
+            background: var(--bg-inset);
             padding: 6px;
             border-radius: var(--radius-sm);
             border: 1px solid var(--border);
@@ -2971,6 +3122,7 @@
         </p>
         <div style="display: flex; gap: 6px; margin-top: 4px">
           <button
+            type="button"
             id="approveConsequentialBtn"
             style="
               padding: 4px 10px;
@@ -2985,6 +3137,7 @@
             ✅ Approve & Continue
           </button>
           <button
+            type="button"
             id="rejectConsequentialBtn"
             class="ghost"
             style="padding: 4px 10px; font-size: 11px"
@@ -3016,7 +3169,7 @@
             font-size: 10px;
             line-height: 1.35;
             color: var(--text);
-            background: #0b0f19;
+            background: var(--bg-inset);
             padding: 6px;
             border-radius: var(--radius-sm);
             border: 1px solid var(--border);
@@ -3028,16 +3181,32 @@
           "
         ></pre>
         <div style="display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap">
-          <button id="selfHealDiagnoseBtn" class="ghost" style="padding: 3px 7px; font-size: 10px">
+          <button
+            type="button"
+            id="selfHealDiagnoseBtn"
+            class="ghost"
+            style="padding: 3px 7px; font-size: 10px"
+          >
             Diagnose Only
           </button>
-          <button id="selfHealShowCodeBtn" class="ghost" style="padding: 3px 7px; font-size: 10px">
+          <button
+            type="button"
+            id="selfHealShowCodeBtn"
+            class="ghost"
+            style="padding: 3px 7px; font-size: 10px"
+          >
             Show Affected Code
           </button>
-          <button id="selfHealPrepareBtn" class="ghost" style="padding: 3px 7px; font-size: 10px">
+          <button
+            type="button"
+            id="selfHealPrepareBtn"
+            class="ghost"
+            style="padding: 3px 7px; font-size: 10px"
+          >
             Prepare Repair
           </button>
           <button
+            type="button"
             id="selfHealApplyBtn"
             style="
               padding: 3px 8px;
@@ -3051,10 +3220,20 @@
           >
             Apply &amp; Test
           </button>
-          <button id="selfHealPrBtn" class="ghost" style="padding: 3px 7px; font-size: 10px">
+          <button
+            type="button"
+            id="selfHealPrBtn"
+            class="ghost"
+            style="padding: 3px 7px; font-size: 10px"
+          >
             Create GitHub PR
           </button>
-          <button id="selfHealCancelBtn" class="ghost" style="padding: 3px 7px; font-size: 10px">
+          <button
+            type="button"
+            id="selfHealCancelBtn"
+            class="ghost"
+            style="padding: 3px 7px; font-size: 10px"
+          >
             Cancel
           </button>
         </div>
@@ -3066,6 +3245,7 @@
         <p id="confirmDesc" style="font-size: 11px; color: var(--text-muted)"></p>
         <div style="display: flex; gap: 6px; margin-top: 4px">
           <button
+            type="button"
             id="confirmApproveBtn"
             style="
               padding: 4px 10px;
@@ -3079,7 +3259,12 @@
           >
             Approve Action
           </button>
-          <button id="confirmCancelBtn" class="ghost" style="padding: 4px 10px; font-size: 11px">
+          <button
+            type="button"
+            id="confirmCancelBtn"
+            class="ghost"
+            style="padding: 4px 10px; font-size: 11px"
+          >
             Cancel
           </button>
         </div>
@@ -3103,6 +3288,7 @@
         <p id="pageErrorText" style="font-size: 11px; color: var(--text)"></p>
         <div style="display: flex; gap: 6px; margin-top: 4px">
           <button
+            type="button"
             id="fixErrorsBtn"
             style="
               padding: 4px 10px;
@@ -3116,7 +3302,12 @@
           >
             Fix & Explain Errors
           </button>
-          <button id="dismissErrorsBtn" class="ghost" style="padding: 4px 10px; font-size: 11px">
+          <button
+            type="button"
+            id="dismissErrorsBtn"
+            class="ghost"
+            style="padding: 4px 10px; font-size: 11px"
+          >
             Dismiss
           </button>
         </div>
@@ -3137,7 +3328,12 @@
         <span style="font-size: 10px; color: var(--accent-cyan)">
           ⬇️ More content is available below on this page.
         </span>
-        <button id="scrollDownBannerBtn" class="ghost" style="padding: 3px 8px; font-size: 10px">
+        <button
+          type="button"
+          id="scrollDownBannerBtn"
+          class="ghost"
+          style="padding: 3px 8px; font-size: 10px"
+        >
           Scroll Down
         </button>
       </div>
@@ -3146,10 +3342,21 @@
       <footer>
         <span id="userAccount">Guest Mode (Sign in optional)</span>
         <div style="display: flex; gap: 4px">
-          <button id="connectBtn" class="ghost" style="padding: 2px 6px; font-size: 10px">
+          <button
+            type="button"
+            id="connectBtn"
+            class="ghost"
+            style="padding: 2px 6px; font-size: 10px"
+          >
             Connect
           </button>
-          <button id="signoutBtn" class="ghost" style="padding: 2px 6px; font-size: 10px" hidden>
+          <button
+            type="button"
+            id="signoutBtn"
+            class="ghost"
+            style="padding: 2px 6px; font-size: 10px"
+            hidden
+          >
             Sign out
           </button>
         </div>

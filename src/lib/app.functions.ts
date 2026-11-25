@@ -305,65 +305,52 @@ export const getModelHubStatus = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async () => {
     const { MODEL_CATALOG, PROVIDERS } = await import("./ai/model-hub");
-    const { verifyProviderConnection } = await import("./ai/provider-adapters.server");
+    const { getProviderKey, isProviderConfigured } = await import("./ai/provider-keys.server");
 
-    // Check baseline provider states
     const providerIds = Object.keys(PROVIDERS) as Array<keyof typeof PROVIDERS>;
-    const statuses = await Promise.all(
-      providerIds.map(async (id) => {
-        // Quick check without external network lag for initial load
-        let status: "connected" | "available_free" | "needs_key" | "offline" = "needs_key";
-        let message = PROVIDERS[id].rateLimitNote;
+    const statuses = providerIds.map((id) => {
+      const cfg = PROVIDERS[id];
+      const hasServerKey = isProviderConfigured(id);
+      let status: "connected" | "available_free" | "needs_key" | "offline" = "needs_key";
+      let message = cfg.rateLimitNote;
 
-        const isRealKey = (key?: string) =>
-          Boolean(key && !key.startsWith("MY_") && !key.includes("your-key"));
+      if (id === "gemini") {
+        const rawEnv = process.env["GEMINI_API_KEY"]?.trim();
+        status = hasServerKey ? "connected" : "needs_key";
+        message = hasServerKey
+          ? "Google Gemini is active via server key."
+          : rawEnv?.startsWith("MY_")
+            ? "GEMINI_API_KEY has placeholder value; configure in AI Model Hub."
+            : "Requires GEMINI_API_KEY or user key in AI Model Hub.";
+      } else if (id === "ollama") {
+        status = hasServerKey ? "connected" : "available_free";
+        message = hasServerKey
+          ? "Ollama host is configured on server."
+          : "Runs locally on your machine at localhost:11434.";
+      } else if (id === "lovable-gateway") {
+        status = getProviderKey("lovable-gateway") ? "connected" : "needs_key";
+        message =
+          status === "connected"
+            ? "Built-in fallback gateway route is configured on server."
+            : "Fallback gateway key is not configured on this server.";
+      } else if (hasServerKey) {
+        status = "connected";
+        message = `${cfg.name} key configured on server.`;
+      } else if (cfg.freeTierAvailable) {
+        status = "available_free";
+        message = `Free tier available — add a ${cfg.name} key in AI Model Hub.`;
+      } else {
+        status = "needs_key";
+        message = `Requires ${cfg.name} API key (add in AI Model Hub).`;
+      }
 
-        if (id === "gemini") {
-          const { getGeminiKey } = await import("./ai/provider-keys.server");
-          const key = getGeminiKey() ?? process.env["GEMINI_API_KEY"];
-          status = isRealKey(key) ? "connected" : "needs_key";
-          message =
-            status === "connected"
-              ? "Google Gemini is active via server key."
-              : key?.startsWith("MY_")
-                ? "GEMINI_API_KEY has placeholder value; configure in AI Model Hub."
-                : "Requires GEMINI_API_KEY or user key in AI Model Hub.";
-        } else if (id === "groq") {
-          status = isRealKey(process.env["GROQ_API_KEY"]) ? "connected" : "available_free";
-          message =
-            status === "connected"
-              ? "GroqCloud key configured on server."
-              : "Free tier available with user key in AI Model Hub.";
-        } else if (id === "openrouter") {
-          status = isRealKey(process.env["OPENROUTER_API_KEY"]) ? "connected" : "available_free";
-          message =
-            status === "connected"
-              ? "OpenRouter key active on server."
-              : "Supports free and paid routing via AI Model Hub.";
-        } else if (id === "openai") {
-          status = isRealKey(process.env["OPENAI_API_KEY"]) ? "connected" : "needs_key";
-          message =
-            status === "connected"
-              ? "OpenAI key active on server."
-              : "Requires OpenAI API key (add in AI Model Hub).";
-        } else if (id === "ollama") {
-          status = "available_free";
-          message = "Runs locally on your machine at localhost:11434.";
-        } else if (id === "lovable-gateway") {
-          status = isRealKey(process.env["LOVABLE_API_KEY"]) ? "connected" : "available_free";
-          message = "Built-in fallback gateway route.";
-        } else {
-          status = "available_free";
-        }
-
-        return {
-          providerId: id,
-          config: PROVIDERS[id],
-          status,
-          message,
-        };
-      }),
-    );
+      return {
+        providerId: id,
+        config: cfg,
+        status,
+        message,
+      };
+    });
 
     return {
       providers: statuses,

@@ -102,8 +102,14 @@ export function VoiceBar({
     };
     r.onend = () => setListening(false);
     rec.current = r;
-    r.start();
-    setListening(true);
+    try {
+      r.start();
+      setListening(true);
+    } catch {
+      rec.current = null;
+      setListening(false);
+      setError("Could not start voice capture. Check microphone permissions or type instead.");
+    }
   };
 
   return (
@@ -159,6 +165,7 @@ export function VoiceBar({
             size="icon"
             className={`size-12 rounded-full ${listening ? "animate-buddy-pulse" : ""}`}
             onClick={listening ? finish : start}
+            aria-pressed={listening}
             aria-label={listening ? "Finish speaking" : "Talk to AI Buddy"}
           >
             {listening ? <Square className="size-5" /> : <Mic className="size-5" />}

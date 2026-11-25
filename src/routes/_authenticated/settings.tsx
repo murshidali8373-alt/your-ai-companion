@@ -94,7 +94,7 @@ function Settings() {
               {PERMISSION_LEVELS.map((level) => (
                 <label
                   key={level}
-                  className={`flex cursor-pointer gap-3 rounded-md border p-3 ${perms?.level === level ? "border-ring bg-secondary/50" : "border-border"}`}
+                  className={`flex cursor-pointer gap-3 rounded-md border p-3 focus-within:ring-1 focus-within:ring-ring ${perms?.level === level ? "border-ring bg-secondary/50" : "border-border"}`}
                 >
                   <input
                     type="radio"
@@ -181,7 +181,7 @@ function Settings() {
                 <Label htmlFor="lang">Language</Label>
                 <select
                   id="lang"
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   value={language}
                   onChange={(e) => setLanguage(e.target.value as typeof language)}
                 >
@@ -194,7 +194,7 @@ function Settings() {
                 <Label htmlFor="gfx">3D graphics</Label>
                 <select
                   id="gfx"
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   value={graphics}
                   onChange={(e) => setGraphics(e.target.value as typeof graphics)}
                 >

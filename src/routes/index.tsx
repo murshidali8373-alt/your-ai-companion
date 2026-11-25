@@ -240,11 +240,7 @@ function Landing() {
               what to press next — and asks before it ever does anything for you.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <Button
-                asChild
-                size="lg"
-                className="bg-teal-600 hover:bg-teal-500 text-white font-medium"
-              >
+              <Button asChild size="lg" className="font-medium">
                 <Link to="/connect">Connect extension</Link>
               </Button>
               <Button asChild size="lg" variant="secondary">

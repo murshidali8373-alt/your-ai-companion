@@ -167,6 +167,11 @@ export const Route = createFileRoute("/api/public/extension/tasks")({
 
           if (error) {
             console.error("[extension/tasks] db error:", error);
+            return extensionJsonResponse(
+              request,
+              { ok: false, error: "Failed to persist task", message: error.message },
+              500,
+            );
           }
 
           if (body.steps && body.steps.length > 0) {

@@ -118,7 +118,7 @@ function Download() {
             click.
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button asChild className="bg-teal-600 hover:bg-teal-500 text-white font-medium">
+            <Button asChild className="font-medium">
               <Link to="/connect">Connect Extension (/connect)</Link>
             </Button>
             <Button asChild variant="outline">

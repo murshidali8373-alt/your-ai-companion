@@ -221,7 +221,7 @@ function AuthPage() {
               <Button
                 type="button"
                 variant="outline"
-                className="w-full gap-2 border-teal-500/40 text-teal-600 dark:text-teal-400 hover:bg-teal-500/10"
+                className="w-full gap-2 border-primary/40 text-primary hover:bg-primary/10"
                 onClick={async () => {
                   setBusy(true);
                   try {

@@ -429,8 +429,8 @@ function Tasks() {
                   </div>
 
                   {run.unconfirmedStopNote && (
-                    <div className="rounded border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-foreground flex items-start gap-2">
-                      <ShieldAlert className="size-4 text-amber-500 shrink-0 mt-0.5" />
+                    <div className="rounded border border-warning/40 bg-warning/10 p-2 text-xs text-foreground flex items-start gap-2">
+                      <ShieldAlert className="size-4 text-warning shrink-0 mt-0.5" />
                       <span>{run.unconfirmedStopNote}</span>
                     </div>
                   )}

@@ -46,12 +46,20 @@ export function getGeminiKey(): string | undefined {
   return getProviderKey("gemini");
 }
 
+export function getOllamaBaseUrl(): string {
+  ensureServerEnvLoaded();
+  const raw = process.env["OLLAMA_BASE_URL"]?.trim();
+  return raw ? raw.replace(/\/+$/, "") : "http://localhost:11434";
+}
+
 /** Providers with env mappings must have valid keys; ollama requires explicit host env. */
 export function isProviderConfigured(provider: string, userKeyProvider?: string): boolean {
   ensureServerEnvLoaded();
   if (userKeyProvider && userKeyProvider === provider) return true;
   if (provider === "ollama") {
-    return Boolean(process.env["OLLAMA_BASE_URL"] || process.env["OLLAMA_ENABLED"] === "true");
+    return Boolean(
+      process.env["OLLAMA_BASE_URL"]?.trim() || process.env["OLLAMA_ENABLED"] === "true",
+    );
   }
   if (!(provider in ENV_KEYS)) return false;
   return Boolean(getProviderKey(provider));

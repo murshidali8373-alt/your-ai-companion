@@ -110,6 +110,7 @@ export function WorkCenterPanel() {
   const [pendingDeleteWorkflowId, setPendingDeleteWorkflowId] = useState<string | null>(null);
   const [busyWorkflowId, setBusyWorkflowId] = useState<string | null>(null);
   const [testingConnectorId, setTestingConnectorId] = useState<string | null>(null);
+  const [approvingDraftId, setApprovingDraftId] = useState<string | null>(null);
   const [compiledPreview, setCompiledPreview] = useState<{
     name: string;
     description: string;
@@ -329,7 +330,7 @@ export function WorkCenterPanel() {
               aria-label="Deliverable export format"
               value={outputFormat}
               onChange={(e) => setOutputFormat(e.target.value as typeof outputFormat)}
-              className="h-9 rounded-md border border-border bg-background px-2 text-xs"
+              className="h-9 rounded-md border border-border bg-background px-2 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
               <option value="xlsx">Export XLSX</option>
               <option value="docx">Export DOCX</option>
@@ -388,6 +389,7 @@ export function WorkCenterPanel() {
                           size="sm"
                           variant="outline"
                           className="h-7 px-2 text-xs"
+                          disabled={controlDag.isPending}
                           onClick={() => controlDag.mutate({ runId: run.runId, action: "pause" })}
                         >
                           <Pause className="size-3 mr-1" />
@@ -399,6 +401,7 @@ export function WorkCenterPanel() {
                           size="sm"
                           variant="outline"
                           className="h-7 px-2 text-xs"
+                          disabled={controlDag.isPending}
                           onClick={() => controlDag.mutate({ runId: run.runId, action: "resume" })}
                         >
                           <Play className="size-3 mr-1" />
@@ -410,6 +413,7 @@ export function WorkCenterPanel() {
                           size="sm"
                           variant="outline"
                           className="h-7 px-2 text-xs"
+                          disabled={controlDag.isPending}
                           onClick={() =>
                             controlDag.mutate({ runId: run.runId, action: "retry_failed" })
                           }
@@ -423,6 +427,7 @@ export function WorkCenterPanel() {
                           size="sm"
                           variant="ghost"
                           className="h-7 px-2 text-xs"
+                          disabled={controlDag.isPending}
                           onClick={() => controlDag.mutate({ runId: run.runId, action: "cancel" })}
                         >
                           <Square className="size-3 mr-1" />
@@ -433,7 +438,7 @@ export function WorkCenterPanel() {
                   </div>
 
                   {run.unconfirmedStopNote && (
-                    <p className="rounded border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-foreground">
+                    <p className="rounded border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-[11px] text-foreground">
                       {run.unconfirmedStopNote}
                     </p>
                   )}
@@ -463,6 +468,7 @@ export function WorkCenterPanel() {
                                 size="sm"
                                 variant="secondary"
                                 className="h-6 px-2 text-[10px]"
+                                disabled={controlDag.isPending}
                                 onClick={() =>
                                   controlDag.mutate({
                                     runId: run.runId,
@@ -481,6 +487,7 @@ export function WorkCenterPanel() {
                                   size="sm"
                                   variant="ghost"
                                   className="h-6 px-1.5 text-[10px]"
+                                  disabled={controlDag.isPending}
                                   title="Skip subtask (blocked if downstream steps depend on it)"
                                   onClick={() =>
                                     controlDag.mutate({
@@ -985,34 +992,50 @@ export function WorkCenterPanel() {
 
           {(data?.drafts || [])
             .filter((d) => d.status === "awaiting_approval")
-            .map((d) => (
-              <div
-                key={d.id}
-                className="rounded border border-amber-500/40 p-2.5 text-xs space-y-2"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-medium flex items-center gap-1.5">
-                    <ShieldAlert className="size-3.5 text-amber-500" />
-                    Approval needed: {d.channel} → {d.recipient}
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    className="h-6 px-2 text-[10px]"
-                    onClick={async () => {
-                      const res = await approveDraftFn({
-                        data: { draftId: d.id, confirmedByUser: true },
-                      });
-                      toast[res.ok ? "success" : "error"](res.detail);
-                      queryClient.invalidateQueries({ queryKey: ["phase4-work-center"] });
-                    }}
-                  >
-                    Approve & Send
-                  </Button>
+            .map((d) => {
+              const isApproving = approvingDraftId === d.id;
+              return (
+                <div
+                  key={d.id}
+                  className="rounded border border-warning/40 bg-warning/5 p-2.5 text-xs space-y-2"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium flex items-center gap-1.5">
+                      <ShieldAlert className="size-3.5 text-warning" />
+                      Approval needed: {d.channel} → {d.recipient}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="h-6 px-2 text-[10px]"
+                      disabled={isApproving}
+                      onClick={async () => {
+                        if (approvingDraftId) return;
+                        setApprovingDraftId(d.id);
+                        try {
+                          const res = await approveDraftFn({
+                            data: { draftId: d.id, confirmedByUser: true },
+                          });
+                          toast[res.ok ? "success" : "error"](res.detail);
+                          queryClient.invalidateQueries({ queryKey: ["phase4-work-center"] });
+                        } catch (err) {
+                          toast.error(
+                            err instanceof Error
+                              ? err.message
+                              : "Could not approve and send draft.",
+                          );
+                        } finally {
+                          setApprovingDraftId(null);
+                        }
+                      }}
+                    >
+                      {isApproving ? "Sending…" : "Approve & Send"}
+                    </Button>
+                  </div>
+                  <p className="text-muted-foreground whitespace-pre-wrap">{d.body}</p>
                 </div>
-                <p className="text-muted-foreground whitespace-pre-wrap">{d.body}</p>
-              </div>
-            ))}
+              );
+            })}
 
           {(!data ||
             (data.suggestions.length === 0 &&

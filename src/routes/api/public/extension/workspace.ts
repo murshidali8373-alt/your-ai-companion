@@ -10,6 +10,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import {
+  buildExtensionCorsHeaders,
   extensionJsonResponse,
   handleExtensionOptions,
 } from "@/lib/extension-cors.server";
@@ -122,7 +123,8 @@ export const Route = createFileRoute("/api/public/extension/workspace")({
               "Content-Type": art.mimeType,
               "Content-Disposition": `attachment; filename="${safeFilename}"`,
               "X-Content-Type-Options": "nosniff",
-              "Access-Control-Allow-Origin": "*",
+              "Cache-Control": "no-store",
+              ...buildExtensionCorsHeaders(request),
             },
           });
         }
@@ -232,7 +234,7 @@ export const Route = createFileRoute("/api/public/extension/workspace")({
 
             const artifact = storeWorkspaceArtifact({
               ownerId,
-              filename: parsedReq.filename,
+              filename: safeName,
               mimeType: parsedReq.mimeType || "application/octet-stream",
               buffer,
               summary: parsed.summary,
@@ -273,6 +275,7 @@ export const Route = createFileRoute("/api/public/extension/workspace")({
             const baseArt = getWorkspaceArtifact(req.baseArtifactId, ownerId);
             const compArt = getWorkspaceArtifact(req.compareArtifactId, ownerId);
             if (!baseArt || !compArt) {
+              span.finish("blocked", "One or both artifacts not found for comparison");
               return extensionJsonResponse(request, { ok: false, message: "One or both artifacts not found." }, 404);
             }
             if (baseArt.extension === "xlsx" && compArt.extension === "xlsx") {
@@ -284,6 +287,7 @@ export const Route = createFileRoute("/api/public/extension/workspace")({
                 keyField: req.keyField,
                 compareFields: req.compareFields,
               });
+              span.finish("ok", `Compared XLSX ${baseArt.filename} vs ${compArt.filename}`);
               return extensionJsonResponse(request, { ok: true, ...res });
             }
             const parsedBase = await parseWorkspaceBuffer(baseArt.filename, baseArt.buffer);
@@ -307,11 +311,21 @@ export const Route = createFileRoute("/api/public/extension/workspace")({
               baseFileName: baseArt.filename,
               compareFileName: compArt.filename,
             });
+            span.finish("ok", `Compared ${baseArt.filename} vs ${compArt.filename}`);
             return extensionJsonResponse(request, { ok: true, comparison });
           }
 
           if (action === "generate") {
             const req = generateSchema.parse(rawBody);
+            if (/[\\/]|\.\./.test(req.filename)) {
+              span.finish("blocked", "Path traversal rejected in generate filename");
+              return extensionJsonResponse(
+                request,
+                { ok: false, message: "Invalid filename: path separators are not allowed." },
+                400,
+              );
+            }
+            const safeRequestedName = sanitizeContentDispositionFilename(req.filename);
             let outBuffer: Buffer;
             let mimeType = "application/octet-stream";
             let summary = "";
@@ -326,7 +340,7 @@ export const Route = createFileRoute("/api/public/extension/workspace")({
               summary = `Created & verified XLSX (${res.verified.totalRows} row(s)).`;
             } else if (req.format === "docx") {
               const res = await createDocxBuffer({
-                title: req.title || req.filename,
+                title: req.title || safeRequestedName,
                 sections: (req.sections ?? []).map((s) => ({
                   heading: s.heading,
                   paragraphs: s.paragraphs ?? (s.body ? [s.body] : []),
@@ -338,7 +352,7 @@ export const Route = createFileRoute("/api/public/extension/workspace")({
               summary = `Created & verified DOCX (${res.verified.headings.length} heading(s)).`;
             } else if (req.format === "pdf") {
               const res = await createPdfBuffer({
-                title: req.title || req.filename,
+                title: req.title || safeRequestedName,
                 sections: (req.sections ?? []).map((s) => ({
                   heading: s.heading,
                   body: s.body || (s.paragraphs ?? []).join("\n") || "",
@@ -368,12 +382,15 @@ export const Route = createFileRoute("/api/public/extension/workspace")({
 
             const artifact = storeWorkspaceArtifact({
               ownerId,
-              filename: req.filename.endsWith(`.${req.format}`) ? req.filename : `${req.filename}.${req.format}`,
+              filename: safeRequestedName.endsWith(`.${req.format}`)
+                ? safeRequestedName
+                : `${safeRequestedName}.${req.format}`,
               mimeType,
               buffer: outBuffer,
               summary,
               verified,
             });
+            span.finish("ok", `Generated ${req.format.toUpperCase()} artifact ${artifact.filename}`);
             return extensionJsonResponse(request, {
               ok: true,
               artifactId: artifact.artifactId,
@@ -387,6 +404,7 @@ export const Route = createFileRoute("/api/public/extension/workspace")({
             const req = updateSchema.parse(rawBody);
             const source = getWorkspaceArtifact(req.artifactId, ownerId);
             if (!source) {
+              span.finish("blocked", "Source artifact not found for update");
               return extensionJsonResponse(request, { ok: false, message: "Source artifact not found." }, 404);
             }
             if (source.extension === "xlsx") {
@@ -403,6 +421,7 @@ export const Route = createFileRoute("/api/public/extension/workspace")({
                 summary: `Updated ${res.modifiedCount} cell(s) non-destructively in "${updatedName}".`,
                 verified: true,
               });
+              span.finish("ok", `Updated XLSX artifact ${artifact.filename}`);
               return extensionJsonResponse(request, {
                 ok: true,
                 artifactId: artifact.artifactId,
@@ -426,6 +445,7 @@ export const Route = createFileRoute("/api/public/extension/workspace")({
                 summary: `Updated DOCX (${res.replacementsApplied} replacement(s), ${res.appendedCount} appended paragraph(s)).`,
                 verified: true,
               });
+              span.finish("ok", `Updated DOCX artifact ${artifact.filename}`);
               return extensionJsonResponse(request, {
                 ok: true,
                 artifactId: artifact.artifactId,
@@ -434,6 +454,7 @@ export const Route = createFileRoute("/api/public/extension/workspace")({
                 appendedCount: res.appendedCount,
               });
             }
+            span.finish("blocked", `Unsupported update extension: ${source.extension}`);
             return extensionJsonResponse(
               request,
               { ok: false, message: `Non-destructive binary update is implemented for XLSX and DOCX.` },

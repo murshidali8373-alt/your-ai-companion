@@ -38,7 +38,8 @@ function summarizeMessagePayload(msg) {
   if (msg.intent) summary.intent = msg.intent;
   if (msg.step?.action) summary.stepAction = msg.step.action;
   if (msg.plan?.id) summary.planId = msg.plan.id;
-  if (msg.fields && typeof msg.fields === "object") summary.fieldCount = Object.keys(msg.fields).length;
+  if (msg.fields && typeof msg.fields === "object")
+    summary.fieldCount = Object.keys(msg.fields).length;
   if (msg.options?.explicitPairs) summary.explicitPairCount = msg.options.explicitPairs.length;
   if (msg.document?.fileName) {
     summary.docFile = msg.document.fileName;
@@ -86,7 +87,10 @@ function redactSensitiveForSw(raw) {
       /((?:api[_-]?key|secret|password|passwd|pwd|otp|cvv|pin|token|authorization)\s*[:=]\s*["']?)([^\s"',;}\]]{2,})(["']?)/gi,
       (_m, prefix, _v, suffix) => `${prefix}[REDACTED]${suffix || ""}`,
     )
-    .replace(/([?&](?:token|key|apiKey|code|secret|auth)=)([^&\s#]+)/gi, (_m, p) => `${p}[REDACTED]`);
+    .replace(
+      /([?&](?:token|key|apiKey|code|secret|auth)=)([^&\s#]+)/gi,
+      (_m, p) => `${p}[REDACTED]`,
+    );
 }
 
 async function callBackendSelfHeal(payload, method = "POST") {
@@ -145,14 +149,22 @@ async function proxyExtensionApi(path, method = "GET", payload = null, queryPara
       const res = await fetch(`${host}${path}${qs}`, {
         method,
         headers,
-        body: payload !== null && method !== "GET" && method !== "DELETE" ? JSON.stringify(payload) : undefined,
+        body:
+          payload !== null && method !== "GET" && method !== "DELETE"
+            ? JSON.stringify(payload)
+            : undefined,
         credentials: "omit",
       });
       const ct = res.headers.get("content-type") || "";
       if (ct.includes("text/html")) continue;
       const data = await res.json().catch(() => null);
       if (data !== null) {
-        return { ok: Boolean(res.ok && data?.ok !== false), status: res.status, apiBase: host, ...data };
+        return {
+          ok: Boolean(res.ok && data?.ok !== false),
+          status: res.status,
+          apiBase: host,
+          ...data,
+        };
       }
     } catch (err) {
       lastErr = err;
@@ -655,8 +667,9 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     return true;
   }
   if (msg.type === "VALIDATE_FORM_ERRORS") {
-    executeAction("validate_form_errors", msg.selector, null, msg.options || {}).then(safeReply, (e) =>
-      safeReply({ ok: false, error: String(e?.message || e) }),
+    executeAction("validate_form_errors", msg.selector, null, msg.options || {}).then(
+      safeReply,
+      (e) => safeReply({ ok: false, error: String(e?.message || e) }),
     );
     return true;
   }
@@ -1038,10 +1051,13 @@ function mergeFrameSnapshots(results) {
 async function captureTabScreenshot(windowId) {
   try {
     if (!chrome.tabs?.captureVisibleTab) return null;
-    const dataUrl = await chrome.tabs.captureVisibleTab(windowId || chrome.windows.WINDOW_ID_CURRENT, {
-      format: "jpeg",
-      quality: 75,
-    });
+    const dataUrl = await chrome.tabs.captureVisibleTab(
+      windowId || chrome.windows.WINDOW_ID_CURRENT,
+      {
+        format: "jpeg",
+        quality: 75,
+      },
+    );
     if (typeof dataUrl === "string" && dataUrl.startsWith("data:image/")) {
       return dataUrl.replace(/^data:image\/[^;]+;base64,/, "");
     }
@@ -1121,22 +1137,86 @@ async function getPageSnapshot() {
 }
 
 const BUDDY_PRESETS_MAP = {
-  friendly: { name: "Friendly Buddy", defaultLanguage: "hinglish", personality: "Cheerful, warm, encouraging" },
-  developer: { name: "Developer Buddy", defaultLanguage: "english", personality: "Direct, analytical, inspects code and DOM" },
-  content: { name: "Content Buddy", defaultLanguage: "hinglish", personality: "Creative, articulate, refines copy" },
-  ca: { name: "CA Buddy", defaultLanguage: "hinglish", personality: "Tax, GST, invoice, and compliance aware" },
-  research: { name: "Research Buddy", defaultLanguage: "english", personality: "Fact-checker, synthesizes citations" },
-  data: { name: "Data Buddy", defaultLanguage: "english", personality: "Tabular extraction, formulas, spreadsheet logic" },
-  design: { name: "Design Buddy", defaultLanguage: "english", personality: "Visual hierarchy, typography, colors" },
-  legal: { name: "Legal Buddy", defaultLanguage: "english", personality: "Careful, compliance, terms of service, clauses" },
-  ecommerce: { name: "E-commerce Buddy", defaultLanguage: "hinglish", personality: "Meesho, Amazon, Flipkart listings, orders & pricing" },
-  marketing: { name: "Marketing Buddy", defaultLanguage: "hinglish", personality: "SEO, ad copy, conversion rate, campaigns" },
-  operations: { name: "Operations Buddy", defaultLanguage: "hinglish", personality: "Process, SOPs, checklists and automation" },
-  professor: { name: "Professor Buddy", defaultLanguage: "hinglish", personality: "Patient academic educator with step-by-step clarity" },
-  business: { name: "Business Buddy", defaultLanguage: "hinglish", personality: "KPIs, plans, executive summaries, margins" },
-  dadaji: { name: "Dadaji Buddy", defaultLanguage: "hindi", personality: "Old-school wisdom, gentle pace" },
-  detective: { name: "Detective Buddy", defaultLanguage: "english", personality: "Diagnosis, root cause, verification" },
-  family: { name: "Dadaji Buddy", defaultLanguage: "hinglish", personality: "Warm, safe, patient guidance for all ages" },
+  friendly: {
+    name: "Friendly Buddy",
+    defaultLanguage: "hinglish",
+    personality: "Cheerful, warm, encouraging",
+  },
+  developer: {
+    name: "Developer Buddy",
+    defaultLanguage: "english",
+    personality: "Direct, analytical, inspects code and DOM",
+  },
+  content: {
+    name: "Content Buddy",
+    defaultLanguage: "hinglish",
+    personality: "Creative, articulate, refines copy",
+  },
+  ca: {
+    name: "CA Buddy",
+    defaultLanguage: "hinglish",
+    personality: "Tax, GST, invoice, and compliance aware",
+  },
+  research: {
+    name: "Research Buddy",
+    defaultLanguage: "english",
+    personality: "Fact-checker, synthesizes citations",
+  },
+  data: {
+    name: "Data Buddy",
+    defaultLanguage: "english",
+    personality: "Tabular extraction, formulas, spreadsheet logic",
+  },
+  design: {
+    name: "Design Buddy",
+    defaultLanguage: "english",
+    personality: "Visual hierarchy, typography, colors",
+  },
+  legal: {
+    name: "Legal Buddy",
+    defaultLanguage: "english",
+    personality: "Careful, compliance, terms of service, clauses",
+  },
+  ecommerce: {
+    name: "E-commerce Buddy",
+    defaultLanguage: "hinglish",
+    personality: "Meesho, Amazon, Flipkart listings, orders & pricing",
+  },
+  marketing: {
+    name: "Marketing Buddy",
+    defaultLanguage: "hinglish",
+    personality: "SEO, ad copy, conversion rate, campaigns",
+  },
+  operations: {
+    name: "Operations Buddy",
+    defaultLanguage: "hinglish",
+    personality: "Process, SOPs, checklists and automation",
+  },
+  professor: {
+    name: "Professor Buddy",
+    defaultLanguage: "hinglish",
+    personality: "Patient academic educator with step-by-step clarity",
+  },
+  business: {
+    name: "Business Buddy",
+    defaultLanguage: "hinglish",
+    personality: "KPIs, plans, executive summaries, margins",
+  },
+  dadaji: {
+    name: "Dadaji Buddy",
+    defaultLanguage: "hindi",
+    personality: "Old-school wisdom, gentle pace",
+  },
+  detective: {
+    name: "Detective Buddy",
+    defaultLanguage: "english",
+    personality: "Diagnosis, root cause, verification",
+  },
+  family: {
+    name: "Dadaji Buddy",
+    defaultLanguage: "hinglish",
+    personality: "Warm, safe, patient guidance for all ages",
+  },
 };
 
 const PROVIDER_KEY_META = {
@@ -1174,7 +1254,11 @@ function buildMissingProviderWarning(preferredProvider, isHindi, fallbackLabel) 
 function getBuddyPresetInternal(slug) {
   if (slug && BUDDY_PRESETS_MAP[slug]) return BUDDY_PRESETS_MAP[slug];
   if (slug && slug.startsWith("custom:")) {
-    return { name: "Custom Buddy", defaultLanguage: "hinglish", personality: "Tailored companion for specialized workflows" };
+    return {
+      name: "Custom Buddy",
+      defaultLanguage: "hinglish",
+      personality: "Tailored companion for specialized workflows",
+    };
   }
   return BUDDY_PRESETS_MAP.friendly;
 }
@@ -1182,10 +1266,42 @@ function getBuddyPresetInternal(slug) {
 function findBestMatchingElement(snapshot, query) {
   if (!snapshot || !query) return null;
   const STOPWORDS = new Set([
-    "khaa", "kha", "kahan", "kaha", "kidhar", "kdr", "hai", "hain", "tha", "the",
-    "tab", "button", "link", "section", "dikhao", "batao", "page", "par", "mein",
-    "where", "what", "which", "show", "tell", "find", "locate", "search", "this",
-    "click", "press", "dabao", "tap", "kholo", "pe", "karo", "please"
+    "khaa",
+    "kha",
+    "kahan",
+    "kaha",
+    "kidhar",
+    "kdr",
+    "hai",
+    "hain",
+    "tha",
+    "the",
+    "tab",
+    "button",
+    "link",
+    "section",
+    "dikhao",
+    "batao",
+    "page",
+    "par",
+    "mein",
+    "where",
+    "what",
+    "which",
+    "show",
+    "tell",
+    "find",
+    "locate",
+    "search",
+    "this",
+    "click",
+    "press",
+    "dabao",
+    "tap",
+    "kholo",
+    "pe",
+    "karo",
+    "please",
   ]);
 
   const normText = (s) =>
@@ -1269,7 +1385,8 @@ async function generateAutonomousCompanionReply({
   const baseProviderWarning = buildMissingProviderWarning(
     preferredProvider,
     isHindiLang,
-    userApiKey && (!preferredProvider || preferredProvider === "auto" || preferredProvider === "gemini")
+    userApiKey &&
+      (!preferredProvider || preferredProvider === "auto" || preferredProvider === "gemini")
       ? "Google Gemini"
       : "Local Grounded Companion",
   );
@@ -1342,7 +1459,10 @@ Return strictly valid JSON with keys:
         if (snapshot.forms?.length) {
           promptText += `Form Fields: ${snapshot.forms
             .slice(0, 18)
-            .map((f) => `[${f.ref || "f"}] ${f.name || f.placeholder || f.role} (${f.inputType || f.tag}${!f.sensitive && f.value ? `, val="${sanitizePromptStr(String(f.value)).slice(0, 30)}"` : ""})`)
+            .map(
+              (f) =>
+                `[${f.ref || "f"}] ${f.name || f.placeholder || f.role} (${f.inputType || f.tag}${!f.sensitive && f.value ? `, val="${sanitizePromptStr(String(f.value)).slice(0, 30)}"` : ""})`,
+            )
             .join(", ")}\n`;
         }
         if (snapshot.controls?.length) {
@@ -1358,10 +1478,14 @@ Return strictly valid JSON with keys:
       }
       if (!isGeneralChat && actionContext && typeof actionContext === "object") {
         const acParts = [];
-        if (actionContext.lastTargetField) acParts.push(`lastTargetField="${actionContext.lastTargetField}"`);
-        if (actionContext.lastActionType) acParts.push(`lastActionType="${actionContext.lastActionType}"`);
-        if (actionContext.pendingSlotType) acParts.push(`pendingSlotType="${actionContext.pendingSlotType}"`);
-        if (actionContext.activeElementLabel) acParts.push(`focusedElement="${actionContext.activeElementLabel}"`);
+        if (actionContext.lastTargetField)
+          acParts.push(`lastTargetField="${actionContext.lastTargetField}"`);
+        if (actionContext.lastActionType)
+          acParts.push(`lastActionType="${actionContext.lastActionType}"`);
+        if (actionContext.pendingSlotType)
+          acParts.push(`pendingSlotType="${actionContext.pendingSlotType}"`);
+        if (actionContext.activeElementLabel)
+          acParts.push(`focusedElement="${actionContext.activeElementLabel}"`);
         if (Array.isArray(actionContext.recentFields) && actionContext.recentFields.length) {
           acParts.push(`recentFields=[${actionContext.recentFields.join(", ")}]`);
         }
@@ -1413,8 +1537,7 @@ Return strictly valid JSON with keys:
           break;
         }
         const errPayload = await geminiRes.json().catch(() => null);
-        const rawErrMsg =
-          errPayload?.error?.message || `Google Gemini HTTP ${geminiRes.status}`;
+        const rawErrMsg = errPayload?.error?.message || `Google Gemini HTTP ${geminiRes.status}`;
         if (geminiRes.status === 401 || geminiRes.status === 403) {
           directProviderError = {
             kind: "auth",
@@ -1445,8 +1568,7 @@ Return strictly valid JSON with keys:
       }
       if (geminiRes?.ok) {
         const geminiJson = await geminiRes.json();
-        const candidateText =
-          geminiJson.candidates?.[0]?.content?.parts?.[0]?.text;
+        const candidateText = geminiJson.candidates?.[0]?.content?.parts?.[0]?.text;
         if (candidateText) {
           let parsedPlan = null;
           try {
@@ -1470,7 +1592,10 @@ Return strictly valid JSON with keys:
           let matchedEl = null;
           if (parsedPlan?.highlight && refMap.has(parsedPlan.highlight)) {
             matchedEl = refMap.get(parsedPlan.highlight);
-          } else if (snapshot && (parsedPlan?.targetText || parsedPlan?.targetField || parsedPlan?.highlight)) {
+          } else if (
+            snapshot &&
+            (parsedPlan?.targetText || parsedPlan?.targetField || parsedPlan?.highlight)
+          ) {
             matchedEl = findBestMatchingElement(
               snapshot,
               String(parsedPlan.targetText || parsedPlan.targetField || parsedPlan.highlight),
@@ -1542,10 +1667,8 @@ Return strictly valid JSON with keys:
   }
 
   const effectiveFailure = directProviderError || serverProviderFailure || null;
-  const effectiveLocalWarning =
-    serverProviderWarning ||
-    baseProviderWarning ||
-    ({
+  const effectiveLocalWarning = serverProviderWarning ||
+    baseProviderWarning || {
       requestedProvider:
         effectiveFailure?.provider ||
         (preferredProvider && preferredProvider !== "auto" ? preferredProvider : "gemini"),
@@ -1562,7 +1685,7 @@ Return strictly valid JSON with keys:
         (isHindiLang
           ? "Gemini AI unavailable hai (GEMINI_API_KEY server ya Settings mein set nahi hai). Abhi limited local DOM helper chal raha hai — smart AI reasoning off hai."
           : "Gemini AI is unavailable (GEMINI_API_KEY is not configured on the server or in Settings). Running limited local DOM helper."),
-    });
+    };
   const localMeta = {
     activeProvider: "local_grounded",
     aiFallbackUsed: true,
@@ -1683,7 +1806,8 @@ Return strictly valid JSON with keys:
 
   if (isPointAction) {
     const matchEl = findBestMatchingElement(snapshot, question);
-    const elLabel = matchEl?.name || matchEl?.placeholder || matchEl?.text || matchEl?.role || "element";
+    const elLabel =
+      matchEl?.name || matchEl?.placeholder || matchEl?.text || matchEl?.role || "element";
     const isHindi = activeBuddy.defaultLanguage !== "english";
     return {
       taskId: null,
@@ -1714,7 +1838,9 @@ Return strictly valid JSON with keys:
 
   // Explicit Open Link / Click / Press Action commands
   const isOpenLinkAction =
-    /\bopen\s+(?:the\s+|this\s+)?.*?\b(?:link|url|page)\b|\b(?:link|url)\s+(?:open|kholo)\b/i.test(qLower);
+    /\bopen\s+(?:the\s+|this\s+)?.*?\b(?:link|url|page)\b|\b(?:link|url)\s+(?:open|kholo)\b/i.test(
+      qLower,
+    );
   const isClickAction =
     isOpenLinkAction ||
     /(?:click|press|dabao|tap|kholo|tick|check|uncheck)\b/i.test(qLower) ||
@@ -1774,7 +1900,8 @@ Return strictly valid JSON with keys:
       targetText: elLabel,
       highlightSelector: matchEl.selector || null,
       calloutTitle: elLabel,
-      calloutDescription: resolvedAction === "open_link" ? "Opening destination link" : "Clicking target element",
+      calloutDescription:
+        resolvedAction === "open_link" ? "Opening destination link" : "Clicking target element",
       buddyName: activeBuddy.name,
       permission: "interact",
       guest: true,
@@ -1783,14 +1910,23 @@ Return strictly valid JSON with keys:
   }
 
   // Form filling / writing commands (extract concrete value-first/verb-first Hinglish values BEFORE asking!)
-  const fillWithMatch = question.match(/\bfill\s+(.+?)\s+with\s+["']?([^"'\n]+?)["']?(?:\s+without\s+submitting)?[.!?]*$/i);
+  const fillWithMatch = question.match(
+    /\bfill\s+(.+?)\s+with\s+["']?([^"'\n]+?)["']?(?:\s+without\s+submitting)?[.!?]*$/i,
+  );
   const concreteLocalFillMatch =
     !fillWithMatch &&
-    (question.match(/^\s*["']?([^"'\n]+?)["']?\s+(?:ye|yeh|isko|isme|yahan)?\s*(?:fill|bhar|bharo|likh|likho|daal|daalo|type|enter)\s*(?:kar\s*do|karo|kr\s*do|krdo|kro|kijiye)?[.!?]*$/i) ||
-      question.match(/^\s*(?:fill|bhar|bharo|likh|likho|daal|daalo|type|enter)\s*(?:kar\s*do|karo|kr\s*do|krdo|kro)?\s+["']?([^"'\n]+?)["']?[.!?]*$/i));
+    (question.match(
+      /^\s*["']?([^"'\n]+?)["']?\s+(?:ye|yeh|isko|isme|yahan)?\s*(?:fill|bhar|bharo|likh|likho|daal|daalo|type|enter)\s*(?:kar\s*do|karo|kr\s*do|krdo|kro|kijiye)?[.!?]*$/i,
+    ) ||
+      question.match(
+        /^\s*(?:fill|bhar|bharo|likh|likho|daal|daalo|type|enter)\s*(?:kar\s*do|karo|kr\s*do|krdo|kro)?\s+["']?([^"'\n]+?)["']?[.!?]*$/i,
+      ));
   const cleanedConcreteVal = concreteLocalFillMatch?.[1]
     ? concreteLocalFillMatch[1]
-        .replace(/\b(?:ye|yeh|isko|isme|yahan|form|field|box|input|me|mein|main|par|pe|wala|wali|wale)\b/gi, " ")
+        .replace(
+          /\b(?:ye|yeh|isko|isme|yahan|form|field|box|input|me|mein|main|par|pe|wala|wali|wale)\b/gi,
+          " ",
+        )
         .replace(/\s+/g, " ")
         .trim()
     : "";
@@ -1802,11 +1938,13 @@ Return strictly valid JSON with keys:
     !fillWithMatch &&
     !hasConcreteLocalVal &&
     /\b(?:fill|bhar|bharo|likh|likho|lkh|lkho|daal|daalo|dalo|type|enter)\b/i.test(qNorm) &&
-    (/\b(?:kch|kuch|something|ye|yeh|isme|isko|it|this)\b/i.test(qNorm) || !/\b(?:with|as|:|=)\b/i.test(qNorm));
+    (/\b(?:kch|kuch|something|ye|yeh|isme|isko|it|this)\b/i.test(qNorm) ||
+      !/\b(?:with|as|:|=)\b/i.test(qNorm));
 
   if (isBareFillOrWrite) {
     const isHindi = activeBuddy.defaultLanguage !== "english";
-    const matchedField = findBestMatchingElement(snapshot, question) || snapshot?.forms?.[0] || null;
+    const matchedField =
+      findBestMatchingElement(snapshot, question) || snapshot?.forms?.[0] || null;
     const askText = isHindi
       ? /\b(?:likh|likho|type)\b/i.test(qNorm)
         ? "Kya likhna hai? Text bata do."
@@ -1845,8 +1983,11 @@ Return strictly valid JSON with keys:
   if (isFormFillAction) {
     const isHindi = activeBuddy.defaultLanguage !== "english";
     const targetField = fillWithMatch?.[1]?.trim() || null;
-    const targetValue = fillWithMatch?.[2]?.trim() || (hasConcreteLocalVal ? cleanedConcreteVal : null);
-    const matchedField = targetField ? findBestMatchingElement(snapshot, targetField) : snapshot?.forms?.[0];
+    const targetValue =
+      fillWithMatch?.[2]?.trim() || (hasConcreteLocalVal ? cleanedConcreteVal : null);
+    const matchedField = targetField
+      ? findBestMatchingElement(snapshot, targetField)
+      : snapshot?.forms?.[0];
     const answer =
       targetField && targetValue
         ? isHindi
@@ -1898,7 +2039,8 @@ Return strictly valid JSON with keys:
   ) {
     const matchEl = findBestMatchingElement(snapshot, question);
     if (matchEl) {
-      const elLabel = matchEl.name || matchEl.placeholder || matchEl.text || matchEl.role || "target element";
+      const elLabel =
+        matchEl.name || matchEl.placeholder || matchEl.text || matchEl.role || "target element";
       const isHindi = activeBuddy.defaultLanguage !== "english";
       const answer = isHindi
         ? `Maine page par "${elLabel}" dhoondh liya hai! Main apne Lamba Haath (pointing arm) se isko highlight aur point kar raha hoon.`
@@ -1926,11 +2068,7 @@ Return strictly valid JSON with keys:
   }
 
   // Form general inspection (if not direct fill command)
-  if (
-    qLower.includes("form") ||
-    qLower.includes("input") ||
-    qLower.includes("fields")
-  ) {
+  if (qLower.includes("form") || qLower.includes("input") || qLower.includes("fields")) {
     const formCount = snapshot?.forms?.length || 0;
     const isHindi = activeBuddy.defaultLanguage !== "english";
     if (formCount > 0) {
@@ -1966,7 +2104,11 @@ Return strictly valid JSON with keys:
   if (snapshot && isErrorExplainQuery) {
     const alertList = Array.isArray(snapshot.alerts) ? snapshot.alerts : [];
     const alertTexts = alertList
-      .map((a) => String(a?.errorMessage || a?.name || "").replace(/\s+/g, " ").trim())
+      .map((a) =>
+        String(a?.errorMessage || a?.name || "")
+          .replace(/\s+/g, " ")
+          .trim(),
+      )
       .filter(Boolean);
     if (alertTexts.length > 0) {
       const isHindi = activeBuddy.defaultLanguage !== "english";
@@ -2001,9 +2143,45 @@ Return strictly valid JSON with keys:
     );
   if (snapshot && !isSummaryQuery) {
     const STOPWORDS = new Set([
-      "what", "is", "are", "the", "of", "in", "on", "for", "to", "a", "an", "and", "or",
-      "this", "that", "page", "webpage", "tell", "me", "about", "check", "show", "give", "find",
-      "explain", "why", "showing", "kya", "hai", "ka", "ki", "ke", "mein", "me", "par", "batao", "bata", "kitna", "kitni",
+      "what",
+      "is",
+      "are",
+      "the",
+      "of",
+      "in",
+      "on",
+      "for",
+      "to",
+      "a",
+      "an",
+      "and",
+      "or",
+      "this",
+      "that",
+      "page",
+      "webpage",
+      "tell",
+      "me",
+      "about",
+      "check",
+      "show",
+      "give",
+      "find",
+      "explain",
+      "why",
+      "showing",
+      "kya",
+      "hai",
+      "ka",
+      "ki",
+      "ke",
+      "mein",
+      "me",
+      "par",
+      "batao",
+      "bata",
+      "kitna",
+      "kitni",
     ]);
     const rawTokens = qLower
       .replace(/[^\w\s-]/g, " ")
@@ -2019,11 +2197,15 @@ Return strictly valid JSON with keys:
         const headers = Array.isArray(tbl.headers) ? tbl.headers : [];
         for (const row of tbl.rows || []) {
           const rowText = row.join(" ").toLowerCase();
-          const score = searchTokens.reduce((acc, tok) => acc + (rowText.includes(tok) ? (/\d/.test(tok) ? 3 : 1) : 0), 0);
+          const score = searchTokens.reduce(
+            (acc, tok) => acc + (rowText.includes(tok) ? (/\d/.test(tok) ? 3 : 1) : 0),
+            0,
+          );
           if (score > 0) {
-            const formatted = headers.length === row.length
-              ? row.map((cell, idx) => `${headers[idx]}: ${cell}`).join(" | ")
-              : row.join(" | ");
+            const formatted =
+              headers.length === row.length
+                ? row.map((cell, idx) => `${headers[idx]}: ${cell}`).join(" | ")
+                : row.join(" | ");
             matchedRows.push({ score, formatted });
           }
         }
@@ -2031,7 +2213,10 @@ Return strictly valid JSON with keys:
       matchedRows.sort((a, b) => b.score - a.score);
       if (matchedRows.length > 0) {
         const isHindi = activeBuddy.defaultLanguage !== "english";
-        const topMatches = matchedRows.slice(0, 3).map((m) => `• ${m.formatted}`).join("\n");
+        const topMatches = matchedRows
+          .slice(0, 3)
+          .map((m) => `• ${m.formatted}`)
+          .join("\n");
         const answer = isHindi
           ? `Active page ("${snapshot.title || "Current Page"}") par matching details mile hain:\n${topMatches}`
           : `Found matching details on "${snapshot.title || "Current Page"}":\n${topMatches}`;
@@ -2057,7 +2242,9 @@ Return strictly valid JSON with keys:
       const textLower = snapshot.text.toLowerCase();
       let bestTok = null;
       let bestIdx = -1;
-      for (const tok of [...searchTokens].sort((a, b) => (/\d/.test(b) ? 1 : 0) - (/\d/.test(a) ? 1 : 0) || b.length - a.length)) {
+      for (const tok of [...searchTokens].sort(
+        (a, b) => (/\d/.test(b) ? 1 : 0) - (/\d/.test(a) ? 1 : 0) || b.length - a.length,
+      )) {
         const idx = textLower.indexOf(tok);
         if (idx >= 0) {
           bestTok = tok;
@@ -2122,7 +2309,10 @@ Return strictly valid JSON with keys:
   // Page Explanation / Summary / General Page Analysis
   if (snapshot) {
     const title = snapshot.title || "active page";
-    const headings = (snapshot.headings || []).map((h) => h.name || h.text).filter(Boolean).slice(0, 5);
+    const headings = (snapshot.headings || [])
+      .map((h) => h.name || h.text)
+      .filter(Boolean)
+      .slice(0, 5);
     const formCount = snapshot.forms?.length || 0;
     const btnCount = snapshot.controls?.length || 0;
     const isHindi = activeBuddy.defaultLanguage !== "english";
@@ -2203,7 +2393,9 @@ async function isHealthyBuddyOrigin(origin) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 1800);
     try {
-      const res = await fetch(`${origin}/api/public/extension/health`, { signal: controller.signal });
+      const res = await fetch(`${origin}/api/public/extension/health`, {
+        signal: controller.signal,
+      });
       if (!res.ok) return false;
       const data = await res.json().catch(() => null);
       return Boolean(data && (data.ok !== undefined || data.checks));
@@ -2278,7 +2470,12 @@ async function resolveExtensionApiBase(session, lastBase) {
       candidateOrigins.push("http://localhost:3000", "http://127.0.0.1:3000");
     }
   } catch {}
-  candidateOrigins.push(DEFAULT_HOST, FALLBACK_PRE_HOST, "http://127.0.0.1:3000", "http://localhost:3000");
+  candidateOrigins.push(
+    DEFAULT_HOST,
+    FALLBACK_PRE_HOST,
+    "http://127.0.0.1:3000",
+    "http://localhost:3000",
+  );
 
   for (const origin of [...new Set(candidateOrigins)]) {
     if (await isHealthyBuddyOrigin(origin)) {
@@ -2389,7 +2586,9 @@ function parseDelimitedTextExt(rawText, forcedDelimiter) {
 }
 
 function parseDocumentTextLocallyExt(rawText, fileName = "document") {
-  const text = String(rawText || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const text = String(rawText || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
   const isTsvFile = /\.tsv$/i.test(fileName);
   const isCsvFile = /\.csv$/i.test(fileName);
   const forcedDelim = isTsvFile ? "\t" : isCsvFile ? "," : undefined;
@@ -2405,9 +2604,12 @@ function parseDocumentTextLocallyExt(rawText, fileName = "document") {
 
   let documentType = "other";
   if (/aadhaar|aadhar|uidai|unique\s+identification/i.test(lower)) documentType = "aadhaar";
-  else if (/\bpan\b|permanent\s+account\s+number|income\s+tax\s+department/i.test(lower)) documentType = "pan";
-  else if (/shipping\s+label|awb|tracking\s*(?:id|no|number)|ship\s+to|courier/i.test(lower)) documentType = "shipping_label";
-  else if (/invoice|tax\s+invoice|gstin|bill\s+no|total\s+amount/i.test(lower)) documentType = "invoice";
+  else if (/\bpan\b|permanent\s+account\s+number|income\s+tax\s+department/i.test(lower))
+    documentType = "pan";
+  else if (/shipping\s+label|awb|tracking\s*(?:id|no|number)|ship\s+to|courier/i.test(lower))
+    documentType = "shipping_label";
+  else if (/invoice|tax\s+invoice|gstin|bill\s+no|total\s+amount/i.test(lower))
+    documentType = "invoice";
 
   if (parsedTable && parsedTable.rowCount > 0) {
     if (parsedTable.rowCount === 1) {
@@ -2457,7 +2659,9 @@ function parseDocumentTextLocallyExt(rawText, fileName = "document") {
     ambiguousFields.push("aadhaarNumber");
   }
 
-  const panMatches = [...compact.toUpperCase().matchAll(/\b([A-Z]{5}[0-9]{4}[A-Z])\b/g)].map((m) => m[1]);
+  const panMatches = [...compact.toUpperCase().matchAll(/\b([A-Z]{5}[0-9]{4}[A-Z])\b/g)].map(
+    (m) => m[1],
+  );
   const uniquePan = [...new Set(panMatches)];
   if (uniquePan.length === 1) {
     fields.panNumber = uniquePan[0];
@@ -2466,7 +2670,9 @@ function parseDocumentTextLocallyExt(rawText, fileName = "document") {
     ambiguousFields.push("panNumber");
   }
 
-  const gstMatch = compact.toUpperCase().match(/\b([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z])\b/);
+  const gstMatch = compact
+    .toUpperCase()
+    .match(/\b([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z])\b/);
   if (gstMatch?.[1]) fields.gstin = gstMatch[1];
 
   const emailMatch = compact.match(/\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/);
@@ -2490,14 +2696,23 @@ function parseDocumentTextLocallyExt(rawText, fileName = "document") {
 
   const labelPatterns = [
     ["name", /(?:^|\n)\s*(?:full\s+)?name\s*[:\-]\s*([^\n]{2,60})/i],
-    ["fatherName", /(?:^|\n)\s*(?:father(?:'s)?\s*name|s\/o|d\/o|w\/o|c\/o)\s*[:\-]?\s*([^\n,]{2,60})/i],
+    [
+      "fatherName",
+      /(?:^|\n)\s*(?:father(?:'s)?\s*name|s\/o|d\/o|w\/o|c\/o)\s*[:\-]?\s*([^\n,]{2,60})/i,
+    ],
     ["address", /(?:^|\n)\s*(?:address|residence|ship\s*to)\s*[:\-]\s*([^\n]{5,180})/i],
     ["city", /(?:^|\n)\s*(?:city|town|district)\s*[:\-]\s*([^\n,]{2,40})/i],
     ["state", /(?:^|\n)\s*(?:state|province)\s*[:\-]\s*([^\n,]{2,40})/i],
     ["invoiceNumber", /(?:invoice\s*(?:no|number|#))\s*[:\-]?\s*([A-Z0-9\-\/]{3,32})/i],
     ["orderId", /(?:order\s*(?:id|no|number|#))\s*[:\-]?\s*([A-Z0-9\-\_]{3,32})/i],
-    ["trackingNumber", /(?:tracking\s*(?:id|no|number)|awb(?:\s*no)?)\s*[:\-]?\s*([A-Z0-9\-]{5,36})/i],
-    ["company", /(?:^|\n)\s*(?:company|business|seller|vendor|firm)\s*(?:name)?\s*[:\-]\s*([^\n]{2,80})/i],
+    [
+      "trackingNumber",
+      /(?:tracking\s*(?:id|no|number)|awb(?:\s*no)?)\s*[:\-]?\s*([A-Z0-9\-]{5,36})/i,
+    ],
+    [
+      "company",
+      /(?:^|\n)\s*(?:company|business|seller|vendor|firm)\s*(?:name)?\s*[:\-]\s*([^\n]{2,80})/i,
+    ],
   ];
   for (const [k, re] of labelPatterns) {
     const m = text.match(re);
@@ -2584,7 +2799,7 @@ async function extractUploadedDocument(doc) {
   if (userApiKey && doc.base64Data) {
     try {
       const cleanBase64 = String(doc.base64Data).replace(/^data:[^;]+;base64,/, "");
-      const mimeType = doc.mimeType === "image/jpg" ? "image/jpeg" : (doc.mimeType || "image/png");
+      const mimeType = doc.mimeType === "image/jpg" ? "image/jpeg" : doc.mimeType || "image/png";
       let geminiRes = null;
       for (const modelName of ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.1-flash-lite"]) {
         geminiRes = await fetch(
@@ -2619,7 +2834,11 @@ async function extractUploadedDocument(doc) {
           const parsedJson = JSON.parse(raw);
           const cleanFields = {};
           for (const [k, v] of Object.entries(parsedJson.fields || {})) {
-            if (typeof v === "string" && v.trim() && !/^(n\/a|none|null|unknown)$/i.test(v.trim())) {
+            if (
+              typeof v === "string" &&
+              v.trim() &&
+              !/^(n\/a|none|null|unknown)$/i.test(v.trim())
+            ) {
               cleanFields[k] = v.trim();
             }
           }
@@ -2629,7 +2848,9 @@ async function extractUploadedDocument(doc) {
             fileName: doc.fileName,
             confidence: parsedJson.confidence || "medium",
             fields: cleanFields,
-            ambiguousFields: Array.isArray(parsedJson.ambiguousFields) ? parsedJson.ambiguousFields : [],
+            ambiguousFields: Array.isArray(parsedJson.ambiguousFields)
+              ? parsedJson.ambiguousFields
+              : [],
             provider: "gemini_direct_vision",
           };
         }
@@ -2776,7 +2997,11 @@ async function ask(
         const contentType = tryRes.headers.get("content-type") || "";
         if (contentType.includes("text/html")) {
           const htmlText = await tryRes.text().catch(() => "");
-          if (htmlText.includes("302 Found") || htmlText.includes("__cookie_check") || tryRes.redirected) {
+          if (
+            htmlText.includes("302 Found") ||
+            htmlText.includes("__cookie_check") ||
+            tryRes.redirected
+          ) {
             res = tryRes;
             isHtmlAuthRedirect = true;
             continue;
@@ -3058,7 +3283,10 @@ async function highlight(selector, title, description, options = {}) {
   const queryDeepSelector = (sel, root = document) => {
     if (!sel) return null;
     if (sel.includes(" >>> ") && root === document) {
-      const parts = sel.split(" >>> ").map((s) => s.trim()).filter(Boolean);
+      const parts = sel
+        .split(" >>> ")
+        .map((s) => s.trim())
+        .filter(Boolean);
       let curRoot = document;
       for (let i = 0; i < parts.length; i++) {
         let hit = null;
@@ -3212,6 +3440,7 @@ async function highlight(selector, title, description, options = {}) {
     };
   };
 
+  const overlaySvg = root.querySelector("svg");
   const updatePositions = () => {
     if (!host.isConnected || !el.isConnected) {
       cleanupOverlay();
@@ -3220,9 +3449,13 @@ async function highlight(selector, title, description, options = {}) {
     const { rect: r, vw, vh } = computeTargetCoords();
     if (r.width === 0 && r.height === 0 && el.getClientRects().length === 0) {
       ring.style.display = "none";
+      card.style.display = "none";
+      if (overlaySvg) overlaySvg.style.display = "none";
       return;
     }
     ring.style.display = "block";
+    card.style.display = "block";
+    if (overlaySvg) overlaySvg.style.display = "block";
 
     // Clamp outline ring cleanly within viewport even under zoom or near edges
     const ringLeft = Math.max(2, Math.min(vw - 24, r.left - 6));
@@ -3425,1170 +3658,1247 @@ async function smartFillForm(fields, options = {}) {
   }
 
   const smartFillFrameFunc = async (fieldsToFill, opts) => {
-      const results = {
-        filled: [],
-        preserved: [],
-        skipped: [],
-        errors: [],
-        pendingSubmission: null,
-      };
-      if (opts?.skipTopFrame && window === window.top) {
-        return { ok: false, skippedTopFrame: true, results };
+    const results = {
+      filled: [],
+      preserved: [],
+      skipped: [],
+      errors: [],
+      pendingSubmission: null,
+    };
+    if (opts?.skipTopFrame && window === window.top) {
+      return { ok: false, skippedTopFrame: true, results };
+    }
+
+    const SENSITIVE =
+      /pass(?:word|wd)?|otp|(?<!postal[\s_-])(?<![a-z0-9])pin(?![a-z0-9]|[\s_-]*code\b)|cvv|cvc|secret|token|ssn|aadhaar|credit.?card|debit.?card|card.?number/i;
+    const SUBMIT_PATTERN =
+      /submit|sign\s*in|log\s*in|proceed|confirm|continue|checkout|purchase|pay|place\s*order|delete|send/i;
+
+    const normalize = (str) =>
+      String(str || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "");
+
+    const queryAllDeep = (selector, root = document) => {
+      const out = [...root.querySelectorAll(selector)];
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+      let node;
+      while ((node = walker.nextNode())) {
+        if (node.shadowRoot) {
+          out.push(...queryAllDeep(selector, node.shadowRoot));
+        }
       }
+      return out;
+    };
 
-      const SENSITIVE =
-        /pass(?:word|wd)?|otp|(?<!postal[\s_-])(?<![a-z0-9])pin(?![a-z0-9]|[\s_-]*code\b)|cvv|cvc|secret|token|ssn|aadhaar|credit.?card|debit.?card|card.?number/i;
-      const SUBMIT_PATTERN =
-        /submit|sign\s*in|log\s*in|proceed|confirm|continue|checkout|purchase|pay|place\s*order|delete|send/i;
-
-      const normalize = (str) =>
-        String(str || "")
-          .toLowerCase()
-          .replace(/[^a-z0-9]/g, "");
-
-      const queryAllDeep = (selector, root = document) => {
-        const out = [...root.querySelectorAll(selector)];
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-        let node;
-        while ((node = walker.nextNode())) {
-          if (node.shadowRoot) {
-            out.push(...queryAllDeep(selector, node.shadowRoot));
+    const queryDeepSelector = (sel, root = document) => {
+      if (!sel) return null;
+      if (sel.includes(" >>> ") && root === document) {
+        const parts = sel
+          .split(" >>> ")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        let curRoot = document;
+        for (let i = 0; i < parts.length; i++) {
+          let hit = null;
+          try {
+            hit = curRoot.querySelector(parts[i]);
+          } catch {
+            return null;
           }
-        }
-        return out;
-      };
-
-      const queryDeepSelector = (sel, root = document) => {
-        if (!sel) return null;
-        if (sel.includes(" >>> ") && root === document) {
-          const parts = sel.split(" >>> ").map((s) => s.trim()).filter(Boolean);
-          let curRoot = document;
-          for (let i = 0; i < parts.length; i++) {
-            let hit = null;
-            try {
-              hit = curRoot.querySelector(parts[i]);
-            } catch {
-              return null;
-            }
-            if (!hit) return null;
-            if (i === parts.length - 1) return hit;
-            if (!hit.shadowRoot) return null;
-            curRoot = hit.shadowRoot;
-          }
-          return null;
-        }
-        try {
-          const direct = root.querySelector(sel);
-          if (direct) return direct;
-        } catch {
-          return null;
-        }
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-        let node;
-        while ((node = walker.nextNode())) {
-          if (node.shadowRoot) {
-            const found = queryDeepSelector(sel, node.shadowRoot);
-            if (found) return found;
-          }
+          if (!hit) return null;
+          if (i === parts.length - 1) return hit;
+          if (!hit.shadowRoot) return null;
+          curRoot = hit.shadowRoot;
         }
         return null;
-      };
-
-      const isContentEditableEl = (el) => {
-        if (!el) return false;
-        const ce = el.getAttribute?.("contenteditable");
-        return (
-          el.isContentEditable ||
-          ce === "true" ||
-          ce === "" ||
-          ce === "plaintext-only"
-        );
-      };
-
-      const isEditableEl = (el) => {
-        if (!el || el.nodeType !== 1) return false;
-        const tag = el.tagName;
-        return (
-          tag === "INPUT" ||
-          tag === "TEXTAREA" ||
-          tag === "SELECT" ||
-          isContentEditableEl(el) ||
-          ["textbox", "searchbox", "combobox"].includes(el.getAttribute("role"))
-        );
-      };
-
-      const resolveEditableTarget = (el) => {
-        if (!el || el === document.body || el === document.documentElement) return null;
-        if (isEditableEl(el)) return el;
-        // Resolve <label for="..."> directly instead of guessing other inputs in the form
-        if (el.tagName === "LABEL") {
-          if (el.htmlFor) {
-            const elRoot = el.getRootNode?.() || document;
-            const target = elRoot.getElementById?.(el.htmlFor) || document.getElementById(el.htmlFor);
-            return target && isEditableEl(target) ? target : null;
-          }
-          const nested = el.querySelector?.(
-            'textarea, input:not([type="hidden"]), [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], [role="textbox"], [role="searchbox"], [role="combobox"], select',
-          );
-          return nested || null;
+      }
+      try {
+        const direct = root.querySelector(sel);
+        if (direct) return direct;
+      } catch {
+        return null;
+      }
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+      let node;
+      while ((node = walker.nextNode())) {
+        if (node.shadowRoot) {
+          const found = queryDeepSelector(sel, node.shadowRoot);
+          if (found) return found;
         }
-        // Walk descendants (e.g., wrapper div around textarea/contenteditable like Google AI Studio prompt box)
-        const inner = el.querySelector?.(
+      }
+      return null;
+    };
+
+    const isContentEditableEl = (el) => {
+      if (!el) return false;
+      const ce = el.getAttribute?.("contenteditable");
+      return el.isContentEditable || ce === "true" || ce === "" || ce === "plaintext-only";
+    };
+
+    const isEditableEl = (el) => {
+      if (!el || el.nodeType !== 1) return false;
+      const tag = el.tagName;
+      return (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        isContentEditableEl(el) ||
+        ["textbox", "searchbox", "combobox"].includes(el.getAttribute("role"))
+      );
+    };
+
+    const resolveEditableTarget = (el) => {
+      if (!el || el === document.body || el === document.documentElement) return null;
+      if (isEditableEl(el)) return el;
+      // Resolve <label for="..."> directly instead of guessing other inputs in the form
+      if (el.tagName === "LABEL") {
+        if (el.htmlFor) {
+          const elRoot = el.getRootNode?.() || document;
+          const target = elRoot.getElementById?.(el.htmlFor) || document.getElementById(el.htmlFor);
+          return target && isEditableEl(target) ? target : null;
+        }
+        const nested = el.querySelector?.(
           'textarea, input:not([type="hidden"]), [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], [role="textbox"], [role="searchbox"], [role="combobox"], select',
         );
-        if (inner) return inner;
-        // Walk local field-group container only (never an entire <form>)
-        const containerEditable = el
-          .closest?.("[role='group'], .input-group, .field, .prompt-box, .composer")
-          ?.querySelector?.(
-            'textarea, input:not([type="hidden"]), [contenteditable="true"], [contenteditable=""], [role="textbox"]',
-          );
-        return containerEditable || null;
-      };
-
-      // Collect all candidate form inputs (light DOM + open Shadow DOMs)
-      const elements = queryAllDeep(
-        'input, textarea, select, [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], [role="textbox"], [role="searchbox"], [role="combobox"], [role="checkbox"], [role="radio"]',
+        return nested || null;
+      }
+      // Walk descendants (e.g., wrapper div around textarea/contenteditable like Google AI Studio prompt box)
+      const inner = el.querySelector?.(
+        'textarea, input:not([type="hidden"]), [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], [role="textbox"], [role="searchbox"], [role="combobox"], select',
       );
-
-      const getFieldIdentifiers = (el) => {
-        const elRoot = el.getRootNode?.() || document;
-        const findById = (id) => elRoot.getElementById?.(id) || document.getElementById(id);
-        const rawIdentifiers = [
-          el.name,
-          el.id,
-          el.placeholder,
-          el.getAttribute?.("data-placeholder"),
-          el.getAttribute?.("aria-label"),
-          el.getAttribute?.("title"),
-          el.getAttribute?.("data-testid"),
-          el.getAttribute?.("autocomplete"),
-          el.type,
-          el.getAttribute?.("role"),
-        ].filter(Boolean);
-
-        const labelledby = el.getAttribute?.("aria-labelledby");
-        if (labelledby) {
-          const parts = labelledby
-            .split(/\s+/)
-            .map((id) => findById(id)?.innerText)
-            .filter(Boolean);
-          if (parts.length) rawIdentifiers.push(parts.join(" "));
-        }
-
-        if (el.id) {
-          try {
-            const l =
-              elRoot.querySelector?.(`label[for="${CSS.escape(el.id)}"]`) ||
-              document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-            if (l?.innerText) rawIdentifiers.push(l.innerText);
-          } catch {
-            // ignore
-          }
-        }
-        const wrap = el.closest?.("label");
-        if (wrap?.innerText) rawIdentifiers.push(wrap.innerText);
-
-        let prev = el.previousElementSibling;
-        if (
-          prev &&
-          (prev.tagName === "LABEL" || prev.tagName === "SPAN" || prev.tagName === "P") &&
-          prev.innerText &&
-          (!prev.htmlFor || prev.htmlFor === el.id)
-        ) {
-          rawIdentifiers.push(prev.innerText);
-        }
-
-        // Check immediate field wrapper/fieldset/table cell when it holds only this input
-        const fieldGroup = el.closest?.(".form-group, .field, .form-field, .input-group, fieldset");
-        if (fieldGroup) {
-          const groupControls = fieldGroup.querySelectorAll?.(
-            'input:not([type="hidden"]), textarea, select, [contenteditable="true"], [role="textbox"], [role="searchbox"], [role="combobox"]',
-          );
-          if (!groupControls || groupControls.length <= 1) {
-            const grpLabel = fieldGroup.querySelector?.("label, legend, .label, .field-label, .form-label");
-            if (grpLabel?.innerText && (!grpLabel.htmlFor || grpLabel.htmlFor === el.id)) {
-              rawIdentifiers.push(grpLabel.innerText);
-            }
-          }
-        }
-        const td = el.closest?.("td");
-        if (td?.previousElementSibling?.innerText) {
-          rawIdentifiers.push(td.previousElementSibling.innerText);
-        }
-
-        const isCheckOrRadioCtrl =
-          el.type === "checkbox" ||
-          el.type === "radio" ||
-          el.getAttribute?.("role") === "checkbox" ||
-          el.getAttribute?.("role") === "radio" ||
-          el.getAttribute?.("role") === "switch";
-        let next = el.nextElementSibling;
-        if (
-          next &&
-          (next.tagName === "LABEL" || next.tagName === "SPAN") &&
-          next.innerText &&
-          ((next.tagName === "LABEL" && next.htmlFor && next.htmlFor === el.id) ||
-            (isCheckOrRadioCtrl && (!next.htmlFor || next.htmlFor === el.id)))
-        ) {
-          rawIdentifiers.push(next.innerText);
-        }
-        const parentText = el.parentElement?.getAttribute?.("aria-label");
-        if (parentText) rawIdentifiers.push(parentText);
-
-        return rawIdentifiers.map(normalize).filter((s) => s.length > 0);
-      };
-
-      const getFieldDisplayLabel = (el) => {
-        const elRoot = el.getRootNode?.() || document;
-        if (el.id) {
-          try {
-            const l =
-              elRoot.querySelector?.(`label[for="${CSS.escape(el.id)}"]`) ||
-              document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-            if (l?.innerText?.trim()) return l.innerText.trim().slice(0, 60);
-          } catch {}
-        }
-        const grp = el.closest?.(".form-group, .field, .form-field, fieldset")?.querySelector?.("label, legend");
-        if (grp?.innerText?.trim() && (!grp.htmlFor || grp.htmlFor === el.id)) {
-          return grp.innerText.trim().slice(0, 60);
-        }
-        return (
-          el.getAttribute?.("aria-label") ||
-          el.placeholder ||
-          el.name ||
-          el.id ||
-          el.tagName.toLowerCase()
+      if (inner) return inner;
+      // Walk local field-group container only (never an entire <form>)
+      const containerEditable = el
+        .closest?.("[role='group'], .input-group, .field, .prompt-box, .composer")
+        ?.querySelector?.(
+          'textarea, input:not([type="hidden"]), [contenteditable="true"], [contenteditable=""], [role="textbox"]',
         );
-      };
+      return containerEditable || null;
+    };
 
-      const buildLocalSelector = (node, nodeRoot) => {
-        const safeCount = (s) => {
-          try {
-            return (nodeRoot.querySelectorAll ? nodeRoot.querySelectorAll(s) : document.querySelectorAll(s)).length;
-          } catch {
-            return 0;
-          }
-        };
-        if (node.id && safeCount(`#${CSS.escape(node.id)}`) === 1) {
-          return `#${CSS.escape(node.id)}`;
-        }
-        if (node.name && safeCount(`[name="${CSS.escape(node.name)}"]`) === 1) {
-          return `${node.tagName.toLowerCase()}[name="${CSS.escape(node.name)}"]`;
-        }
-        const parts = [];
-        let cur = node;
-        while (cur && cur.nodeType === 1 && cur !== nodeRoot && parts.length < 5) {
-          let p = cur.tagName.toLowerCase();
-          if (cur.id && safeCount(`#${CSS.escape(cur.id)}`) === 1) {
-            parts.unshift(`#${CSS.escape(cur.id)}`);
-            break;
-          }
-          const parent = cur.parentElement;
-          if (parent) {
-            const same = [...parent.children].filter((c) => c.tagName === cur.tagName);
-            if (same.length > 1) p += `:nth-of-type(${same.indexOf(cur) + 1})`;
-          }
-          parts.unshift(p);
-          cur = parent;
-        }
-        return parts.join(" > ");
-      };
+    // Collect all candidate form inputs (light DOM + open Shadow DOMs)
+    const elements = queryAllDeep(
+      'input, textarea, select, [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], [role="textbox"], [role="searchbox"], [role="combobox"], [role="checkbox"], [role="radio"]',
+    );
 
-      const getUniqueSelector = (node) => {
-        if (!node) return undefined;
-        const chain = [];
-        let curNode = node;
-        while (curNode && curNode.nodeType === 1) {
-          const nodeRoot = curNode.getRootNode?.() || document;
-          chain.unshift(buildLocalSelector(curNode, nodeRoot));
-          if (nodeRoot && nodeRoot !== document && nodeRoot.host) {
-            curNode = nodeRoot.host;
-          } else {
-            break;
-          }
-        }
-        return chain.join(" >>> ");
-      };
+    const getFieldIdentifiers = (el) => {
+      const elRoot = el.getRootNode?.() || document;
+      const findById = (id) => elRoot.getElementById?.(id) || document.getElementById(id);
+      const rawIdentifiers = [
+        el.name,
+        el.id,
+        el.placeholder,
+        el.getAttribute?.("data-placeholder"),
+        el.getAttribute?.("aria-label"),
+        el.getAttribute?.("title"),
+        el.getAttribute?.("data-testid"),
+        el.getAttribute?.("autocomplete"),
+        el.type,
+        el.getAttribute?.("role"),
+      ].filter(Boolean);
 
-      const validateInteractability = (el) => {
-        if (!el || !el.isConnected) return { ok: false, reason: "Element not attached to DOM." };
-        if (el.closest?.("#ai-buddy-arm-overlay")) return { ok: false, reason: "Overlay element." };
-        if (el.type === "hidden") return { ok: false, reason: "Hidden input field." };
-        const fieldDescriptor = `${el.name || ""} ${el.id || ""} ${el.type || ""} ${el.autocomplete || ""} ${el.placeholder || ""}`;
-        const isPasswordOrFinancial =
-          el.type === "password" ||
-          /pass(?:word|wd)?|otp|(?<!postal[\s_-])(?<![a-z0-9])pin(?![a-z0-9]|[\s_-]*code\b)|cvv|cvc|secret|token|credit.?card|debit.?card|card.?number/i.test(fieldDescriptor);
-        const isSensitive =
-          el.type === "password" ||
-          SENSITIVE.test(fieldDescriptor);
-        const allowedByDoc = opts?.fromUploadedDocument && !isPasswordOrFinancial;
-        if (isSensitive && !opts?.explicitUserProvided && !allowedByDoc) {
-          return { ok: false, reason: "Security block: password, OTP, or financial field." };
-        }
-        const style = window.getComputedStyle(el);
-        if (
-          style.display === "none" ||
-          style.visibility === "hidden" ||
-          parseFloat(style.opacity || "1") <= 0
-        ) {
-          return { ok: false, reason: "Element is hidden or invisible." };
-        }
-        if (style.pointerEvents === "none") {
-          return { ok: false, reason: "Pointer events disabled." };
-        }
-        const r = el.getBoundingClientRect();
-        if (r.width <= 0 && r.height <= 0) {
-          return { ok: false, reason: "Element has zero dimensions." };
-        }
-        if (el.disabled || el.getAttribute?.("aria-disabled") === "true") {
-          return { ok: false, reason: "Element is disabled." };
-        }
-        if (el.readOnly && el.type !== "checkbox" && el.type !== "radio") {
-          return { ok: false, reason: "Element is read-only." };
-        }
-        return { ok: true, isSensitive };
-      };
-
-      const successfullyFilled = [];
-
-      const FIELD_SYNONYMS = {
-        name: [
-          "naam",
-          "fullname",
-          "yourname",
-          "legalname",
-          "username",
-          "contactname",
-          "applicantname",
-          "ownername",
-          "firstname",
-          "displayname",
-          "vendorname",
-          "customername",
-          "sellername",
-          "personname",
-        ],
-        firstname: ["first", "givenname", "fname", "name", "naam"],
-        lastname: ["last", "surname", "familyname", "lname", "secondname"],
-        surname: ["lastname", "last", "familyname", "lname"],
-        naam: ["name", "fullname", "yourname", "firstname", "username", "customername"],
-        fullname: ["name", "naam", "legalname", "username", "firstname"],
-        legalname: ["company", "businessname", "firmname", "organization", "companyname", "name", "registeredname"],
-        tradename: ["businessname", "storename", "shopname", "brandname", "company", "displayname"],
-        email: ["mail", "emailaddress", "contactemail", "emailid", "useremail"],
-        phone: [
-          "mobile",
-          "mobilenumber",
-          "phoneno",
-          "mobileno",
-          "contact",
-          "contactnumber",
-          "tel",
-          "phonenumber",
-          "cellphone",
-          "whatsapp",
-        ],
-        mobile: ["phone", "phonenumber", "mobilenumber", "tel", "contactnumber"],
-        mobilenumber: ["phone", "mobile", "phonenumber", "tel", "contactnumber"],
-        gstin: ["gst", "taxid", "gstnumber", "gstinnumber", "tin", "gstinno"],
-        pan: ["pannumber", "pancard", "taxnumber", "panno"],
-        pannumber: ["pan", "pancard", "taxnumber", "panno"],
-        aadhaarnumber: ["aadhaar", "aadhar", "aadhaarno", "aadharno", "uidai", "uid", "documentnumber", "idnumber"],
-        aadhaar: ["aadhaarnumber", "aadhar", "aadhaarno", "uidai", "uid", "documentnumber", "idnumber"],
-        dob: ["dateofbirth", "birthdate", "birthday", "janamtithi"],
-        fathername: ["father", "fathersname", "guardian", "guardianname", "parentname", "so"],
-        gender: ["sex", "ling"],
-        invoicenumber: ["invoice", "invoiceno", "billno", "billnumber"],
-        orderid: ["order", "orderno", "ordernumber"],
-        trackingnumber: ["tracking", "trackingid", "awb", "awbnumber", "waybill"],
-        address: [
-          "pata",
-          "street",
-          "line1",
-          "addressline1",
-          "shippingaddress",
-          "billingaddress",
-          "fulladdress",
-          "pickupaddress",
-          "location",
-          "permanentaddress",
-          "residentialaddress",
-        ],
-        pata: ["address", "street", "line1", "addressline1", "fulladdress", "location"],
-        city: ["shehar", "town", "district", "municipality"],
-        shehar: ["city", "town", "district"],
-        state: ["rajya", "province", "region"],
-        rajya: ["state", "province", "region"],
-        country: ["desh", "nation"],
-        desh: ["country", "nation"],
-        pincode: ["zip", "zipcode", "postalcode", "pin", "postal"],
-        pin: ["pincode", "zip", "zipcode", "postalcode", "postal"],
-        search: ["query", "q", "searchbox", "find", "keyword", "searchinput", "searchquery"],
-        searchbox: ["search", "query", "q", "find", "keyword", "searchinput", "searchquery"],
-        describe: ["prompt", "description", "details", "idea", "app", "message", "describeanapp"],
-        message: ["comment", "comments", "note", "notes", "msg", "description", "remarks", "body", "sandesh", "chat", "chatbox", "composer", "reply"],
-        msg: ["message", "comment", "comments", "note", "notes", "description", "remarks", "body", "sandesh", "chat", "chatbox"],
-        chat: ["chatbox", "message", "msg", "reply", "composer", "prompt", "comment", "typeamessage"],
-        chatbox: ["chat", "message", "msg", "reply", "composer", "prompt", "typeamessage"],
-        comment: ["message", "note", "notes", "feedback", "review"],
-        subject: ["title", "topic", "heading"],
-        company: ["organization", "org", "firm", "business", "businessname", "legalname"],
-        password: ["pass", "passwd", "pwd"],
-      };
-
-      const dispatchRealClick = (targetEl) => {
-        const r = targetEl.getBoundingClientRect();
-        const cx = Math.round(r.left + Math.max(1, r.width / 2));
-        const cy = Math.round(r.top + Math.max(1, r.height / 2));
-        const baseEv = {
-          bubbles: true,
-          cancelable: true,
-          view: window,
-          clientX: cx,
-          clientY: cy,
-          screenX: cx,
-          screenY: cy,
-          button: 0,
-        };
-        const ptrEv = { ...baseEv, buttons: 1, pointerId: 1, pointerType: "mouse", isPrimary: true };
-        try {
-          targetEl.dispatchEvent(new PointerEvent("pointerover", ptrEv));
-          targetEl.dispatchEvent(new PointerEvent("pointerdown", ptrEv));
-        } catch {}
-        targetEl.dispatchEvent(new MouseEvent("mousedown", { ...baseEv, buttons: 1 }));
-        targetEl.focus?.();
-        try {
-          targetEl.dispatchEvent(new PointerEvent("pointerup", { ...ptrEv, buttons: 0 }));
-        } catch {}
-        targetEl.dispatchEvent(new MouseEvent("mouseup", { ...baseEv, buttons: 0 }));
-        targetEl.click();
-      };
-
-      const claimedElements = new Set();
-
-      const findCandidateForKey = (key, explicitSelector, entryVal) => {
-        // 1. Explicit CSS selector override
-        if (explicitSelector) {
-          const selEl = resolveEditableTarget(queryDeepSelector(explicitSelector));
-          if (selEl && validateInteractability(selEl).ok) return { el: selEl };
-        }
-
-        // 2. Current / highlighted / active / semantic value inference (with ambiguity check!)
-        if (key === "__CURRENT__" || key === "__PRIMARY__") {
-          // Strong semantic inference from value format (10-digit phone, email) beats stale highlight fallback
-          const rawValStrEarly = String(entryVal || "").trim();
-          if (rawValStrEarly) {
-            let earlyInferredKey = null;
-            if (/^(\+?\d{1,3}[\s-]?)?[6-9]\d{9}$/.test(rawValStrEarly.replace(/\s+/g, ""))) {
-              earlyInferredKey = "phone";
-            } else if (/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(rawValStrEarly)) {
-              earlyInferredKey = "email";
-            }
-            if (earlyInferredKey) {
-              const inferredRes = findCandidateForKey(earlyInferredKey, null, rawValStrEarly);
-              if (inferredRes?.el) return inferredRes;
-              if (inferredRes?.ambiguous) return inferredRes;
-            }
-          }
-          if (opts?.fallbackSelector) {
-            const hlEl = resolveEditableTarget(queryDeepSelector(opts.fallbackSelector));
-            if (hlEl && validateInteractability(hlEl).ok) return { el: hlEl };
-          }
-          const rawActive = document.activeElement;
-          const active =
-            rawActive &&
-            rawActive !== document.body &&
-            rawActive !== document.documentElement
-              ? resolveEditableTarget(rawActive)
-              : null;
-          if (active && active !== document.body && validateInteractability(active).ok) {
-            const activeCur = isContentEditableEl(active) ? active.innerText : active.value;
-            if (opts?.overwrite || !String(activeCur || "").replace(/[\u200B\s]/g, "")) {
-              return { el: active };
-            }
-          }
-          const rawVisible = elements.filter(
-            (el) => validateInteractability(el).ok && !claimedElements.has(el),
-          );
-          // Deduplicate nested editable wrappers (e.g., [role="textbox"] wrapping [contenteditable="true"])
-          const visibleInputs = rawVisible.filter(
-            (el) => !rawVisible.some((other) => other !== el && el.contains?.(other)),
-          );
-          const isTextInputEl = (el) =>
-            el.tagName === "TEXTAREA" ||
-            isContentEditableEl(el) ||
-            ["textbox", "searchbox"].includes(el.getAttribute?.("role")) ||
-            (el.tagName === "INPUT" &&
-              !["checkbox", "radio", "button", "submit", "reset", "file", "range", "color", "image", "hidden"].includes(
-                (el.type || "text").toLowerCase(),
-              ));
-          const textInputs =
-            typeof entryVal === "boolean"
-              ? visibleInputs
-              : visibleInputs.filter(isTextInputEl);
-          const candidatePool = textInputs.length > 0 ? textInputs : visibleInputs;
-          if (candidatePool.length === 1) return { el: candidatePool[0] };
-
-          if (candidatePool.length > 1 && opts?.fromChatCommand) {
-            const emptyInputs = candidatePool.filter((el) => {
-              const cur = isContentEditableEl(el) ? el.innerText : el.value;
-              return !String(cur || "").replace(/[\u200B\s]/g, "");
-            });
-            const pool = emptyInputs.length > 0 ? emptyInputs : candidatePool;
-            if (pool.length === 1) return { el: pool[0] };
-
-            // On chat/search SPA pages (ChatGPT, Google AI Mode), a single primary composer box is unambiguous
-            const isComposerBox = (el) => {
-              const hint = `${el.id || ""} ${el.className || ""} ${el.placeholder || ""} ${el.getAttribute?.("aria-label") || ""} ${el.getAttribute?.("data-placeholder") || ""}`.toLowerCase();
-              return (
-                el.id === "prompt-textarea" ||
-                /\bprosemirror\b/.test(hint) ||
-                /\b(?:ask anything|ask chatgpt|message chatgpt|type a message|type your prompt|ask a follow-up|follow-up)\b/.test(
-                  hint,
-                )
-              );
-            };
-            const composerMatches = pool.filter(isComposerBox);
-            if (composerMatches.length === 1) return { el: composerMatches[0] };
-
-            return {
-              ambiguous: true,
-              key,
-              candidates: pool.slice(0, 6).map((el, idx) => ({
-                index: idx + 1,
-                label: getFieldDisplayLabel(el),
-                selector: getUniqueSelector(el),
-              })),
-            };
-          }
-
-          if (candidatePool.length > 0) return { el: candidatePool[0] };
-          return { el: null };
-        }
-
-        const rawKeyTrim = String(key || "").trim();
-        if (/^__INDEX_(\d+|LAST)__$/.test(rawKeyTrim)) {
-          const idxRaw = rawKeyTrim.match(/^__INDEX_(\d+|LAST)__$/)?.[1];
-          const rawOrdered = elements.filter((el) => validateInteractability(el).ok);
-          const dedupOrdered = rawOrdered.filter(
-            (el) => !rawOrdered.some((other) => other !== el && el.contains?.(other)),
-          );
-          const formOrdered = dedupOrdered.filter(
-            (el) =>
-              el.tagName !== "BUTTON" &&
-              el.type !== "submit" &&
-              el.type !== "button" &&
-              el.type !== "reset",
-          );
-          const pool = formOrdered.length > 0 ? formOrdered : dedupOrdered;
-          if (idxRaw === "LAST") {
-            return { el: pool[pool.length - 1] || null };
-          }
-          const numIdx = Number(idxRaw);
-          return { el: pool[numIdx] || null };
-        }
-
-        const normKey = normalize(key);
-        if (!normKey) return { el: null };
-        const keyCandidates = [normKey, ...(FIELD_SYNONYMS[normKey] || [])].filter((k) => k.length > 0);
-
-        const scoredCandidates = [];
-        for (const el of elements) {
-          if (claimedElements.has(el)) continue;
-          const check = validateInteractability(el);
-          if (!check.ok) continue;
-
-          const ids = getFieldIdentifiers(el);
-          let score = 0;
-          for (const id of ids) {
-            if (!id) continue;
-            if (normKey === "address" && /(?:email|mail|ip|mac|web|url)address/.test(id)) {
-              continue;
-            }
-            if (id === normKey) {
-              score = Math.max(score, 100);
-            } else if (keyCandidates.includes(id)) {
-              score = Math.max(score, 85);
-            } else {
-              for (const k of keyCandidates) {
-                if (id.includes(k) && k.length >= 3) {
-                  score = Math.max(score, k === normKey ? 70 : 55);
-                } else if (k.includes(id) && id.length >= 4) {
-                  score = Math.max(score, 40);
-                }
-              }
-            }
-          }
-          if (score > 0) {
-            scoredCandidates.push({ el, score });
-          }
-        }
-
-        scoredCandidates.sort((a, b) => b.score - a.score);
-        if (scoredCandidates.length > 0) {
-          const topScore = scoredCandidates[0].score;
-          const tied = scoredCandidates.filter((c) => c.score === topScore);
-          if (tied.length > 1 && opts?.fromChatCommand) {
-            // If exact labels differ (e.g. "Billing Phone" vs "Shipping Phone"), ask user to disambiguate
-            const distinctLabels = new Set(tied.map((t) => normalize(getFieldDisplayLabel(t.el))));
-            if (distinctLabels.size > 1) {
-              return {
-                ambiguous: true,
-                key,
-                candidates: tied.slice(0, 6).map((c, idx) => ({
-                  index: idx + 1,
-                  label: getFieldDisplayLabel(c.el),
-                  selector: getUniqueSelector(c.el),
-                })),
-              };
-            }
-          }
-          return { el: scoredCandidates[0].el };
-        }
-
-        // Fallback: look for visible text/placeholder overlay element matching the key and resolve to nearby editable
-        const overlays = queryAllDeep("div, span, label, p").filter((node) => {
-          if (node.closest?.("#ai-buddy-arm-overlay")) return false;
-          const txt = normalize(node.innerText || node.getAttribute?.("placeholder") || "");
-          if (normKey === "address" && /(?:email|mail|ip|mac|web|url)address/.test(txt)) return false;
-          return txt && txt.length < 80 && keyCandidates.some((k) => k.length >= 3 && txt.includes(k));
-        });
-        for (const ov of overlays) {
-          const resolved = resolveEditableTarget(ov);
-          if (resolved && validateInteractability(resolved).ok && !claimedElements.has(resolved)) {
-            return { el: resolved };
-          }
-        }
-
-        return { el: null };
-      };
-
-      if (opts?.clearSelector) {
-        try {
-          const prevEl = resolveEditableTarget(queryDeepSelector(opts.clearSelector));
-          if (prevEl && validateInteractability(prevEl).ok) {
-            if (isContentEditableEl(prevEl)) {
-              prevEl.textContent = "";
-            } else if (prevEl.tagName === "INPUT" || prevEl.tagName === "TEXTAREA") {
-              const proto =
-                prevEl.tagName === "TEXTAREA"
-                  ? window.HTMLTextAreaElement.prototype
-                  : window.HTMLInputElement.prototype;
-              const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
-              if (nativeSetter) nativeSetter.call(prevEl, "");
-              else prevEl.value = "";
-            } else if (prevEl.tagName === "SELECT") {
-              prevEl.value = "";
-            }
-            if (prevEl._valueTracker) prevEl._valueTracker.setValue("");
-            prevEl.dispatchEvent(new Event("input", { bubbles: true }));
-            prevEl.dispatchEvent(new Event("change", { bubbles: true }));
-            claimedElements.add(prevEl);
-          }
-        } catch {}
+      const labelledby = el.getAttribute?.("aria-labelledby");
+      if (labelledby) {
+        const parts = labelledby
+          .split(/\s+/)
+          .map((id) => findById(id)?.innerText)
+          .filter(Boolean);
+        if (parts.length) rawIdentifiers.push(parts.join(" "));
       }
 
-      // Build ordered fill entries from either array (explicitPairs) or object (fieldsToFill)
-      const entries = Array.isArray(opts?.explicitPairs)
-        ? opts.explicitPairs.map((p) => ({
-            key: p.target || p.fieldHint || p.key || "__CURRENT__",
-            val: p.value,
-            overwrite: p.overwrite ?? opts?.overwrite,
-            selector: p.selector,
-          }))
-        : Object.entries(fieldsToFill || {}).map(([key, val]) => ({
-            key,
-            val,
-            overwrite: opts?.overwrite,
-            selector: opts?.selector,
-          }));
+      if (el.id) {
+        try {
+          const l =
+            elRoot.querySelector?.(`label[for="${CSS.escape(el.id)}"]`) ||
+            document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+          if (l?.innerText) rawIdentifiers.push(l.innerText);
+        } catch {
+          // ignore
+        }
+      }
+      const wrap = el.closest?.("label");
+      if (wrap?.innerText) rawIdentifiers.push(wrap.innerText);
 
-      for (const entry of entries) {
-        const { key, val, overwrite, selector: entrySel } = entry;
-        if (val === undefined || val === null) continue;
+      let prev = el.previousElementSibling;
+      if (
+        prev &&
+        (prev.tagName === "LABEL" || prev.tagName === "SPAN" || prev.tagName === "P") &&
+        prev.innerText &&
+        (!prev.htmlFor || prev.htmlFor === el.id)
+      ) {
+        rawIdentifiers.push(prev.innerText);
+      }
 
-        const matchRes = findCandidateForKey(key, entrySel, val);
-        if (matchRes?.ambiguous && Array.isArray(matchRes.candidates) && matchRes.candidates.length > 1) {
+      // Check immediate field wrapper/fieldset/table cell when it holds only this input
+      const fieldGroup = el.closest?.(".form-group, .field, .form-field, .input-group, fieldset");
+      if (fieldGroup) {
+        const groupControls = fieldGroup.querySelectorAll?.(
+          'input:not([type="hidden"]), textarea, select, [contenteditable="true"], [role="textbox"], [role="searchbox"], [role="combobox"]',
+        );
+        if (!groupControls || groupControls.length <= 1) {
+          const grpLabel = fieldGroup.querySelector?.(
+            "label, legend, .label, .field-label, .form-label",
+          );
+          if (grpLabel?.innerText && (!grpLabel.htmlFor || grpLabel.htmlFor === el.id)) {
+            rawIdentifiers.push(grpLabel.innerText);
+          }
+        }
+      }
+      const td = el.closest?.("td");
+      if (td?.previousElementSibling?.innerText) {
+        rawIdentifiers.push(td.previousElementSibling.innerText);
+      }
+
+      const isCheckOrRadioCtrl =
+        el.type === "checkbox" ||
+        el.type === "radio" ||
+        el.getAttribute?.("role") === "checkbox" ||
+        el.getAttribute?.("role") === "radio" ||
+        el.getAttribute?.("role") === "switch";
+      let next = el.nextElementSibling;
+      if (
+        next &&
+        (next.tagName === "LABEL" || next.tagName === "SPAN") &&
+        next.innerText &&
+        ((next.tagName === "LABEL" && next.htmlFor && next.htmlFor === el.id) ||
+          (isCheckOrRadioCtrl && (!next.htmlFor || next.htmlFor === el.id)))
+      ) {
+        rawIdentifiers.push(next.innerText);
+      }
+      const parentText = el.parentElement?.getAttribute?.("aria-label");
+      if (parentText) rawIdentifiers.push(parentText);
+
+      return rawIdentifiers.map(normalize).filter((s) => s.length > 0);
+    };
+
+    const getFieldDisplayLabel = (el) => {
+      const elRoot = el.getRootNode?.() || document;
+      if (el.id) {
+        try {
+          const l =
+            elRoot.querySelector?.(`label[for="${CSS.escape(el.id)}"]`) ||
+            document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+          if (l?.innerText?.trim()) return l.innerText.trim().slice(0, 60);
+        } catch {}
+      }
+      const grp = el
+        .closest?.(".form-group, .field, .form-field, fieldset")
+        ?.querySelector?.("label, legend");
+      if (grp?.innerText?.trim() && (!grp.htmlFor || grp.htmlFor === el.id)) {
+        return grp.innerText.trim().slice(0, 60);
+      }
+      return (
+        el.getAttribute?.("aria-label") ||
+        el.placeholder ||
+        el.name ||
+        el.id ||
+        el.tagName.toLowerCase()
+      );
+    };
+
+    const buildLocalSelector = (node, nodeRoot) => {
+      const safeCount = (s) => {
+        try {
+          return (
+            nodeRoot.querySelectorAll ? nodeRoot.querySelectorAll(s) : document.querySelectorAll(s)
+          ).length;
+        } catch {
+          return 0;
+        }
+      };
+      if (node.id && safeCount(`#${CSS.escape(node.id)}`) === 1) {
+        return `#${CSS.escape(node.id)}`;
+      }
+      if (node.name && safeCount(`[name="${CSS.escape(node.name)}"]`) === 1) {
+        return `${node.tagName.toLowerCase()}[name="${CSS.escape(node.name)}"]`;
+      }
+      const parts = [];
+      let cur = node;
+      while (cur && cur.nodeType === 1 && cur !== nodeRoot && parts.length < 5) {
+        let p = cur.tagName.toLowerCase();
+        if (cur.id && safeCount(`#${CSS.escape(cur.id)}`) === 1) {
+          parts.unshift(`#${CSS.escape(cur.id)}`);
+          break;
+        }
+        const parent = cur.parentElement;
+        if (parent) {
+          const same = [...parent.children].filter((c) => c.tagName === cur.tagName);
+          if (same.length > 1) p += `:nth-of-type(${same.indexOf(cur) + 1})`;
+        }
+        parts.unshift(p);
+        cur = parent;
+      }
+      return parts.join(" > ");
+    };
+
+    const getUniqueSelector = (node) => {
+      if (!node) return undefined;
+      const chain = [];
+      let curNode = node;
+      while (curNode && curNode.nodeType === 1) {
+        const nodeRoot = curNode.getRootNode?.() || document;
+        chain.unshift(buildLocalSelector(curNode, nodeRoot));
+        if (nodeRoot && nodeRoot !== document && nodeRoot.host) {
+          curNode = nodeRoot.host;
+        } else {
+          break;
+        }
+      }
+      return chain.join(" >>> ");
+    };
+
+    const validateInteractability = (el) => {
+      if (!el || !el.isConnected) return { ok: false, reason: "Element not attached to DOM." };
+      if (el.closest?.("#ai-buddy-arm-overlay")) return { ok: false, reason: "Overlay element." };
+      if (el.type === "hidden") return { ok: false, reason: "Hidden input field." };
+      const fieldDescriptor = `${el.name || ""} ${el.id || ""} ${el.type || ""} ${el.autocomplete || ""} ${el.placeholder || ""}`;
+      const isPasswordOrFinancial =
+        el.type === "password" ||
+        /pass(?:word|wd)?|otp|(?<!postal[\s_-])(?<![a-z0-9])pin(?![a-z0-9]|[\s_-]*code\b)|cvv|cvc|secret|token|credit.?card|debit.?card|card.?number/i.test(
+          fieldDescriptor,
+        );
+      const isSensitive = el.type === "password" || SENSITIVE.test(fieldDescriptor);
+      const allowedByDoc = opts?.fromUploadedDocument && !isPasswordOrFinancial;
+      if (isSensitive && !opts?.explicitUserProvided && !allowedByDoc) {
+        return { ok: false, reason: "Security block: password, OTP, or financial field." };
+      }
+      const style = window.getComputedStyle(el);
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        parseFloat(style.opacity || "1") <= 0
+      ) {
+        return { ok: false, reason: "Element is hidden or invisible." };
+      }
+      if (style.pointerEvents === "none") {
+        return { ok: false, reason: "Pointer events disabled." };
+      }
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 && r.height <= 0) {
+        return { ok: false, reason: "Element has zero dimensions." };
+      }
+      if (el.disabled || el.getAttribute?.("aria-disabled") === "true") {
+        return { ok: false, reason: "Element is disabled." };
+      }
+      if (el.readOnly && el.type !== "checkbox" && el.type !== "radio") {
+        return { ok: false, reason: "Element is read-only." };
+      }
+      return { ok: true, isSensitive };
+    };
+
+    const successfullyFilled = [];
+
+    const FIELD_SYNONYMS = {
+      name: [
+        "naam",
+        "fullname",
+        "yourname",
+        "legalname",
+        "username",
+        "contactname",
+        "applicantname",
+        "ownername",
+        "firstname",
+        "displayname",
+        "vendorname",
+        "customername",
+        "sellername",
+        "personname",
+      ],
+      firstname: ["first", "givenname", "fname", "name", "naam"],
+      lastname: ["last", "surname", "familyname", "lname", "secondname"],
+      surname: ["lastname", "last", "familyname", "lname"],
+      naam: ["name", "fullname", "yourname", "firstname", "username", "customername"],
+      fullname: ["name", "naam", "legalname", "username", "firstname"],
+      legalname: [
+        "company",
+        "businessname",
+        "firmname",
+        "organization",
+        "companyname",
+        "name",
+        "registeredname",
+      ],
+      tradename: ["businessname", "storename", "shopname", "brandname", "company", "displayname"],
+      email: ["mail", "emailaddress", "contactemail", "emailid", "useremail"],
+      phone: [
+        "mobile",
+        "mobilenumber",
+        "phoneno",
+        "mobileno",
+        "contact",
+        "contactnumber",
+        "tel",
+        "phonenumber",
+        "cellphone",
+        "whatsapp",
+      ],
+      mobile: ["phone", "phonenumber", "mobilenumber", "tel", "contactnumber"],
+      mobilenumber: ["phone", "mobile", "phonenumber", "tel", "contactnumber"],
+      gstin: ["gst", "taxid", "gstnumber", "gstinnumber", "tin", "gstinno"],
+      pan: ["pannumber", "pancard", "taxnumber", "panno"],
+      pannumber: ["pan", "pancard", "taxnumber", "panno"],
+      aadhaarnumber: [
+        "aadhaar",
+        "aadhar",
+        "aadhaarno",
+        "aadharno",
+        "uidai",
+        "uid",
+        "documentnumber",
+        "idnumber",
+      ],
+      aadhaar: [
+        "aadhaarnumber",
+        "aadhar",
+        "aadhaarno",
+        "uidai",
+        "uid",
+        "documentnumber",
+        "idnumber",
+      ],
+      dob: ["dateofbirth", "birthdate", "birthday", "janamtithi"],
+      fathername: ["father", "fathersname", "guardian", "guardianname", "parentname", "so"],
+      gender: ["sex", "ling"],
+      invoicenumber: ["invoice", "invoiceno", "billno", "billnumber"],
+      orderid: ["order", "orderno", "ordernumber"],
+      trackingnumber: ["tracking", "trackingid", "awb", "awbnumber", "waybill"],
+      address: [
+        "pata",
+        "street",
+        "line1",
+        "addressline1",
+        "shippingaddress",
+        "billingaddress",
+        "fulladdress",
+        "pickupaddress",
+        "location",
+        "permanentaddress",
+        "residentialaddress",
+      ],
+      pata: ["address", "street", "line1", "addressline1", "fulladdress", "location"],
+      city: ["shehar", "town", "district", "municipality"],
+      shehar: ["city", "town", "district"],
+      state: ["rajya", "province", "region"],
+      rajya: ["state", "province", "region"],
+      country: ["desh", "nation"],
+      desh: ["country", "nation"],
+      pincode: ["zip", "zipcode", "postalcode", "pin", "postal"],
+      pin: ["pincode", "zip", "zipcode", "postalcode", "postal"],
+      search: ["query", "q", "searchbox", "find", "keyword", "searchinput", "searchquery"],
+      searchbox: ["search", "query", "q", "find", "keyword", "searchinput", "searchquery"],
+      describe: ["prompt", "description", "details", "idea", "app", "message", "describeanapp"],
+      message: [
+        "comment",
+        "comments",
+        "note",
+        "notes",
+        "msg",
+        "description",
+        "remarks",
+        "body",
+        "sandesh",
+        "chat",
+        "chatbox",
+        "composer",
+        "reply",
+      ],
+      msg: [
+        "message",
+        "comment",
+        "comments",
+        "note",
+        "notes",
+        "description",
+        "remarks",
+        "body",
+        "sandesh",
+        "chat",
+        "chatbox",
+      ],
+      chat: ["chatbox", "message", "msg", "reply", "composer", "prompt", "comment", "typeamessage"],
+      chatbox: ["chat", "message", "msg", "reply", "composer", "prompt", "typeamessage"],
+      comment: ["message", "note", "notes", "feedback", "review"],
+      subject: ["title", "topic", "heading"],
+      company: ["organization", "org", "firm", "business", "businessname", "legalname"],
+      password: ["pass", "passwd", "pwd"],
+    };
+
+    const dispatchRealClick = (targetEl) => {
+      const r = targetEl.getBoundingClientRect();
+      const cx = Math.round(r.left + Math.max(1, r.width / 2));
+      const cy = Math.round(r.top + Math.max(1, r.height / 2));
+      const baseEv = {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: cx,
+        clientY: cy,
+        screenX: cx,
+        screenY: cy,
+        button: 0,
+      };
+      const ptrEv = { ...baseEv, buttons: 1, pointerId: 1, pointerType: "mouse", isPrimary: true };
+      try {
+        targetEl.dispatchEvent(new PointerEvent("pointerover", ptrEv));
+        targetEl.dispatchEvent(new PointerEvent("pointerdown", ptrEv));
+      } catch {}
+      targetEl.dispatchEvent(new MouseEvent("mousedown", { ...baseEv, buttons: 1 }));
+      targetEl.focus?.();
+      try {
+        targetEl.dispatchEvent(new PointerEvent("pointerup", { ...ptrEv, buttons: 0 }));
+      } catch {}
+      targetEl.dispatchEvent(new MouseEvent("mouseup", { ...baseEv, buttons: 0 }));
+      targetEl.click();
+    };
+
+    const claimedElements = new Set();
+
+    const findCandidateForKey = (key, explicitSelector, entryVal) => {
+      // 1. Explicit CSS selector override
+      if (explicitSelector) {
+        const selEl = resolveEditableTarget(queryDeepSelector(explicitSelector));
+        if (selEl && validateInteractability(selEl).ok) return { el: selEl };
+      }
+
+      // 2. Current / highlighted / active / semantic value inference (with ambiguity check!)
+      if (key === "__CURRENT__" || key === "__PRIMARY__") {
+        // Strong semantic inference from value format (10-digit phone, email) beats stale highlight fallback
+        const rawValStrEarly = String(entryVal || "").trim();
+        if (rawValStrEarly) {
+          let earlyInferredKey = null;
+          if (/^(\+?\d{1,3}[\s-]?)?[6-9]\d{9}$/.test(rawValStrEarly.replace(/\s+/g, ""))) {
+            earlyInferredKey = "phone";
+          } else if (/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(rawValStrEarly)) {
+            earlyInferredKey = "email";
+          }
+          if (earlyInferredKey) {
+            const inferredRes = findCandidateForKey(earlyInferredKey, null, rawValStrEarly);
+            if (inferredRes?.el) return inferredRes;
+            if (inferredRes?.ambiguous) return inferredRes;
+          }
+        }
+        if (opts?.fallbackSelector) {
+          const hlEl = resolveEditableTarget(queryDeepSelector(opts.fallbackSelector));
+          if (hlEl && validateInteractability(hlEl).ok) return { el: hlEl };
+        }
+        const rawActive = document.activeElement;
+        const active =
+          rawActive && rawActive !== document.body && rawActive !== document.documentElement
+            ? resolveEditableTarget(rawActive)
+            : null;
+        if (active && active !== document.body && validateInteractability(active).ok) {
+          const activeCur = isContentEditableEl(active) ? active.innerText : active.value;
+          if (opts?.overwrite || !String(activeCur || "").replace(/[\u200B\s]/g, "")) {
+            return { el: active };
+          }
+        }
+        const rawVisible = elements.filter(
+          (el) => validateInteractability(el).ok && !claimedElements.has(el),
+        );
+        // Deduplicate nested editable wrappers (e.g., [role="textbox"] wrapping [contenteditable="true"])
+        const visibleInputs = rawVisible.filter(
+          (el) => !rawVisible.some((other) => other !== el && el.contains?.(other)),
+        );
+        const isTextInputEl = (el) =>
+          el.tagName === "TEXTAREA" ||
+          isContentEditableEl(el) ||
+          ["textbox", "searchbox"].includes(el.getAttribute?.("role")) ||
+          (el.tagName === "INPUT" &&
+            ![
+              "checkbox",
+              "radio",
+              "button",
+              "submit",
+              "reset",
+              "file",
+              "range",
+              "color",
+              "image",
+              "hidden",
+            ].includes((el.type || "text").toLowerCase()));
+        const textInputs =
+          typeof entryVal === "boolean" ? visibleInputs : visibleInputs.filter(isTextInputEl);
+        const candidatePool = textInputs.length > 0 ? textInputs : visibleInputs;
+        if (candidatePool.length === 1) return { el: candidatePool[0] };
+
+        if (candidatePool.length > 1 && opts?.fromChatCommand) {
+          const emptyInputs = candidatePool.filter((el) => {
+            const cur = isContentEditableEl(el) ? el.innerText : el.value;
+            return !String(cur || "").replace(/[\u200B\s]/g, "");
+          });
+          const pool = emptyInputs.length > 0 ? emptyInputs : candidatePool;
+          if (pool.length === 1) return { el: pool[0] };
+
+          // On chat/search SPA pages (ChatGPT, Google AI Mode), a single primary composer box is unambiguous
+          const isComposerBox = (el) => {
+            const hint =
+              `${el.id || ""} ${el.className || ""} ${el.placeholder || ""} ${el.getAttribute?.("aria-label") || ""} ${el.getAttribute?.("data-placeholder") || ""}`.toLowerCase();
+            return (
+              el.id === "prompt-textarea" ||
+              /\bprosemirror\b/.test(hint) ||
+              /\b(?:ask anything|ask chatgpt|message chatgpt|type a message|type your prompt|ask a follow-up|follow-up)\b/.test(
+                hint,
+              )
+            );
+          };
+          const composerMatches = pool.filter(isComposerBox);
+          if (composerMatches.length === 1) return { el: composerMatches[0] };
+
           return {
-            ok: false,
             ambiguous: true,
-            target: key,
-            value: val,
-            candidates: matchRes.candidates,
-            results,
-            message: `Multiple matching fields found for "${key === "__CURRENT__" ? "input box" : key}". Please choose which field.`,
+            key,
+            candidates: pool.slice(0, 6).map((el, idx) => ({
+              index: idx + 1,
+              label: getFieldDisplayLabel(el),
+              selector: getUniqueSelector(el),
+            })),
           };
         }
 
-        const candidate = matchRes?.el || null;
-        if (!candidate) {
-          results.skipped.push({ key, value: val, reason: "Field not found on active page" });
-          continue;
+        if (candidatePool.length > 0) return { el: candidatePool[0] };
+        return { el: null };
+      }
+
+      const rawKeyTrim = String(key || "").trim();
+      if (/^__INDEX_(\d+|LAST)__$/.test(rawKeyTrim)) {
+        const idxRaw = rawKeyTrim.match(/^__INDEX_(\d+|LAST)__$/)?.[1];
+        const rawOrdered = elements.filter((el) => validateInteractability(el).ok);
+        const dedupOrdered = rawOrdered.filter(
+          (el) => !rawOrdered.some((other) => other !== el && el.contains?.(other)),
+        );
+        const formOrdered = dedupOrdered.filter(
+          (el) =>
+            el.tagName !== "BUTTON" &&
+            el.type !== "submit" &&
+            el.type !== "button" &&
+            el.type !== "reset",
+        );
+        const pool = formOrdered.length > 0 ? formOrdered : dedupOrdered;
+        if (idxRaw === "LAST") {
+          return { el: pool[pool.length - 1] || null };
         }
-        claimedElements.add(candidate);
+        const numIdx = Number(idxRaw);
+        return { el: pool[numIdx] || null };
+      }
 
-        const check = validateInteractability(candidate);
-        if (!check.ok) {
-          results.skipped.push({ key, value: val, reason: check.reason });
-          continue;
+      const normKey = normalize(key);
+      if (!normKey) return { el: null };
+      const keyCandidates = [normKey, ...(FIELD_SYNONYMS[normKey] || [])].filter(
+        (k) => k.length > 0,
+      );
+
+      const scoredCandidates = [];
+      for (const el of elements) {
+        if (claimedElements.has(el)) continue;
+        const check = validateInteractability(el);
+        if (!check.ok) continue;
+
+        const ids = getFieldIdentifiers(el);
+        let score = 0;
+        for (const id of ids) {
+          if (!id) continue;
+          if (normKey === "address" && /(?:email|mail|ip|mac|web|url)address/.test(id)) {
+            continue;
+          }
+          if (id === normKey) {
+            score = Math.max(score, 100);
+          } else if (keyCandidates.includes(id)) {
+            score = Math.max(score, 85);
+          } else {
+            for (const k of keyCandidates) {
+              if (id.includes(k) && k.length >= 3) {
+                score = Math.max(score, k === normKey ? 70 : 55);
+              } else if (k.includes(id) && id.length >= 4) {
+                score = Math.max(score, 40);
+              }
+            }
+          }
+        }
+        if (score > 0) {
+          scoredCandidates.push({ el, score });
+        }
+      }
+
+      scoredCandidates.sort((a, b) => b.score - a.score);
+      if (scoredCandidates.length > 0) {
+        const topScore = scoredCandidates[0].score;
+        const tied = scoredCandidates.filter((c) => c.score === topScore);
+        if (tied.length > 1 && opts?.fromChatCommand) {
+          // If exact labels differ (e.g. "Billing Phone" vs "Shipping Phone"), ask user to disambiguate
+          const distinctLabels = new Set(tied.map((t) => normalize(getFieldDisplayLabel(t.el))));
+          if (distinctLabels.size > 1) {
+            return {
+              ambiguous: true,
+              key,
+              candidates: tied.slice(0, 6).map((c, idx) => ({
+                index: idx + 1,
+                label: getFieldDisplayLabel(c.el),
+                selector: getUniqueSelector(c.el),
+              })),
+            };
+          }
+        }
+        return { el: scoredCandidates[0].el };
+      }
+
+      // Fallback: look for visible text/placeholder overlay element matching the key and resolve to nearby editable
+      const overlays = queryAllDeep("div, span, label, p").filter((node) => {
+        if (node.closest?.("#ai-buddy-arm-overlay")) return false;
+        const txt = normalize(node.innerText || node.getAttribute?.("placeholder") || "");
+        if (normKey === "address" && /(?:email|mail|ip|mac|web|url)address/.test(txt)) return false;
+        return (
+          txt && txt.length < 80 && keyCandidates.some((k) => k.length >= 3 && txt.includes(k))
+        );
+      });
+      for (const ov of overlays) {
+        const resolved = resolveEditableTarget(ov);
+        if (resolved && validateInteractability(resolved).ok && !claimedElements.has(resolved)) {
+          return { el: resolved };
+        }
+      }
+
+      return { el: null };
+    };
+
+    if (opts?.clearSelector) {
+      try {
+        const prevEl = resolveEditableTarget(queryDeepSelector(opts.clearSelector));
+        if (prevEl && validateInteractability(prevEl).ok) {
+          if (isContentEditableEl(prevEl)) {
+            prevEl.textContent = "";
+          } else if (prevEl.tagName === "INPUT" || prevEl.tagName === "TEXTAREA") {
+            const proto =
+              prevEl.tagName === "TEXTAREA"
+                ? window.HTMLTextAreaElement.prototype
+                : window.HTMLInputElement.prototype;
+            const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+            if (nativeSetter) nativeSetter.call(prevEl, "");
+            else prevEl.value = "";
+          } else if (prevEl.tagName === "SELECT") {
+            prevEl.value = "";
+          }
+          if (prevEl._valueTracker) prevEl._valueTracker.setValue("");
+          prevEl.dispatchEvent(new Event("input", { bubbles: true }));
+          prevEl.dispatchEvent(new Event("change", { bubbles: true }));
+          claimedElements.add(prevEl);
+        }
+      } catch {}
+    }
+
+    // Build ordered fill entries from either array (explicitPairs) or object (fieldsToFill)
+    const entries = Array.isArray(opts?.explicitPairs)
+      ? opts.explicitPairs.map((p) => ({
+          key: p.target || p.fieldHint || p.key || "__CURRENT__",
+          val: p.value,
+          overwrite: p.overwrite ?? opts?.overwrite,
+          selector: p.selector,
+        }))
+      : Object.entries(fieldsToFill || {}).map(([key, val]) => ({
+          key,
+          val,
+          overwrite: opts?.overwrite,
+          selector: opts?.selector,
+        }));
+
+    for (const entry of entries) {
+      const { key, val, overwrite, selector: entrySel } = entry;
+      if (val === undefined || val === null) continue;
+
+      const matchRes = findCandidateForKey(key, entrySel, val);
+      if (
+        matchRes?.ambiguous &&
+        Array.isArray(matchRes.candidates) &&
+        matchRes.candidates.length > 1
+      ) {
+        return {
+          ok: false,
+          ambiguous: true,
+          target: key,
+          value: val,
+          candidates: matchRes.candidates,
+          results,
+          message: `Multiple matching fields found for "${key === "__CURRENT__" ? "input box" : key}". Please choose which field.`,
+        };
+      }
+
+      const candidate = matchRes?.el || null;
+      if (!candidate) {
+        results.skipped.push({ key, value: val, reason: "Field not found on active page" });
+        continue;
+      }
+      claimedElements.add(candidate);
+
+      const check = validateInteractability(candidate);
+      if (!check.ok) {
+        results.skipped.push({ key, value: val, reason: check.reason });
+        continue;
+      }
+
+      const isCheckbox =
+        candidate.type === "checkbox" ||
+        candidate.getAttribute?.("role") === "checkbox" ||
+        candidate.getAttribute?.("role") === "switch";
+      const isRadio = candidate.type === "radio" || candidate.getAttribute?.("role") === "radio";
+      const isCe = isContentEditableEl(candidate);
+
+      // Preservation rule: if field already has a non-empty value and overwrite is not true, preserve it
+      const currentVal = isCheckbox
+        ? candidate.checked || candidate.getAttribute?.("aria-checked") === "true"
+          ? "checked"
+          : ""
+        : isCe
+          ? candidate.innerText || candidate.textContent || ""
+          : candidate.value || "";
+
+      const prevRawVal = check.isSensitive ? "" : String(currentVal || "");
+      if (!isCheckbox && !isRadio && String(currentVal).trim() && !overwrite) {
+        results.preserved.push({
+          key,
+          field: candidate.name || candidate.id || candidate.placeholder || key,
+          existingValue: check.isSensitive ? "••••••" : String(currentVal).slice(0, 60),
+          reason: "Preserved existing user input",
+        });
+        continue;
+      }
+
+      try {
+        candidate.scrollIntoView({ behavior: "smooth", block: "center" });
+        candidate.focus();
+
+        let strVal = String(val);
+        if (candidate.tagName === "INPUT" && candidate.type === "date") {
+          const dmy = strVal.trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+          if (dmy) {
+            strVal = `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
+          }
         }
 
-        const isCheckbox =
-          candidate.type === "checkbox" || candidate.getAttribute?.("role") === "checkbox" || candidate.getAttribute?.("role") === "switch";
-        const isRadio =
-          candidate.type === "radio" || candidate.getAttribute?.("role") === "radio";
-        const isCe = isContentEditableEl(candidate);
-
-        // Preservation rule: if field already has a non-empty value and overwrite is not true, preserve it
-        const currentVal = isCheckbox
-          ? candidate.checked || candidate.getAttribute?.("aria-checked") === "true"
-            ? "checked"
-            : ""
-          : isCe
-            ? candidate.innerText || candidate.textContent || ""
-            : candidate.value || "";
-
-        const prevRawVal = check.isSensitive ? "" : String(currentVal || "");
-        if (!isCheckbox && !isRadio && String(currentVal).trim() && !overwrite) {
-          results.preserved.push({
+        const isTextBoxLike = !isCheckbox && !isRadio && candidate.tagName !== "SELECT" && !isCe;
+        if (
+          isTextBoxLike &&
+          typeof candidate.maxLength === "number" &&
+          candidate.maxLength > 0 &&
+          candidate.type !== "date" &&
+          strVal.length > candidate.maxLength
+        ) {
+          results.skipped.push({
             key,
-            field: candidate.name || candidate.id || candidate.placeholder || key,
-            existingValue: check.isSensitive ? "••••••" : String(currentVal).slice(0, 60),
-            reason: "Preserved existing user input",
+            field:
+              candidate.name ||
+              candidate.id ||
+              candidate.placeholder ||
+              candidate.getAttribute?.("aria-label") ||
+              key,
+            value: check.isSensitive ? "••••••" : strVal,
+            reason: `Value length (${strVal.length}) exceeds field maxlength (${candidate.maxLength})`,
           });
           continue;
         }
 
-        try {
-          candidate.scrollIntoView({ behavior: "smooth", block: "center" });
-          candidate.focus();
-
-          let strVal = String(val);
-          if (candidate.tagName === "INPUT" && candidate.type === "date") {
-            const dmy = strVal.trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-            if (dmy) {
-              strVal = `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
-            }
-          }
-
-          const isTextBoxLike =
-            !isCheckbox && !isRadio && candidate.tagName !== "SELECT" && !isCe;
-          if (
-            isTextBoxLike &&
-            typeof candidate.maxLength === "number" &&
-            candidate.maxLength > 0 &&
-            candidate.type !== "date" &&
-            strVal.length > candidate.maxLength
-          ) {
-            results.skipped.push({
-              key,
-              field:
-                candidate.name ||
-                candidate.id ||
-                candidate.placeholder ||
-                candidate.getAttribute?.("aria-label") ||
-                key,
-              value: check.isSensitive ? "••••••" : strVal,
-              reason: `Value length (${strVal.length}) exceeds field maxlength (${candidate.maxLength})`,
-            });
-            continue;
-          }
-
-          if (candidate.tagName === "SELECT") {
-            const normVal = normalize(strVal);
-            const opt = [...candidate.options].find(
-              (o) =>
-                normalize(o.value) === normVal ||
-                normalize(o.text) === normVal ||
-                o.text.toLowerCase().includes(strVal.toLowerCase()),
-            );
-            const targetVal = opt ? opt.value : strVal;
-            const nativeSelectSetter = Object.getOwnPropertyDescriptor(
-              window.HTMLSelectElement.prototype,
-              "value",
-            )?.set;
-            if (nativeSelectSetter) {
-              nativeSelectSetter.call(candidate, targetVal);
-            } else {
-              candidate.value = targetVal;
-            }
-            if (candidate._valueTracker) candidate._valueTracker.setValue("");
-            candidate.dispatchEvent(new Event("input", { bubbles: true }));
-            candidate.dispatchEvent(new Event("change", { bubbles: true }));
-          } else if (candidate.getAttribute?.("role") === "combobox" || candidate.getAttribute?.("role") === "listbox") {
-            const isComboInput = candidate.tagName === "INPUT" || candidate.tagName === "TEXTAREA";
-            if (isComboInput) {
-              const proto =
-                candidate.tagName === "TEXTAREA"
-                  ? window.HTMLTextAreaElement.prototype
-                  : window.HTMLInputElement.prototype;
-              const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
-              if (nativeSetter) nativeSetter.call(candidate, strVal);
-              else candidate.value = strVal;
-              if (candidate._valueTracker) candidate._valueTracker.setValue("");
-              candidate.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
-            }
-            dispatchRealClick(candidate);
-            const isOptVisible = (o) => {
-              const r = o.getBoundingClientRect();
-              const cs = window.getComputedStyle(o);
-              return (
-                (r.width > 0 || r.height > 0 || o.getClientRects().length > 0) &&
-                cs.display !== "none" &&
-                cs.visibility !== "hidden"
-              );
-            };
-            let roleOptions = [];
-            for (let poll = 0; poll < 6; poll++) {
-              await new Promise((r) => setTimeout(r, 60));
-              roleOptions = queryAllDeep('[role="option"]').filter(isOptVisible);
-              if (roleOptions.length > 0) break;
-            }
-            const allOptions =
-              roleOptions.length > 0
-                ? roleOptions
-                : queryAllDeep('[role="menuitem"], li').filter(isOptVisible);
-            const normVal = normalize(strVal);
-            const optEl =
-              allOptions.find(
-                (o) =>
-                  normalize(o.innerText || o.textContent || o.getAttribute?.("data-value") || "") === normVal,
-              ) ||
-              allOptions.find((o) =>
-                normalize(o.innerText || o.textContent || o.getAttribute?.("data-value") || "").includes(normVal),
-              );
-            if (optEl) {
-              optEl.scrollIntoView?.({ block: "nearest" });
-              dispatchRealClick(optEl);
-              await new Promise((r) => setTimeout(r, 80));
-            } else if (!isComboInput) {
-              candidate.innerText = strVal;
-              candidate.dispatchEvent(new InputEvent("input", { bubbles: true, data: strVal }));
-            }
-            if (isComboInput && candidate.value !== strVal) {
-              candidate.dispatchEvent(new Event("change", { bubbles: true }));
-            }
-          } else if (isCheckbox) {
-            const desired =
-              typeof val === "boolean"
-                ? val
-                : !/^(false|0|no|uncheck|off|nahi)$/i.test(strVal.trim());
-            const currentlyChecked =
-              candidate.type === "checkbox"
-                ? candidate.checked
-                : candidate.getAttribute?.("aria-checked") === "true";
-            if (currentlyChecked !== desired) {
-              dispatchRealClick(candidate);
-            }
-            if (candidate.type === "checkbox" && candidate.checked !== desired) {
-              candidate.checked = desired;
-              candidate.dispatchEvent(new Event("input", { bubbles: true }));
-              candidate.dispatchEvent(new Event("change", { bubbles: true }));
-            }
-          } else if (isRadio) {
-            if (!candidate.checked) {
-              dispatchRealClick(candidate);
-            }
-            if (candidate.type === "radio" && !candidate.checked) {
-              candidate.checked = true;
-              candidate.dispatchEvent(new Event("input", { bubbles: true }));
-              candidate.dispatchEvent(new Event("change", { bubbles: true }));
-            }
-          } else if (isCe) {
-            // Contenteditable editors (React, Lexical, ProseMirror/ChatGPT, Angular, Google AI Studio)
-            let inserted = false;
-            try {
-              candidate.focus?.();
-              const selObj = window.getSelection?.();
-              if (selObj && document.createRange) {
-                const range = document.createRange();
-                range.selectNodeContents(candidate);
-                selObj.removeAllRanges();
-                selObj.addRange(range);
-              }
-              if (typeof document.execCommand === "function") {
-                document.execCommand("selectAll", false, null);
-                inserted = Boolean(document.execCommand("insertText", false, strVal));
-              }
-            } catch {
-              inserted = false;
-            }
-            const curAfterExec = String(candidate.innerText || candidate.textContent || "")
-              .replace(/\u200B/g, "")
-              .trim();
-            if (!inserted || !curAfterExec.includes(strVal.trim())) {
-              try {
-                candidate.dispatchEvent(
-                  new InputEvent("beforeinput", {
-                    bubbles: true,
-                    cancelable: true,
-                    inputType: "insertText",
-                    data: strVal,
-                  }),
-                );
-              } catch {}
-              const firstP = candidate.querySelector?.("p");
-              if (firstP && candidate.children?.length === 1) {
-                firstP.textContent = strVal;
-              } else {
-                candidate.textContent = strVal;
-              }
-            }
-            try {
-              candidate.dispatchEvent(
-                new InputEvent("input", {
-                  bubbles: true,
-                  cancelable: true,
-                  inputType: "insertText",
-                  data: strVal,
-                }),
-              );
-            } catch {
-              candidate.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
-            }
-            candidate.dispatchEvent(new Event("change", { bubbles: true }));
+        if (candidate.tagName === "SELECT") {
+          const normVal = normalize(strVal);
+          const opt = [...candidate.options].find(
+            (o) =>
+              normalize(o.value) === normVal ||
+              normalize(o.text) === normVal ||
+              o.text.toLowerCase().includes(strVal.toLowerCase()),
+          );
+          const targetVal = opt ? opt.value : strVal;
+          const nativeSelectSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLSelectElement.prototype,
+            "value",
+          )?.set;
+          if (nativeSelectSetter) {
+            nativeSelectSetter.call(candidate, targetVal);
           } else {
+            candidate.value = targetVal;
+          }
+          if (candidate._valueTracker) candidate._valueTracker.setValue("");
+          candidate.dispatchEvent(new Event("input", { bubbles: true }));
+          candidate.dispatchEvent(new Event("change", { bubbles: true }));
+        } else if (
+          candidate.getAttribute?.("role") === "combobox" ||
+          candidate.getAttribute?.("role") === "listbox"
+        ) {
+          const isComboInput = candidate.tagName === "INPUT" || candidate.tagName === "TEXTAREA";
+          if (isComboInput) {
             const proto =
               candidate.tagName === "TEXTAREA"
                 ? window.HTMLTextAreaElement.prototype
                 : window.HTMLInputElement.prototype;
             const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
-            if (nativeSetter) {
-              nativeSetter.call(candidate, strVal);
-            } else {
-              candidate.value = strVal;
+            if (nativeSetter) nativeSetter.call(candidate, strVal);
+            else candidate.value = strVal;
+            if (candidate._valueTracker) candidate._valueTracker.setValue("");
+            candidate.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+          }
+          dispatchRealClick(candidate);
+          const isOptVisible = (o) => {
+            const r = o.getBoundingClientRect();
+            const cs = window.getComputedStyle(o);
+            return (
+              (r.width > 0 || r.height > 0 || o.getClientRects().length > 0) &&
+              cs.display !== "none" &&
+              cs.visibility !== "hidden"
+            );
+          };
+          let roleOptions = [];
+          for (let poll = 0; poll < 6; poll++) {
+            await new Promise((r) => setTimeout(r, 60));
+            roleOptions = queryAllDeep('[role="option"]').filter(isOptVisible);
+            if (roleOptions.length > 0) break;
+          }
+          const allOptions =
+            roleOptions.length > 0
+              ? roleOptions
+              : queryAllDeep('[role="menuitem"], li').filter(isOptVisible);
+          const normVal = normalize(strVal);
+          const optEl =
+            allOptions.find(
+              (o) =>
+                normalize(o.innerText || o.textContent || o.getAttribute?.("data-value") || "") ===
+                normVal,
+            ) ||
+            allOptions.find((o) =>
+              normalize(
+                o.innerText || o.textContent || o.getAttribute?.("data-value") || "",
+              ).includes(normVal),
+            );
+          if (optEl) {
+            optEl.scrollIntoView?.({ block: "nearest" });
+            dispatchRealClick(optEl);
+            await new Promise((r) => setTimeout(r, 80));
+          } else if (!isComboInput) {
+            candidate.innerText = strVal;
+            candidate.dispatchEvent(new InputEvent("input", { bubbles: true, data: strVal }));
+          }
+          if (isComboInput && candidate.value !== strVal) {
+            candidate.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        } else if (isCheckbox) {
+          const desired =
+            typeof val === "boolean"
+              ? val
+              : !/^(false|0|no|uncheck|off|nahi)$/i.test(strVal.trim());
+          const currentlyChecked =
+            candidate.type === "checkbox"
+              ? candidate.checked
+              : candidate.getAttribute?.("aria-checked") === "true";
+          if (currentlyChecked !== desired) {
+            dispatchRealClick(candidate);
+          }
+          if (candidate.type === "checkbox" && candidate.checked !== desired) {
+            candidate.checked = desired;
+            candidate.dispatchEvent(new Event("input", { bubbles: true }));
+            candidate.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        } else if (isRadio) {
+          if (!candidate.checked) {
+            dispatchRealClick(candidate);
+          }
+          if (candidate.type === "radio" && !candidate.checked) {
+            candidate.checked = true;
+            candidate.dispatchEvent(new Event("input", { bubbles: true }));
+            candidate.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        } else if (isCe) {
+          // Contenteditable editors (React, Lexical, ProseMirror/ChatGPT, Angular, Google AI Studio)
+          let inserted = false;
+          try {
+            candidate.focus?.();
+            const selObj = window.getSelection?.();
+            if (selObj && document.createRange) {
+              const range = document.createRange();
+              range.selectNodeContents(candidate);
+              selObj.removeAllRanges();
+              selObj.addRange(range);
             }
-            if (candidate._valueTracker) {
-              candidate._valueTracker.setValue("");
+            if (typeof document.execCommand === "function") {
+              document.execCommand("selectAll", false, null);
+              inserted = Boolean(document.execCommand("insertText", false, strVal));
             }
+          } catch {
+            inserted = false;
+          }
+          const curAfterExec = String(candidate.innerText || candidate.textContent || "")
+            .replace(/\u200B/g, "")
+            .trim();
+          if (!inserted || !curAfterExec.includes(strVal.trim())) {
             try {
               candidate.dispatchEvent(
-                new InputEvent("input", {
+                new InputEvent("beforeinput", {
                   bubbles: true,
                   cancelable: true,
                   inputType: "insertText",
                   data: strVal,
                 }),
               );
-            } catch {
-              candidate.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
-            }
-            candidate.dispatchEvent(new Event("change", { bubbles: true }));
-            candidate.dispatchEvent(new Event("blur", { bubbles: true }));
-          }
-
-          // Visual green feedback outline on filled field
-          const prevOutline = candidate.style.outline;
-          candidate.style.outline = "2px solid #10b981";
-          setTimeout(() => {
-            candidate.style.outline = prevOutline;
-          }, 3000);
-
-          // Post-action verification check
-          let verified = false;
-          let actualReadback = "";
-          if (isCheckbox) {
-            const desired =
-              typeof val === "boolean"
-                ? val
-                : !/^(false|0|no|uncheck|off|nahi)$/i.test(strVal.trim());
-            const checkedNow =
-              candidate.type === "checkbox"
-                ? Boolean(candidate.checked)
-                : candidate.getAttribute?.("aria-checked") === "true";
-            verified = checkedNow === desired;
-            actualReadback = String(checkedNow);
-          } else if (isRadio) {
-            const checkedNow =
-              candidate.type === "radio"
-                ? Boolean(candidate.checked)
-                : candidate.getAttribute?.("aria-checked") === "true";
-            verified = checkedNow === true;
-            actualReadback = String(checkedNow);
-          } else if (candidate.tagName === "SELECT") {
-            const selText = candidate.options?.[candidate.selectedIndex]?.text || "";
-            actualReadback = selText || candidate.value || "";
-            verified =
-              Boolean(candidate.value) &&
-              (normalize(candidate.value) === normalize(strVal) ||
-                normalize(selText).includes(normalize(strVal)) ||
-                candidate.value === strVal);
-          } else if (
-            candidate.getAttribute?.("role") === "combobox" ||
-            candidate.getAttribute?.("role") === "listbox"
-          ) {
-            const comboVal =
-              candidate.value || candidate.innerText || candidate.textContent || "";
-            actualReadback = comboVal;
-            verified =
-              comboVal === strVal ||
-              comboVal.includes(strVal) ||
-              normalize(comboVal).includes(normalize(strVal));
-          } else {
-            const rawVerified = isCe
-              ? candidate.innerText || candidate.textContent || ""
-              : candidate.value || "";
-            const verifiedValue = String(rawVerified).replace(/\u200B/g, "").trim();
-            actualReadback = verifiedValue;
-            verified =
-              verifiedValue === strVal.trim() ||
-              verifiedValue.includes(strVal.trim()) ||
-              (normalize(strVal).length > 0 && normalize(verifiedValue).includes(normalize(strVal)));
-          }
-
-          const fieldLabel =
-            candidate.name ||
-            candidate.id ||
-            candidate.placeholder ||
-            candidate.getAttribute?.("aria-label") ||
-            key;
-          const maskedVal = check.isSensitive
-            ? /aadhaar|aadhar/i.test(`${key} ${candidate.name || ""} ${candidate.id || ""}`) &&
-              strVal.replace(/\D/g, "").length >= 4
-              ? `XXXX-XXXX-${strVal.replace(/\D/g, "").slice(-4)}`
-              : "••••••"
-            : strVal;
-
-          // Inspect HTML5 / ARIA / adjacent DOM validation feedback after blur
-          let validationError = "";
-          try {
-            if (typeof candidate.checkValidity === "function" && !candidate.checkValidity()) {
-              validationError = candidate.validationMessage || "Invalid field format.";
-            } else if (candidate.getAttribute?.("aria-invalid") === "true") {
-              validationError = candidate.validationMessage || "Field marked aria-invalid.";
+            } catch {}
+            const firstP = candidate.querySelector?.("p");
+            if (firstP && candidate.children?.length === 1) {
+              firstP.textContent = strVal;
             } else {
-              const container = candidate.closest?.("div, label, td, li, fieldset") || candidate.parentElement;
-              const adjErr = container?.querySelector?.(
-                '.error, .error-message, .invalid-feedback, [role="alert"]',
-              );
-              if (adjErr && isVisible(adjErr)) {
-                const errTxt = normalize(adjErr.innerText || adjErr.textContent || "");
-                if (errTxt && errTxt.length < 180) {
-                  validationError = errTxt;
-                }
+              candidate.textContent = strVal;
+            }
+          }
+          try {
+            candidate.dispatchEvent(
+              new InputEvent("input", {
+                bubbles: true,
+                cancelable: true,
+                inputType: "insertText",
+                data: strVal,
+              }),
+            );
+          } catch {
+            candidate.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+          }
+          candidate.dispatchEvent(new Event("change", { bubbles: true }));
+        } else {
+          const proto =
+            candidate.tagName === "TEXTAREA"
+              ? window.HTMLTextAreaElement.prototype
+              : window.HTMLInputElement.prototype;
+          const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+          if (nativeSetter) {
+            nativeSetter.call(candidate, strVal);
+          } else {
+            candidate.value = strVal;
+          }
+          if (candidate._valueTracker) {
+            candidate._valueTracker.setValue("");
+          }
+          try {
+            candidate.dispatchEvent(
+              new InputEvent("input", {
+                bubbles: true,
+                cancelable: true,
+                inputType: "insertText",
+                data: strVal,
+              }),
+            );
+          } catch {
+            candidate.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+          }
+          candidate.dispatchEvent(new Event("change", { bubbles: true }));
+          candidate.dispatchEvent(new Event("blur", { bubbles: true }));
+        }
+
+        // Visual green feedback outline on filled field
+        const prevOutline = candidate.style.outline;
+        candidate.style.outline = "2px solid #10b981";
+        setTimeout(() => {
+          candidate.style.outline = prevOutline;
+        }, 3000);
+
+        // Post-action verification check
+        let verified = false;
+        let actualReadback = "";
+        if (isCheckbox) {
+          const desired =
+            typeof val === "boolean"
+              ? val
+              : !/^(false|0|no|uncheck|off|nahi)$/i.test(strVal.trim());
+          const checkedNow =
+            candidate.type === "checkbox"
+              ? Boolean(candidate.checked)
+              : candidate.getAttribute?.("aria-checked") === "true";
+          verified = checkedNow === desired;
+          actualReadback = String(checkedNow);
+        } else if (isRadio) {
+          const checkedNow =
+            candidate.type === "radio"
+              ? Boolean(candidate.checked)
+              : candidate.getAttribute?.("aria-checked") === "true";
+          verified = checkedNow === true;
+          actualReadback = String(checkedNow);
+        } else if (candidate.tagName === "SELECT") {
+          const selText = candidate.options?.[candidate.selectedIndex]?.text || "";
+          actualReadback = selText || candidate.value || "";
+          verified =
+            Boolean(candidate.value) &&
+            (normalize(candidate.value) === normalize(strVal) ||
+              normalize(selText).includes(normalize(strVal)) ||
+              candidate.value === strVal);
+        } else if (
+          candidate.getAttribute?.("role") === "combobox" ||
+          candidate.getAttribute?.("role") === "listbox"
+        ) {
+          const comboVal = candidate.value || candidate.innerText || candidate.textContent || "";
+          actualReadback = comboVal;
+          verified =
+            comboVal === strVal ||
+            comboVal.includes(strVal) ||
+            normalize(comboVal).includes(normalize(strVal));
+        } else {
+          const rawVerified = isCe
+            ? candidate.innerText || candidate.textContent || ""
+            : candidate.value || "";
+          const verifiedValue = String(rawVerified)
+            .replace(/\u200B/g, "")
+            .trim();
+          actualReadback = verifiedValue;
+          verified =
+            verifiedValue === strVal.trim() ||
+            verifiedValue.includes(strVal.trim()) ||
+            (normalize(strVal).length > 0 && normalize(verifiedValue).includes(normalize(strVal)));
+        }
+
+        const fieldLabel =
+          candidate.name ||
+          candidate.id ||
+          candidate.placeholder ||
+          candidate.getAttribute?.("aria-label") ||
+          key;
+        const maskedVal = check.isSensitive
+          ? /aadhaar|aadhar/i.test(`${key} ${candidate.name || ""} ${candidate.id || ""}`) &&
+            strVal.replace(/\D/g, "").length >= 4
+            ? `XXXX-XXXX-${strVal.replace(/\D/g, "").slice(-4)}`
+            : "••••••"
+          : strVal;
+
+        // Inspect HTML5 / ARIA / adjacent DOM validation feedback after blur
+        let validationError = "";
+        try {
+          if (typeof candidate.checkValidity === "function" && !candidate.checkValidity()) {
+            validationError = candidate.validationMessage || "Invalid field format.";
+          } else if (candidate.getAttribute?.("aria-invalid") === "true") {
+            validationError = candidate.validationMessage || "Field marked aria-invalid.";
+          } else {
+            const container =
+              candidate.closest?.("div, label, td, li, fieldset") || candidate.parentElement;
+            const adjErr = container?.querySelector?.(
+              '.error, .error-message, .invalid-feedback, [role="alert"]',
+            );
+            if (adjErr && isVisible(adjErr)) {
+              const errTxt = normalize(adjErr.innerText || adjErr.textContent || "");
+              if (errTxt && errTxt.length < 180) {
+                validationError = errTxt;
               }
             }
-          } catch {}
-
-          if (verified && validationError) {
-            verified = false;
           }
+        } catch {}
 
-          const fillSelector = getUniqueSelector(candidate);
-          if (verified) {
+        if (verified && validationError) {
+          verified = false;
+        }
+
+        const fillSelector = getUniqueSelector(candidate);
+        if (verified) {
             results.filled.push({
-              key,
-              field: fieldLabel,
-              selector: fillSelector,
-              value: maskedVal,
-              verified: true,
-              undoRecord: check.isSensitive
-                ? undefined
-                : {
-                    id: `undo_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
-                    selector: fillSelector,
-                    fieldLabel,
-                    previousValue: prevRawVal,
-                    newValue: maskedVal,
-                    capturedAt: new Date().toISOString(),
-                  },
-            });
-            successfullyFilled.push(candidate);
-          } else {
-            results.errors.push({
-              key,
-              field: fieldLabel,
-              selector: getUniqueSelector(candidate),
-              validationError: validationError || undefined,
-              error: validationError
-                ? `Field "${fieldLabel}" validation reported: ${validationError}`
-                : actualReadback
-                  ? `Field rejected or altered value (got "${check.isSensitive ? "••••••" : String(actualReadback).slice(0, 60)}")`
-                  : `Field "${fieldLabel}" rejected or cleared the value`,
-            });
-          }
-        } catch (err) {
-          results.errors.push({ key, error: String(err?.message || err) });
+            key,
+            field: fieldLabel,
+            selector: fillSelector,
+            value: maskedVal,
+            verified: true,
+            undoRecord: check.isSensitive
+              ? undefined
+              : {
+                  id: `undo_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+                  selector: fillSelector,
+                  fieldLabel,
+                  previousValue: prevRawVal,
+                  newValue: maskedVal,
+                  capturedAt: new Date().toISOString(),
+                },
+          });
+          successfullyFilled.push(candidate);
+        } else {
+          results.errors.push({
+            key,
+            field: fieldLabel,
+            selector: getUniqueSelector(candidate),
+            validationError: validationError || undefined,
+            error: validationError
+              ? `Field "${fieldLabel}" validation reported: ${validationError}`
+              : actualReadback
+                ? `Field rejected or altered value (got "${check.isSensitive ? "••••••" : String(actualReadback).slice(0, 60)}")`
+                : `Field "${fieldLabel}" rejected or cleared the value`,
+          });
+        }
+      } catch (err) {
+        results.errors.push({ key, error: String(err?.message || err) });
+      }
+    }
+
+    // Compute remaining unfilled interactable form fields in DOM order so step-by-step chat fill can continue naturally
+    try {
+      const visibleInteractables = elements.filter((el) => validateInteractability(el).ok);
+      const dedupedInteractables = visibleInteractables.filter(
+        (el) => !visibleInteractables.some((other) => other !== el && el.contains?.(other)),
+      );
+      const targetFormScope = successfullyFilled[0]?.closest?.("form") || null;
+      const remaining = [];
+      for (const el of dedupedInteractables) {
+        if (targetFormScope && !targetFormScope.contains(el)) continue;
+        if (el.type === "submit" || el.type === "button" || el.type === "reset") continue;
+        const isCb =
+          el.type === "checkbox" ||
+          el.type === "radio" ||
+          el.getAttribute?.("role") === "checkbox" ||
+          el.getAttribute?.("role") === "radio";
+        const curEmpty = isCb
+          ? !(el.checked || el.getAttribute?.("aria-checked") === "true")
+          : isContentEditableEl(el)
+            ? !String(el.innerText || el.textContent || "").replace(/[\u200B\s]/g, "")
+            : !String(el.value || "").trim();
+        if (curEmpty && !successfullyFilled.includes(el)) {
+          remaining.push({
+            index: remaining.length + 1,
+            label: getFieldDisplayLabel(el),
+            selector: getUniqueSelector(el),
+            name: el.name || el.id || "",
+            type: el.type || el.tagName.toLowerCase(),
+            required: Boolean(el.required || el.getAttribute?.("aria-required") === "true"),
+          });
+        }
+      }
+      results.remainingFields = remaining.slice(0, 20);
+    } catch {
+      results.remainingFields = [];
+    }
+
+    // 4. Detect Submit Trigger for explicit confirmation gate
+    if (successfullyFilled.length > 0 && !opts?.noSubmitPrompt) {
+      for (const el of successfullyFilled) {
+        const form = el.closest?.("form");
+        const btn = form
+          ? form.querySelector(
+              'button[type="submit"], input[type="submit"], button:not([type="button"])',
+            )
+          : null;
+        if (btn) {
+          results.pendingSubmission = {
+            submitButtonSelector: btn.id
+              ? `#${CSS.escape(btn.id)}`
+              : form?.id
+                ? `#${CSS.escape(form.id)} button[type="submit"]`
+                : 'button[type="submit"]',
+            submitButtonText: btn.innerText || btn.value || "Submit Form",
+            formSelector: form?.id ? `#${CSS.escape(form.id)}` : undefined,
+          };
+          break;
         }
       }
 
-      // Compute remaining unfilled interactable form fields in DOM order so step-by-step chat fill can continue naturally
-      try {
-        const visibleInteractables = elements.filter((el) => validateInteractability(el).ok);
-        const dedupedInteractables = visibleInteractables.filter(
-          (el) => !visibleInteractables.some((other) => other !== el && el.contains?.(other)),
-        );
-        const targetFormScope = successfullyFilled[0]?.closest?.("form") || null;
-        const remaining = [];
-        for (const el of dedupedInteractables) {
-          if (targetFormScope && !targetFormScope.contains(el)) continue;
-          if (el.type === "submit" || el.type === "button" || el.type === "reset") continue;
-          const isCb =
-            el.type === "checkbox" ||
-            el.type === "radio" ||
-            el.getAttribute?.("role") === "checkbox" ||
-            el.getAttribute?.("role") === "radio";
-          const curEmpty = isCb
-            ? !(el.checked || el.getAttribute?.("aria-checked") === "true")
-            : isContentEditableEl(el)
-              ? !String(el.innerText || el.textContent || "").replace(/[\u200B\s]/g, "")
-              : !String(el.value || "").trim();
-          if (curEmpty && !successfullyFilled.includes(el)) {
-            remaining.push({
-              index: remaining.length + 1,
-              label: getFieldDisplayLabel(el),
-              selector: getUniqueSelector(el),
-              name: el.name || el.id || "",
-              type: el.type || el.tagName.toLowerCase(),
-              required: Boolean(el.required || el.getAttribute?.("aria-required") === "true"),
-            });
-          }
-        }
-        results.remainingFields = remaining.slice(0, 20);
-      } catch {
-        results.remainingFields = [];
-      }
-
-      // 4. Detect Submit Trigger for explicit confirmation gate
-      if (successfullyFilled.length > 0 && !opts?.noSubmitPrompt) {
-        for (const el of successfullyFilled) {
-          const form = el.closest?.("form");
-          const btn = form
-            ? form.querySelector(
-                'button[type="submit"], input[type="submit"], button:not([type="button"])',
-              )
-            : null;
-          if (btn) {
+      if (!results.pendingSubmission) {
+        const candidates = [...document.querySelectorAll('button, input[type="submit"]')];
+        for (const btn of candidates) {
+          const text = btn.innerText || btn.value || "";
+          if (SUBMIT_PATTERN.test(text) || btn.type === "submit") {
             results.pendingSubmission = {
-              submitButtonSelector: btn.id
-                ? `#${CSS.escape(btn.id)}`
-                : form?.id
-                  ? `#${CSS.escape(form.id)} button[type="submit"]`
-                  : 'button[type="submit"]',
-              submitButtonText: btn.innerText || btn.value || "Submit Form",
-              formSelector: form?.id ? `#${CSS.escape(form.id)}` : undefined,
+              submitButtonSelector: btn.id ? `#${CSS.escape(btn.id)}` : undefined,
+              submitButtonText: text.trim() || "Submit",
             };
             break;
           }
         }
-
-        if (!results.pendingSubmission) {
-          const candidates = [...document.querySelectorAll('button, input[type="submit"]')];
-          for (const btn of candidates) {
-            const text = btn.innerText || btn.value || "";
-            if (SUBMIT_PATTERN.test(text) || btn.type === "submit") {
-              results.pendingSubmission = {
-                submitButtonSelector: btn.id ? `#${CSS.escape(btn.id)}` : undefined,
-                submitButtonText: text.trim() || "Submit",
-              };
-              break;
-            }
-          }
-        }
       }
+    }
 
-      return { ok: true, results };
+    return { ok: true, results };
   };
 
   const mainRun = await runTabScript({
@@ -4619,7 +4929,11 @@ async function smartFillForm(fields, options = {}) {
     let subFieldsArg = fields;
     let subOptionsArg = options;
 
-    if (mainResult.ok && (topFilledCount > 0 || topPreservedCount > 0) && topSkippedMissing.length > 0) {
+    if (
+      mainResult.ok &&
+      (topFilledCount > 0 || topPreservedCount > 0) &&
+      topSkippedMissing.length > 0
+    ) {
       const missingKeySet = new Set(topSkippedMissing.map((s) => s.key));
       if (Array.isArray(options?.explicitPairs)) {
         const filteredPairs = options.explicitPairs.filter((p) =>
@@ -4648,7 +4962,8 @@ async function smartFillForm(fields, options = {}) {
       (r) =>
         r.frameId !== 0 &&
         r.result?.ok &&
-        ((r.result.results?.filled?.length || 0) > 0 || (r.result.results?.preserved?.length || 0) > 0),
+        ((r.result.results?.filled?.length || 0) > 0 ||
+          (r.result.results?.preserved?.length || 0) > 0),
     );
 
     if (subMatches.length > 0) {
@@ -4691,354 +5006,415 @@ async function findContentOnPage(query, options = {}) {
   }
 
   const findFrameFunc = (searchQuery, opts) => {
-      if (!searchQuery || !searchQuery.trim()) {
-        return { ok: false, message: "Empty search query provided." };
-      }
-      const q = searchQuery.trim().toLowerCase();
-      const normalize = (t) => (t || "").replace(/\s+/g, " ").trim();
+    if (!searchQuery || !searchQuery.trim()) {
+      return { ok: false, message: "Empty search query provided." };
+    }
+    const q = searchQuery.trim().toLowerCase();
+    const normalize = (t) => (t || "").replace(/\s+/g, " ").trim();
 
-      const queryAllDeep = (selector, root = document) => {
-        const out = [...root.querySelectorAll(selector)];
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-        let node;
-        while ((node = walker.nextNode())) {
-          if (node.shadowRoot) {
-            out.push(...queryAllDeep(selector, node.shadowRoot));
-          }
+    const queryAllDeep = (selector, root = document) => {
+      const out = [...root.querySelectorAll(selector)];
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+      let node;
+      while ((node = walker.nextNode())) {
+        if (node.shadowRoot) {
+          out.push(...queryAllDeep(selector, node.shadowRoot));
         }
-        return out;
-      };
+      }
+      return out;
+    };
 
-      const getSelector = (el) => {
-        const safeQsaCount = (root, s) => {
-          try {
-            return (root.querySelectorAll ? root.querySelectorAll(s) : document.querySelectorAll(s)).length;
-          } catch {
-            return 0;
-          }
-        };
-        const buildLocalSel = (target, elRoot) => {
-          if (target.id && safeQsaCount(elRoot, `#${CSS.escape(target.id)}`) === 1) {
-            return `#${CSS.escape(target.id)}`;
-          }
-          const parts = [];
-          let cur = target;
-          while (cur && cur.nodeType === 1 && cur !== elRoot && parts.length < 5) {
-            let p = cur.tagName.toLowerCase();
-            if (cur.id && safeQsaCount(elRoot, `#${CSS.escape(cur.id)}`) === 1) {
-              parts.unshift(`#${CSS.escape(cur.id)}`);
-              break;
-            }
-            const parent = cur.parentElement;
-            if (parent) {
-              const same = [...parent.children].filter((c) => c.tagName === cur.tagName);
-              if (same.length > 1) {
-                p += `:nth-of-type(${same.indexOf(cur) + 1})`;
-              }
-            }
-            parts.unshift(p);
-            cur = parent;
-          }
-          return parts.join(" > ");
-        };
-        const chain = [];
-        let curNode = el;
-        while (curNode && curNode.nodeType === 1) {
-          const elRoot = curNode.getRootNode?.() || document;
-          chain.unshift(buildLocalSel(curNode, elRoot));
-          if (elRoot && elRoot !== document && elRoot.host) {
-            curNode = elRoot.host;
-          } else {
+    const getSelector = (el) => {
+      const safeQsaCount = (root, s) => {
+        try {
+          return (root.querySelectorAll ? root.querySelectorAll(s) : document.querySelectorAll(s))
+            .length;
+        } catch {
+          return 0;
+        }
+      };
+      const buildLocalSel = (target, elRoot) => {
+        if (target.id && safeQsaCount(elRoot, `#${CSS.escape(target.id)}`) === 1) {
+          return `#${CSS.escape(target.id)}`;
+        }
+        const parts = [];
+        let cur = target;
+        while (cur && cur.nodeType === 1 && cur !== elRoot && parts.length < 5) {
+          let p = cur.tagName.toLowerCase();
+          if (cur.id && safeQsaCount(elRoot, `#${CSS.escape(cur.id)}`) === 1) {
+            parts.unshift(`#${CSS.escape(cur.id)}`);
             break;
           }
-        }
-        return chain.join(" >>> ");
-      };
-
-      const isVisible = (el) => {
-        if (!el || el.nodeType !== 1) return false;
-        const r = el.getBoundingClientRect();
-        const s = window.getComputedStyle(el);
-        return (
-          (r.width > 0 || r.height > 0 || el.getClientRects().length > 0) &&
-          s.visibility !== "hidden" &&
-          s.display !== "none" &&
-          s.opacity !== "0"
-        );
-      };
-
-      const getElementSearchText = (el) => {
-        const root = el.getRootNode?.() || document;
-        const parts = [
-          el.innerText,
-          el.textContent,
-          el.getAttribute?.("placeholder"),
-          el.getAttribute?.("data-placeholder"),
-          el.getAttribute?.("aria-label"),
-          el.getAttribute?.("title"),
-          el.getAttribute?.("alt"),
-          el.getAttribute?.("name"),
-          el.querySelector?.("img[alt]")?.getAttribute("alt"),
-          el.querySelector?.("svg title")?.textContent,
-          el.value,
-        ];
-        const labelledby = el.getAttribute?.("aria-labelledby");
-        if (labelledby) {
-          for (const lid of labelledby.split(/\s+/)) {
-            const le = root.getElementById?.(lid) || document.getElementById(lid);
-            if (le?.innerText) parts.push(le.innerText);
-          }
-        }
-        if (el.id) {
-          try {
-            const l =
-              root.querySelector?.(`label[for="${CSS.escape(el.id)}"]`) ||
-              document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-            if (l?.innerText) parts.push(l.innerText);
-          } catch {}
-        }
-        return normalize(parts.filter(Boolean).join(" ").replace(/[-_]+/g, " ")).toLowerCase();
-      };
-
-      const STOPWORDS = [
-        "tab", "button", "link", "section", "menu", "option", "icon", "bar", "field", "box", "input",
-        "the", "a", "an", "this", "that", "it", "and", "or", "to", "at", "on", "in", "of", "for",
-        "is", "was", "find", "locate", "show", "where", "please", "pls",
-        "par", "pe", "mein", "me", "ko", "ka", "ki", "ke",
-        "khaa", "kha", "hai", "hain", "kahan", "kidhar", "kaha", "buddy", "point", "highlight", "karo",
-      ];
-      const rawTokens = q
-        .replace(/[-_]+/g, " ")
-        .replace(/[^a-z0-9\s]/g, " ")
-        .split(/\s+/)
-        .filter((t) => t.length > 1 && !STOPWORDS.includes(t));
-
-      const effectiveQuery = rawTokens.length > 0 ? rawTokens.join(" ") : q;
-
-      const tokenMatchesText = (text, tok) => {
-        if (tok.length <= 2) {
-          const esc = tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          return new RegExp(`(?:^|\\b|\\s)${esc}(?:\\b|\\s|$)`, "i").test(text);
-        }
-        if (text.includes(tok)) return true;
-        if (tok.endsWith("s") && tok.length > 3 && text.includes(tok.slice(0, -1))) return true;
-        if (!tok.endsWith("s") && text.includes(`${tok}s`)) return true;
-        return false;
-      };
-
-      const isFullMatch = (text) => {
-        if (text.includes(effectiveQuery) || text.includes(q)) return true;
-        if (rawTokens.length > 1) {
-          return rawTokens.every((tok) => tokenMatchesText(text, tok));
-        }
-        return rawTokens.length === 1 && tokenMatchesText(text, rawTokens[0]);
-      };
-
-      const rawCandidates = queryAllDeep(
-        "input, textarea, select, [contenteditable='true'], [contenteditable=''], [role=textbox], [role=searchbox], [role=combobox], [role=checkbox], [role=radio], button, a, [role=button], [role=tab], [role=link], label, p, span, h1, h2, h3, h4, h5, h6, li, td, th, [role=cell], [role=row], div.badge, div.tag, div.chip, div[aria-label], div[data-placeholder]",
-      ).filter((el) => {
-        if (!isVisible(el)) return false;
-        if (el.closest?.("#ai-buddy-arm-overlay")) return false;
-        const text = getElementSearchText(el);
-        if (!text) return false;
-        if (isFullMatch(text)) return true;
-        if (rawTokens.length > 0) {
-          return rawTokens.some((tok) => tokenMatchesText(text, tok));
-        }
-        return false;
-      });
-
-      const fullMatches = rawCandidates.filter((el) => isFullMatch(getElementSearchText(el)));
-      const allTokensMatched = fullMatches.length > 0;
-      const candidates = allTokensMatched ? fullMatches : rawCandidates;
-
-      // Keep specific interactive/form/leaf nodes instead of huge ancestor wrappers
-      const leafCandidates = candidates.filter((el) => {
-        const isFormOrCtrl =
-          el.tagName === "INPUT" ||
-          el.tagName === "TEXTAREA" ||
-          el.tagName === "SELECT" ||
-          el.tagName === "BUTTON" ||
-          el.tagName === "A" ||
-          el.getAttribute?.("role") === "tab" ||
-          el.getAttribute?.("role") === "button" ||
-          el.getAttribute?.("role") === "textbox";
-        if (isFormOrCtrl) return true;
-        const hasMatchingChild = candidates.some((other) => other !== el && el.contains(other));
-        return !hasMatchingChild || el.children.length === 0;
-      });
-
-      const wantsSearchInput = /\bsearch\s*(?:box|bar|input|field)\b/i.test(searchQuery);
-      const isSearchInputEl = (el) => {
-        if (!el) return false;
-        const role = el.getAttribute?.("role") || "";
-        const isEditable =
-          el.tagName === "INPUT" ||
-          el.tagName === "TEXTAREA" ||
-          role === "searchbox" ||
-          role === "textbox" ||
-          role === "combobox";
-        if (!isEditable || el.type === "submit" || el.type === "button" || el.type === "hidden") {
-          return false;
-        }
-        const meta = `${el.type || ""} ${el.name || ""} ${el.id || ""} ${el.getAttribute?.("placeholder") || ""} ${el.getAttribute?.("aria-label") || ""}`.toLowerCase();
-        return el.type === "search" || role === "searchbox" || meta.includes("search") || meta.includes("query");
-      };
-
-      // Score and sort candidates
-      const scoreEl = (el) => {
-        const text = getElementSearchText(el);
-        let s = 0;
-        if (text === effectiveQuery || text === q) s += 100;
-        if (text.includes(effectiveQuery) || text.includes(q)) s += 50;
-        if (text.startsWith(effectiveQuery)) s += 30;
-        for (const tok of rawTokens) {
-          if (tokenMatchesText(text, tok)) s += 15;
-        }
-        if (["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A"].includes(el.tagName)) s += 20;
-        if (["textbox", "button", "tab", "combobox", "searchbox"].includes(el.getAttribute?.("role"))) s += 15;
-        if (wantsSearchInput) {
-          if (isSearchInputEl(el)) s += 120;
-          else if (el.tagName === "BUTTON" || el.type === "submit") s -= 80;
-        }
-        s -= Math.min(40, Math.floor(text.length / 20));
-        return s;
-      };
-
-      const filteredCandidates = wantsSearchInput
-        ? (() => {
-            const onlyInputs = leafCandidates.filter(isSearchInputEl);
-            if (onlyInputs.length > 0) return onlyInputs;
-            const deepSearchInputs = queryAllDeep(
-              'input[type="search"], [role="searchbox"], input[placeholder*="search" i], input[name*="search" i], input[aria-label*="search" i], input[id*="search" i]',
-            ).filter(isVisible);
-            return deepSearchInputs.length > 0 ? deepSearchInputs : leafCandidates;
-          })()
-        : leafCandidates;
-
-      filteredCandidates.sort((a, b) => scoreEl(b) - scoreEl(a));
-      const finalPool = filteredCandidates;
-
-      const topCandidateScore = finalPool[0] ? scoreEl(finalPool[0]) : 0;
-      const tiedCandidates = finalPool.filter((el, idx) => {
-        if (idx === 0) return true;
-        const sc = scoreEl(el);
-        return sc >= topCandidateScore - 2 && !finalPool[0].contains(el) && !el.contains(finalPool[0]);
-      });
-
-      const getContextLabel = (el) => {
-        const container = el.closest?.(
-          '[role="dialog"], section, article, aside, nav, header, footer, main, form, fieldset, tr, [role="row"], .card, [class*="card"], [class*="modal"]',
-        );
-        if (container) {
-          const aria = container.getAttribute?.("aria-label");
-          if (aria) return normalize(aria).slice(0, 45);
-          const heading = container.querySelector?.("h1, h2, h3, h4, legend, caption, [role='heading']");
-          if (heading?.innerText) return normalize(heading.innerText).slice(0, 45);
-          if (container.tagName === "NAV" || container.tagName === "HEADER") return "Top navigation";
-          if (container.tagName === "FOOTER") return "Footer section";
-          if (container.tagName === "ASIDE") return "Sidebar";
-          if (container.tagName === "TR" || container.getAttribute?.("role") === "row") {
-            const rowTxt = normalize(container.innerText || "").slice(0, 40);
-            if (rowTxt) return `Row: ${rowTxt}`;
-          }
-          if (container.id) return container.id.replace(/[-_]+/g, " ").slice(0, 35);
-        }
-        return "";
-      };
-
-      const matches = finalPool.slice(0, 30).map((el, idx) => {
-        const fullText = normalize(
-          el.innerText ||
-            el.getAttribute?.("placeholder") ||
-            el.getAttribute?.("aria-label") ||
-            el.name ||
-            el.textContent ||
-            "",
-        );
-        let matchIdx = fullText.toLowerCase().indexOf(effectiveQuery);
-        if (matchIdx === -1 && rawTokens.length > 0) {
-          for (const tok of rawTokens) {
-            matchIdx = fullText.toLowerCase().indexOf(tok);
-            if (matchIdx !== -1) break;
-          }
-        }
-        if (matchIdx === -1) matchIdx = 0;
-        const start = Math.max(0, matchIdx - 30);
-        const end = Math.min(fullText.length, matchIdx + effectiveQuery.length + 30);
-        const snippet =
-          (start > 0 ? "…" : "") + fullText.slice(start, end) + (end < fullText.length ? "…" : "");
-
-        return {
-          index: idx + 1,
-          tag: el.tagName.toLowerCase(),
-          selector: getSelector(el),
-          context: getContextLabel(el),
-          textSnippet: snippet,
-          fullText: fullText.slice(0, 200),
-          isClickable:
-            el.tagName === "BUTTON" ||
-            el.tagName === "A" ||
-            el.getAttribute?.("role") === "button" ||
-            Boolean(el.closest?.("button, a")),
-        };
-      });
-
-      if (matches.length === 0) {
-        return {
-          ok: true,
-          query: searchQuery,
-          totalMatches: 0,
-          matches: [],
-          message: `No content matching "${searchQuery}" was found in the visible page structure.`,
-        };
-      }
-
-      const targetIdx = typeof opts?.targetIndex === "number" ? opts.targetIndex : 0;
-      const isAmbiguousFind = tiedCandidates.length > 1 && typeof opts?.targetIndex !== "number";
-      const targetMatch = matches[targetIdx] || matches[0];
-      let scrolled = false;
-
-      if (opts?.scroll !== false && !isAmbiguousFind && finalPool[targetIdx || 0]) {
-        const targetEl = finalPool[targetIdx || 0];
-
-        let parent = targetEl.parentElement;
-        while (parent && parent !== document.body && parent !== document.documentElement) {
-          const cs = window.getComputedStyle(parent);
-          if (cs.overflowY === "auto" || cs.overflowY === "scroll") {
-            if (parent.scrollHeight > parent.clientHeight + 20) {
-              const elRect = targetEl.getBoundingClientRect();
-              const pRect = parent.getBoundingClientRect();
-              parent.scrollBy({
-                top: elRect.top - pRect.top - parent.clientHeight / 2 + elRect.height / 2,
-                behavior: "smooth",
-              });
-              break;
+          const parent = cur.parentElement;
+          if (parent) {
+            const same = [...parent.children].filter((c) => c.tagName === cur.tagName);
+            if (same.length > 1) {
+              p += `:nth-of-type(${same.indexOf(cur) + 1})`;
             }
           }
-          parent = parent.parentElement;
+          parts.unshift(p);
+          cur = parent;
         }
-
-        targetEl.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
-        scrolled = true;
+        return parts.join(" > ");
+      };
+      const chain = [];
+      let curNode = el;
+      while (curNode && curNode.nodeType === 1) {
+        const elRoot = curNode.getRootNode?.() || document;
+        chain.unshift(buildLocalSel(curNode, elRoot));
+        if (elRoot && elRoot !== document && elRoot.host) {
+          curNode = elRoot.host;
+        } else {
+          break;
+        }
       }
+      return chain.join(" >>> ");
+    };
 
+    const isVisible = (el) => {
+      if (!el || el.nodeType !== 1) return false;
+      const r = el.getBoundingClientRect();
+      const s = window.getComputedStyle(el);
+      return (
+        (r.width > 0 || r.height > 0 || el.getClientRects().length > 0) &&
+        s.visibility !== "hidden" &&
+        s.display !== "none" &&
+        s.opacity !== "0"
+      );
+    };
+
+    const getElementSearchText = (el) => {
+      const root = el.getRootNode?.() || document;
+      const parts = [
+        el.innerText,
+        el.textContent,
+        el.getAttribute?.("placeholder"),
+        el.getAttribute?.("data-placeholder"),
+        el.getAttribute?.("aria-label"),
+        el.getAttribute?.("title"),
+        el.getAttribute?.("alt"),
+        el.getAttribute?.("name"),
+        el.querySelector?.("img[alt]")?.getAttribute("alt"),
+        el.querySelector?.("svg title")?.textContent,
+        el.value,
+      ];
+      const labelledby = el.getAttribute?.("aria-labelledby");
+      if (labelledby) {
+        for (const lid of labelledby.split(/\s+/)) {
+          const le = root.getElementById?.(lid) || document.getElementById(lid);
+          if (le?.innerText) parts.push(le.innerText);
+        }
+      }
+      if (el.id) {
+        try {
+          const l =
+            root.querySelector?.(`label[for="${CSS.escape(el.id)}"]`) ||
+            document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+          if (l?.innerText) parts.push(l.innerText);
+        } catch {}
+      }
+      return normalize(parts.filter(Boolean).join(" ").replace(/[-_]+/g, " ")).toLowerCase();
+    };
+
+    const STOPWORDS = [
+      "tab",
+      "button",
+      "link",
+      "section",
+      "menu",
+      "option",
+      "icon",
+      "bar",
+      "field",
+      "box",
+      "input",
+      "the",
+      "a",
+      "an",
+      "this",
+      "that",
+      "it",
+      "and",
+      "or",
+      "to",
+      "at",
+      "on",
+      "in",
+      "of",
+      "for",
+      "is",
+      "was",
+      "find",
+      "locate",
+      "show",
+      "where",
+      "please",
+      "pls",
+      "par",
+      "pe",
+      "mein",
+      "me",
+      "ko",
+      "ka",
+      "ki",
+      "ke",
+      "khaa",
+      "kha",
+      "hai",
+      "hain",
+      "kahan",
+      "kidhar",
+      "kaha",
+      "buddy",
+      "point",
+      "highlight",
+      "karo",
+    ];
+    const rawTokens = q
+      .replace(/[-_]+/g, " ")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((t) => t.length > 1 && !STOPWORDS.includes(t));
+
+    const effectiveQuery = rawTokens.length > 0 ? rawTokens.join(" ") : q;
+
+    const tokenMatchesText = (text, tok) => {
+      if (tok.length <= 2) {
+        const esc = tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return new RegExp(`(?:^|\\b|\\s)${esc}(?:\\b|\\s|$)`, "i").test(text);
+      }
+      if (text.includes(tok)) return true;
+      if (tok.endsWith("s") && tok.length > 3 && text.includes(tok.slice(0, -1))) return true;
+      if (!tok.endsWith("s") && text.includes(`${tok}s`)) return true;
+      return false;
+    };
+
+    const isFullMatch = (text) => {
+      if (text.includes(effectiveQuery) || text.includes(q)) return true;
+      if (rawTokens.length > 1) {
+        return rawTokens.every((tok) => tokenMatchesText(text, tok));
+      }
+      return rawTokens.length === 1 && tokenMatchesText(text, rawTokens[0]);
+    };
+
+    const rawCandidates = queryAllDeep(
+      "input, textarea, select, [contenteditable='true'], [contenteditable=''], [role=textbox], [role=searchbox], [role=combobox], [role=checkbox], [role=radio], button, a, [role=button], [role=tab], [role=link], label, p, span, h1, h2, h3, h4, h5, h6, li, td, th, [role=cell], [role=row], div.badge, div.tag, div.chip, div[aria-label], div[data-placeholder]",
+    ).filter((el) => {
+      if (!isVisible(el)) return false;
+      if (el.closest?.("#ai-buddy-arm-overlay")) return false;
+      const text = getElementSearchText(el);
+      if (!text) return false;
+      if (isFullMatch(text)) return true;
+      if (rawTokens.length > 0) {
+        return rawTokens.some((tok) => tokenMatchesText(text, tok));
+      }
+      return false;
+    });
+
+    const fullMatches = rawCandidates.filter((el) => isFullMatch(getElementSearchText(el)));
+    const allTokensMatched = fullMatches.length > 0;
+    const candidates = allTokensMatched ? fullMatches : rawCandidates;
+
+    // Keep specific interactive/form/leaf nodes instead of huge ancestor wrappers
+    const leafCandidates = candidates.filter((el) => {
+      const isFormOrCtrl =
+        el.tagName === "INPUT" ||
+        el.tagName === "TEXTAREA" ||
+        el.tagName === "SELECT" ||
+        el.tagName === "BUTTON" ||
+        el.tagName === "A" ||
+        el.getAttribute?.("role") === "tab" ||
+        el.getAttribute?.("role") === "button" ||
+        el.getAttribute?.("role") === "textbox";
+      if (isFormOrCtrl) return true;
+      const hasMatchingChild = candidates.some((other) => other !== el && el.contains(other));
+      return !hasMatchingChild || el.children.length === 0;
+    });
+
+    const wantsSearchInput = /\bsearch\s*(?:box|bar|input|field)\b/i.test(searchQuery);
+    const isSearchInputEl = (el) => {
+      if (!el) return false;
+      const role = el.getAttribute?.("role") || "";
+      const isEditable =
+        el.tagName === "INPUT" ||
+        el.tagName === "TEXTAREA" ||
+        role === "searchbox" ||
+        role === "textbox" ||
+        role === "combobox";
+      if (!isEditable || el.type === "submit" || el.type === "button" || el.type === "hidden") {
+        return false;
+      }
+      const meta =
+        `${el.type || ""} ${el.name || ""} ${el.id || ""} ${el.getAttribute?.("placeholder") || ""} ${el.getAttribute?.("aria-label") || ""}`.toLowerCase();
+      return (
+        el.type === "search" ||
+        role === "searchbox" ||
+        meta.includes("search") ||
+        meta.includes("query")
+      );
+    };
+
+    // Score and sort candidates
+    const scoreEl = (el) => {
+      const text = getElementSearchText(el);
+      let s = 0;
+      if (text === effectiveQuery || text === q) s += 100;
+      if (text.includes(effectiveQuery) || text.includes(q)) s += 50;
+      if (text.startsWith(effectiveQuery)) s += 30;
+      for (const tok of rawTokens) {
+        if (tokenMatchesText(text, tok)) s += 15;
+      }
+      if (["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A"].includes(el.tagName)) s += 20;
+      if (["textbox", "button", "tab", "combobox", "searchbox"].includes(el.getAttribute?.("role")))
+        s += 15;
+      if (wantsSearchInput) {
+        if (isSearchInputEl(el)) s += 120;
+        else if (el.tagName === "BUTTON" || el.type === "submit") s -= 80;
+      }
+      s -= Math.min(40, Math.floor(text.length / 20));
+      return s;
+    };
+
+    const filteredCandidates = wantsSearchInput
+      ? (() => {
+          const onlyInputs = leafCandidates.filter(isSearchInputEl);
+          if (onlyInputs.length > 0) return onlyInputs;
+          const deepSearchInputs = queryAllDeep(
+            'input[type="search"], [role="searchbox"], input[placeholder*="search" i], input[name*="search" i], input[aria-label*="search" i], input[id*="search" i]',
+          ).filter(isVisible);
+          return deepSearchInputs.length > 0 ? deepSearchInputs : leafCandidates;
+        })()
+      : leafCandidates;
+
+    filteredCandidates.sort((a, b) => scoreEl(b) - scoreEl(a));
+    const finalPool = filteredCandidates;
+
+    const topCandidateScore = finalPool[0] ? scoreEl(finalPool[0]) : 0;
+    const tiedCandidates = finalPool.filter((el, idx) => {
+      if (idx === 0) return true;
+      const sc = scoreEl(el);
+      return (
+        sc >= topCandidateScore - 2 && !finalPool[0].contains(el) && !el.contains(finalPool[0])
+      );
+    });
+
+    const getContextLabel = (el) => {
+      const container = el.closest?.(
+        '[role="dialog"], section, article, aside, nav, header, footer, main, form, fieldset, tr, [role="row"], .card, [class*="card"], [class*="modal"]',
+      );
+      if (container) {
+        const aria = container.getAttribute?.("aria-label");
+        if (aria) return normalize(aria).slice(0, 45);
+        const heading = container.querySelector?.(
+          "h1, h2, h3, h4, legend, caption, [role='heading']",
+        );
+        if (heading?.innerText) return normalize(heading.innerText).slice(0, 45);
+        if (container.tagName === "NAV" || container.tagName === "HEADER") return "Top navigation";
+        if (container.tagName === "FOOTER") return "Footer section";
+        if (container.tagName === "ASIDE") return "Sidebar";
+        if (container.tagName === "TR" || container.getAttribute?.("role") === "row") {
+          const rowTxt = normalize(container.innerText || "").slice(0, 40);
+          if (rowTxt) return `Row: ${rowTxt}`;
+        }
+        if (container.id) return container.id.replace(/[-_]+/g, " ").slice(0, 35);
+      }
+      return "";
+    };
+
+    const matches = finalPool.slice(0, 30).map((el, idx) => {
+      const fullText = normalize(
+        el.innerText ||
+          el.getAttribute?.("placeholder") ||
+          el.getAttribute?.("aria-label") ||
+          el.name ||
+          el.textContent ||
+          "",
+      );
+      let matchIdx = fullText.toLowerCase().indexOf(effectiveQuery);
+      if (matchIdx === -1 && rawTokens.length > 0) {
+        for (const tok of rawTokens) {
+          matchIdx = fullText.toLowerCase().indexOf(tok);
+          if (matchIdx !== -1) break;
+        }
+      }
+      if (matchIdx === -1) matchIdx = 0;
+      const start = Math.max(0, matchIdx - 30);
+      const end = Math.min(fullText.length, matchIdx + effectiveQuery.length + 30);
+      const snippet =
+        (start > 0 ? "…" : "") + fullText.slice(start, end) + (end < fullText.length ? "…" : "");
+
+      return {
+        index: idx + 1,
+        tag: el.tagName.toLowerCase(),
+        selector: getSelector(el),
+        context: getContextLabel(el),
+        textSnippet: snippet,
+        fullText: fullText.slice(0, 200),
+        isClickable:
+          el.tagName === "BUTTON" ||
+          el.tagName === "A" ||
+          el.getAttribute?.("role") === "button" ||
+          Boolean(el.closest?.("button, a")),
+      };
+    });
+
+    if (matches.length === 0) {
       return {
         ok: true,
         query: searchQuery,
-        totalMatches: matches.length,
-        ambiguous: isAmbiguousFind,
-        ambiguousCandidates: isAmbiguousFind ? matches.slice(0, tiedCandidates.length).slice(0, 6) : undefined,
-        allTokensMatched,
-        topScore: topCandidateScore,
-        matches,
-        targetMatch,
-        firstSelector: targetMatch?.selector,
-        scrolled,
-        message: isAmbiguousFind
-          ? `Found ${tiedCandidates.length} equally matching elements for "${searchQuery}".`
-          : `Found ${matches.length} match${matches.length > 1 ? "es" : ""} for "${searchQuery}".`,
+        totalMatches: 0,
+        matches: [],
+        message: `No content matching "${searchQuery}" was found in the visible page structure.`,
       };
+    }
+
+    const targetIdx = typeof opts?.targetIndex === "number" ? opts.targetIndex : 0;
+    const isAmbiguousFind = tiedCandidates.length > 1 && typeof opts?.targetIndex !== "number";
+    const targetMatch = matches[targetIdx] || matches[0];
+    let scrolled = false;
+
+    if (opts?.scroll !== false && !isAmbiguousFind && finalPool[targetIdx || 0]) {
+      const targetEl = finalPool[targetIdx || 0];
+
+      let parent = targetEl.parentElement;
+      while (parent && parent !== document.body && parent !== document.documentElement) {
+        const cs = window.getComputedStyle(parent);
+        if (cs.overflowY === "auto" || cs.overflowY === "scroll") {
+          if (parent.scrollHeight > parent.clientHeight + 20) {
+            const elRect = targetEl.getBoundingClientRect();
+            const pRect = parent.getBoundingClientRect();
+            parent.scrollBy({
+              top: elRect.top - pRect.top - parent.clientHeight / 2 + elRect.height / 2,
+              behavior: "smooth",
+            });
+            break;
+          }
+        }
+        parent = parent.parentElement;
+      }
+
+      targetEl.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      scrolled = true;
+    }
+
+    return {
+      ok: true,
+      query: searchQuery,
+      totalMatches: matches.length,
+      ambiguous: isAmbiguousFind,
+      ambiguousCandidates: isAmbiguousFind
+        ? matches.slice(0, tiedCandidates.length).slice(0, 6)
+        : undefined,
+      allTokensMatched,
+      topScore: topCandidateScore,
+      matches,
+      targetMatch,
+      firstSelector: targetMatch?.selector,
+      scrolled,
+      message: isAmbiguousFind
+        ? `Found ${tiedCandidates.length} equally matching elements for "${searchQuery}".`
+        : `Found ${matches.length} match${matches.length > 1 ? "es" : ""} for "${searchQuery}".`,
+    };
   };
 
   const findRun = await runTabScript({
@@ -5091,7 +5467,8 @@ async function findContentOnPage(query, options = {}) {
       hlRes = await highlightElement(
         result.firstSelector,
         options?.title || `Pointing: ${query}`,
-        result.matches?.[0]?.textSnippet || `Found ${result.totalMatches} match(es) for "${query}".`,
+        result.matches?.[0]?.textSnippet ||
+          `Found ${result.totalMatches} match(es) for "${query}".`,
         options?.buddyVisual,
         0,
       );
@@ -5102,7 +5479,8 @@ async function findContentOnPage(query, options = {}) {
         args: [
           result.firstSelector,
           options?.title || `Pointing: ${query}`,
-          result.matches?.[0]?.textSnippet || `Found ${result.totalMatches} match(es) for "${query}".`,
+          result.matches?.[0]?.textSnippet ||
+            `Found ${result.totalMatches} match(es) for "${query}".`,
           options?.buddyVisual || {},
         ],
         label: "findContent:subframeHighlight",
@@ -5126,2019 +5504,2397 @@ async function executeAction(action, selector, value, options = {}) {
   }
 
   const executeFrameFunc = async (act, sel, val, opts) => {
-      if (opts?.skipTopFrame && window === window.top) {
-        return { ok: false, skippedTopFrame: true };
+    if (opts?.skipTopFrame && window === window.top) {
+      return { ok: false, skippedTopFrame: true };
+    }
+    const normalize = (t) => (t || "").replace(/\s+/g, " ").trim();
+    const SENSITIVE =
+      /pass(?:word|wd)?|otp|(?<!postal[\s_-])(?<![a-z0-9])pin(?![a-z0-9]|[\s_-]*code\b)|cvv|cvc|secret|token|ssn|aadhaar|credit.?card|debit.?card|card.?number/i;
+
+    const cleanCssPartList = (selectorStr) =>
+      String(selectorStr || "")
+        .split(",")
+        .map((p) => p.trim())
+        .filter((p) => p && !/:has-text\(|:contains\(/i.test(p));
+
+    const queryAllDeep = (selectorStr, root = document) => {
+      const cleanSel = cleanCssPartList(selectorStr).join(", ");
+      if (!cleanSel) return [];
+      let out = [];
+      try {
+        out = [...root.querySelectorAll(cleanSel)];
+      } catch {
+        return [];
       }
-      const normalize = (t) => (t || "").replace(/\s+/g, " ").trim();
-      const SENSITIVE =
-        /pass(?:word|wd)?|otp|(?<!postal[\s_-])(?<![a-z0-9])pin(?![a-z0-9]|[\s_-]*code\b)|cvv|cvc|secret|token|ssn|aadhaar|credit.?card|debit.?card|card.?number/i;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+      let node;
+      while ((node = walker.nextNode())) {
+        if (node.shadowRoot) {
+          out.push(...queryAllDeep(cleanSel, node.shadowRoot));
+        }
+      }
+      return out;
+    };
 
-      const cleanCssPartList = (selectorStr) =>
-        String(selectorStr || "")
-          .split(",")
-          .map((p) => p.trim())
-          .filter((p) => p && !/:has-text\(|:contains\(/i.test(p));
-
-      const queryAllDeep = (selectorStr, root = document) => {
-        const cleanSel = cleanCssPartList(selectorStr).join(", ");
-        if (!cleanSel) return [];
-        let out = [];
-        try {
-          out = [...root.querySelectorAll(cleanSel)];
-        } catch {
-          return [];
-        }
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-        let node;
-        while ((node = walker.nextNode())) {
-          if (node.shadowRoot) {
-            out.push(...queryAllDeep(cleanSel, node.shadowRoot));
+    const queryDeepSelector = (selectorStr, root = document) => {
+      if (!selectorStr || selectorStr === "window" || selectorStr === "document") return null;
+      if (selectorStr.includes(" >>> ") && root === document) {
+        const parts = selectorStr
+          .split(" >>> ")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        let curRoot = document;
+        for (let i = 0; i < parts.length; i++) {
+          const safePart = cleanCssPartList(parts[i]).join(", ");
+          if (!safePart) return null;
+          let hit = null;
+          try {
+            hit = curRoot.querySelector(safePart);
+          } catch {
+            return null;
           }
-        }
-        return out;
-      };
-
-      const queryDeepSelector = (selectorStr, root = document) => {
-        if (!selectorStr || selectorStr === "window" || selectorStr === "document") return null;
-        if (selectorStr.includes(" >>> ") && root === document) {
-          const parts = selectorStr.split(" >>> ").map((s) => s.trim()).filter(Boolean);
-          let curRoot = document;
-          for (let i = 0; i < parts.length; i++) {
-            const safePart = cleanCssPartList(parts[i]).join(", ");
-            if (!safePart) return null;
-            let hit = null;
-            try {
-              hit = curRoot.querySelector(safePart);
-            } catch {
-              return null;
-            }
-            if (!hit) return null;
-            if (i === parts.length - 1) return hit;
-            if (!hit.shadowRoot) return null;
-            curRoot = hit.shadowRoot;
-          }
-          return null;
-        }
-        const cleanSel = cleanCssPartList(selectorStr).join(", ");
-        if (!cleanSel) return null;
-        try {
-          const direct = root.querySelector(cleanSel);
-          if (direct) return direct;
-        } catch {
-          return null;
-        }
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-        let node;
-        while ((node = walker.nextNode())) {
-          if (node.shadowRoot) {
-            const found = queryDeepSelector(cleanSel, node.shadowRoot);
-            if (found) return found;
-          }
+          if (!hit) return null;
+          if (i === parts.length - 1) return hit;
+          if (!hit.shadowRoot) return null;
+          curRoot = hit.shadowRoot;
         }
         return null;
-      };
+      }
+      const cleanSel = cleanCssPartList(selectorStr).join(", ");
+      if (!cleanSel) return null;
+      try {
+        const direct = root.querySelector(cleanSel);
+        if (direct) return direct;
+      } catch {
+        return null;
+      }
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+      let node;
+      while ((node = walker.nextNode())) {
+        if (node.shadowRoot) {
+          const found = queryDeepSelector(cleanSel, node.shadowRoot);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
 
-      const isVisible = (el) => {
-        if (!el || el.nodeType !== 1) return false;
-        if (el.closest?.("#ai-buddy-arm-overlay")) return false;
-        const r = el.getBoundingClientRect();
-        const s = window.getComputedStyle(el);
-        return (
-          (r.width > 0 || r.height > 0 || el.getClientRects().length > 0) &&
-          s.visibility !== "hidden" &&
-          s.display !== "none" &&
-          parseFloat(s.opacity || "1") > 0
+    const isVisible = (el) => {
+      if (!el || el.nodeType !== 1) return false;
+      if (el.closest?.("#ai-buddy-arm-overlay")) return false;
+      const r = el.getBoundingClientRect();
+      const s = window.getComputedStyle(el);
+      return (
+        (r.width > 0 || r.height > 0 || el.getClientRects().length > 0) &&
+        s.visibility !== "hidden" &&
+        s.display !== "none" &&
+        parseFloat(s.opacity || "1") > 0
+      );
+    };
+
+    const dispatchRealClick = (targetEl) => {
+      const r = targetEl.getBoundingClientRect();
+      const cx = Math.round(r.left + Math.max(1, r.width / 2));
+      const cy = Math.round(r.top + Math.max(1, r.height / 2));
+      const baseEv = {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: cx,
+        clientY: cy,
+        screenX: cx,
+        screenY: cy,
+        button: 0,
+      };
+      const ptrEv = { ...baseEv, buttons: 1, pointerId: 1, pointerType: "mouse", isPrimary: true };
+      try {
+        targetEl.dispatchEvent(new PointerEvent("pointerover", ptrEv));
+        targetEl.dispatchEvent(new PointerEvent("pointerdown", ptrEv));
+      } catch {}
+      targetEl.dispatchEvent(new MouseEvent("mousedown", { ...baseEv, buttons: 1 }));
+      targetEl.focus?.();
+      try {
+        targetEl.dispatchEvent(new PointerEvent("pointerup", { ...ptrEv, buttons: 0 }));
+      } catch {}
+      targetEl.dispatchEvent(new MouseEvent("mouseup", { ...baseEv, buttons: 0 }));
+      targetEl.click();
+    };
+
+    const waitForScrollSettle = async (readPos, maxMs = 660) => {
+      let last = readPos();
+      const started = Date.now();
+      await new Promise((r) => setTimeout(r, 120));
+      while (Date.now() - started < maxMs) {
+        const cur = readPos();
+        if (Math.abs(cur.x - last.x) < 1 && Math.abs(cur.y - last.y) < 1) {
+          return;
+        }
+        last = cur;
+        await new Promise((r) => setTimeout(r, 60));
+      }
+    };
+
+    // --- 1. SCROLL ACTION (UP, DOWN, LEFT, RIGHT, TOP, BOTTOM, TO_ELEMENT) ---
+    if (
+      act === "scroll" ||
+      act === "scroll_page" ||
+      act === "scroll_down" ||
+      act === "scroll_up" ||
+      act === "scroll_left" ||
+      act === "scroll_right"
+    ) {
+      let direction = String(val || opts?.direction || "down").toLowerCase();
+      if (act === "scroll_down") direction = "down";
+      else if (act === "scroll_up") direction = "up";
+      else if (act === "scroll_left") direction = "left";
+      else if (act === "scroll_right") direction = "right";
+
+      const amount = typeof opts?.amount === "number" ? opts.amount : 450;
+      let targetEl = sel && sel !== "window" && sel !== "document" ? queryDeepSelector(sel) : null;
+
+      // If direction === "to_element" or opts.targetText given, locate target section/element
+      if (!targetEl && (direction === "to_element" || opts?.targetText)) {
+        const qText = normalize(opts?.targetText || val || "").toLowerCase();
+        if (qText) {
+          const getScrollText = (c) =>
+            normalize(
+              c.innerText ||
+                c.getAttribute?.("aria-label") ||
+                c.getAttribute?.("placeholder") ||
+                c.id ||
+                "",
+            ).toLowerCase();
+
+          const rawMatches = queryAllDeep(
+            "h1, h2, h3, h4, h5, h6, button, a, input, textarea, select, label, p, span, li, section, footer, header, nav, form, main, div",
+          ).filter((c) => {
+            if (!isVisible(c)) return false;
+            const t = getScrollText(c);
+            return t && (t === qText || (t.includes(qText) && t.length < 240));
+          });
+
+          // Exclude wrapper containers that enclose a more specific matching descendant
+          const specificMatches = rawMatches.filter(
+            (c) => !rawMatches.some((other) => other !== c && c.contains(other)),
+          );
+          const pool = specificMatches.length > 0 ? specificMatches : rawMatches;
+
+          const scoreScrollTarget = (c) => {
+            const t = getScrollText(c);
+            let s = 0;
+            if (t === qText) s += 100;
+            else if (t.startsWith(qText)) s += 60;
+            else if (t.includes(qText)) s += 30;
+            if (
+              ["H1", "H2", "H3", "H4", "H5", "H6", "BUTTON", "A", "INPUT", "LABEL"].includes(
+                c.tagName,
+              )
+            ) {
+              s += 35;
+            }
+            const cs = window.getComputedStyle(c);
+            if (
+              (cs.overflowY === "auto" || cs.overflowY === "scroll") &&
+              c.scrollHeight > c.clientHeight + 20 &&
+              c.children.length > 0
+            ) {
+              s -= 80;
+            }
+            s -= Math.min(40, Math.floor(t.length / 8));
+            return s;
+          };
+
+          pool.sort((a, b) => scoreScrollTarget(b) - scoreScrollTarget(a));
+          targetEl = pool[0] || null;
+        }
+        if (!targetEl && direction === "to_element") {
+          return {
+            ok: false,
+            action: "scroll",
+            message: `Could not find "${opts?.targetText || val}" on this page to scroll to.`,
+          };
+        }
+      }
+
+      if (targetEl) {
+        const beforeTop = targetEl.getBoundingClientRect().top;
+        const beforeWinY = window.scrollY || document.documentElement.scrollTop || 0;
+        let scrollParent = targetEl.parentElement;
+        while (
+          scrollParent &&
+          scrollParent !== document.body &&
+          scrollParent !== document.documentElement
+        ) {
+          const cs = window.getComputedStyle(scrollParent);
+          if (
+            (cs.overflowY === "auto" || cs.overflowY === "scroll") &&
+            scrollParent.scrollHeight > scrollParent.clientHeight + 20
+          ) {
+            break;
+          }
+          scrollParent = scrollParent.parentElement;
+        }
+        const hasScrollParent =
+          scrollParent &&
+          scrollParent !== document.body &&
+          scrollParent !== document.documentElement;
+        const beforeParentY = hasScrollParent ? scrollParent.scrollTop : 0;
+
+        if (hasScrollParent) {
+          const elRect = targetEl.getBoundingClientRect();
+          const pRect = scrollParent.getBoundingClientRect();
+          scrollParent.scrollBy({
+            top: elRect.top - pRect.top - scrollParent.clientHeight / 2 + elRect.height / 2,
+            behavior: "smooth",
+          });
+        }
+        targetEl.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+        await waitForScrollSettle(
+          () => ({
+            x: hasScrollParent
+              ? scrollParent.scrollLeft
+              : window.scrollX || document.documentElement.scrollLeft || 0,
+            y: hasScrollParent
+              ? scrollParent.scrollTop
+              : window.scrollY || document.documentElement.scrollTop || 0,
+          }),
+          800,
         );
+        const elRectAfter = targetEl.getBoundingClientRect();
+        const afterTop = elRectAfter.top;
+        const afterWinY = window.scrollY || document.documentElement.scrollTop || 0;
+        const afterParentY = hasScrollParent ? scrollParent.scrollTop : 0;
+        const movedPx = Math.round(
+          Math.max(
+            Math.abs(afterTop - beforeTop),
+            Math.abs(afterWinY - beforeWinY),
+            Math.abs(afterParentY - beforeParentY),
+          ),
+        );
+        const vw = window.innerWidth || document.documentElement.clientWidth || 1200;
+        const vh = window.innerHeight || document.documentElement.clientHeight || 800;
+        const inViewport =
+          (elRectAfter.width > 0 || elRectAfter.height > 0) &&
+          elRectAfter.bottom > 0 &&
+          elRectAfter.top < vh &&
+          elRectAfter.right > 0 &&
+          elRectAfter.left < vw;
+        const elLabel = normalize(targetEl.innerText || targetEl.tagName).slice(0, 40);
+        if (!inViewport && movedPx === 0) {
+          return {
+            ok: false,
+            action: "scroll",
+            direction: "to_element",
+            movedPx,
+            inViewport: false,
+            message: `Could not bring "${elLabel}" into the visible viewport.`,
+          };
+        }
+        return {
+          ok: true,
+          action: "scroll",
+          direction: "to_element",
+          movedPx,
+          inViewport,
+          message: inViewport
+            ? `Scrolled to "${elLabel}" successfully.`
+            : `Scrolled toward "${elLabel}" (${movedPx}px), though element remains partially outside viewport.`,
+        };
+      }
+
+      let container = opts?.containerSelector ? queryDeepSelector(opts.containerSelector) : null;
+      if (!container && opts?.containerText) {
+        const ctQuery = normalize(opts.containerText).toLowerCase();
+        const wantH = direction === "left" || direction === "right";
+        const scrollableBoxes = queryAllDeep(
+          "main, [role='main'], [role='region'], aside, div, section, ul, ol, table, tbody",
+        ).filter((el) => {
+          if (!isVisible(el) || el === document.body || el === document.documentElement)
+            return false;
+          const cs = window.getComputedStyle(el);
+          return wantH
+            ? (cs.overflowX === "auto" ||
+                cs.overflowX === "scroll" ||
+                cs.overflow === "auto" ||
+                cs.overflow === "scroll") &&
+                el.scrollWidth > el.clientWidth + 20
+            : (cs.overflowY === "auto" ||
+                cs.overflowY === "scroll" ||
+                cs.overflow === "auto" ||
+                cs.overflow === "scroll") &&
+                el.scrollHeight > el.clientHeight + 20;
+        });
+        container =
+          scrollableBoxes.find((el) => {
+            const labelText = normalize(
+              `${el.getAttribute?.("aria-label") || ""} ${el.id || ""} ${el.className || ""} ${el.querySelector?.("h1,h2,h3,h4,h5,h6,strong,legend")?.innerText || ""}`,
+            ).toLowerCase();
+            if (labelText.includes(ctQuery)) return true;
+            const prevHeading = el.previousElementSibling;
+            const prevTxt = normalize(prevHeading?.innerText || "").toLowerCase();
+            return prevTxt && prevTxt.includes(ctQuery);
+          }) ||
+          scrollableBoxes.find((el) =>
+            normalize(el.innerText || "")
+              .toLowerCase()
+              .includes(ctQuery),
+          ) ||
+          null;
+        if (!container) {
+          return {
+            ok: false,
+            action: "scroll",
+            message: `Could not find scrollable "${opts.containerText}" area on this page.`,
+          };
+        }
+      }
+
+      const findBestScrollContainer = (wantHoriz) => {
+        const scrollCands = queryAllDeep(
+          "main, [role='main'], div, section, ul, table, tbody",
+        ).filter((el) => {
+          if (!isVisible(el) || el === document.body || el === document.documentElement)
+            return false;
+          const cs = window.getComputedStyle(el);
+          if (wantHoriz) {
+            return (
+              (cs.overflowX === "auto" || cs.overflowX === "scroll") &&
+              el.scrollWidth > el.clientWidth + 20
+            );
+          }
+          return (
+            (cs.overflowY === "auto" || cs.overflowY === "scroll") &&
+            el.scrollHeight > el.clientHeight + 20
+          );
+        });
+        scrollCands.sort((a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight);
+        return scrollCands[0] || null;
       };
 
-      const dispatchRealClick = (targetEl) => {
-        const r = targetEl.getBoundingClientRect();
+      const wantHoriz = direction === "left" || direction === "right";
+      // Auto-detect primary scrollable container in SPAs when window is locked (overflow:hidden) or not scrollable
+      if (!container) {
+        const bodyCs = document.body ? window.getComputedStyle(document.body) : null;
+        const docCs = window.getComputedStyle(document.documentElement);
+        const docLockedY =
+          bodyCs?.overflowY === "hidden" ||
+          docCs.overflowY === "hidden" ||
+          (document.documentElement.scrollHeight || 0) <= window.innerHeight + 20;
+        const docLockedX =
+          bodyCs?.overflowX === "hidden" ||
+          docCs.overflowX === "hidden" ||
+          (document.documentElement.scrollWidth || 0) <= window.innerWidth + 20;
+
+        if ((wantHoriz && docLockedX) || (!wantHoriz && docLockedY)) {
+          container = findBestScrollContainer(wantHoriz);
+        }
+      }
+
+      const scrollContainerObj = async (c) => {
+        const beforeY = c.scrollTop;
+        const beforeX = c.scrollLeft;
+        if (direction === "top") c.scrollTo({ top: 0, behavior: "smooth" });
+        else if (direction === "bottom") c.scrollTo({ top: c.scrollHeight, behavior: "smooth" });
+        else if (direction === "up") c.scrollBy({ top: -amount, behavior: "smooth" });
+        else if (direction === "left") c.scrollBy({ left: -amount, behavior: "smooth" });
+        else if (direction === "right") c.scrollBy({ left: amount, behavior: "smooth" });
+        else c.scrollBy({ top: amount, behavior: "smooth" });
+
+        await waitForScrollSettle(() => ({ x: c.scrollLeft, y: c.scrollTop }));
+        const movedPx = Math.round(
+          Math.max(Math.abs(c.scrollTop - beforeY), Math.abs(c.scrollLeft - beforeX)),
+        );
+        const hasMore = c.scrollHeight > c.scrollTop + c.clientHeight + 20;
+        return {
+          ok: true,
+          action: "scroll",
+          container: c.tagName.toLowerCase(),
+          direction,
+          movedPx,
+          hasMoreBelow: hasMore,
+          message: `Scrolled container (${c.tagName.toLowerCase()}) ${direction}${movedPx ? ` (${movedPx}px)` : ""}.`,
+        };
+      };
+
+      if (container) {
+        return await scrollContainerObj(container);
+      }
+
+      // Window scroll
+      const beforeY = window.scrollY || document.documentElement.scrollTop || 0;
+      const beforeX = window.scrollX || document.documentElement.scrollLeft || 0;
+      if (direction === "top") window.scrollTo({ top: 0, behavior: "smooth" });
+      else if (direction === "bottom")
+        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+      else if (direction === "up") window.scrollBy({ top: -amount, behavior: "smooth" });
+      else if (direction === "left") window.scrollBy({ left: -amount, behavior: "smooth" });
+      else if (direction === "right") window.scrollBy({ left: amount, behavior: "smooth" });
+      else window.scrollBy({ top: amount, behavior: "smooth" });
+
+      await waitForScrollSettle(() => ({
+        x: window.scrollX || document.documentElement.scrollLeft || 0,
+        y: window.scrollY || document.documentElement.scrollTop || 0,
+      }));
+
+      const scrollH = document.documentElement.scrollHeight || document.body.scrollHeight || 0;
+      const scrollT = window.scrollY || document.documentElement.scrollTop || 0;
+      const scrollL = window.scrollX || document.documentElement.scrollLeft || 0;
+      const clientH = window.innerHeight || document.documentElement.clientHeight || 0;
+      const movedPx = Math.round(
+        Math.max(Math.abs(scrollT - beforeY), Math.abs(scrollL - beforeX)),
+      );
+
+      // Runtime fallback: if window barely moved (0px) and an inner scrollable container exists, scroll that container
+      if (movedPx === 0) {
+        const fallbackContainer = findBestScrollContainer(wantHoriz);
+        if (fallbackContainer) {
+          return await scrollContainerObj(fallbackContainer);
+        }
+      }
+
+      const hasMore = scrollH > scrollT + clientH + 40;
+
+      return {
+        ok: true,
+        action: "scroll",
+        direction,
+        movedPx,
+        scrollPercent: scrollH > clientH ? Math.round((scrollT / (scrollH - clientH)) * 100) : 100,
+        hasMoreBelow: hasMore,
+        message: `Scrolled webpage ${direction}${movedPx > 0 ? ` (${movedPx}px)` : ""}. ${
+          direction === "left" || direction === "right"
+            ? ""
+            : hasMore
+              ? "More content exists below."
+              : "Reached end of scroll range."
+        }`.trim(),
+      };
+    }
+
+    // Helper: build stable CSS selector & nearby section context label
+    const buildLocalUniqueSelector = (node, nodeRoot) => {
+      const safeCount = (s) => {
+        try {
+          return (
+            nodeRoot.querySelectorAll ? nodeRoot.querySelectorAll(s) : document.querySelectorAll(s)
+          ).length;
+        } catch {
+          return 0;
+        }
+      };
+      if (node.id && safeCount(`#${CSS.escape(node.id)}`) === 1) {
+        return `#${CSS.escape(node.id)}`;
+      }
+      const parts = [];
+      let cur = node;
+      while (cur && cur.nodeType === 1 && cur !== nodeRoot && parts.length < 5) {
+        let p = cur.tagName.toLowerCase();
+        if (cur.id && safeCount(`#${CSS.escape(cur.id)}`) === 1) {
+          parts.unshift(`#${CSS.escape(cur.id)}`);
+          break;
+        }
+        const parent = cur.parentElement;
+        if (parent) {
+          const same = [...parent.children].filter((c) => c.tagName === cur.tagName);
+          if (same.length > 1) p += `:nth-of-type(${same.indexOf(cur) + 1})`;
+        }
+        parts.unshift(p);
+        cur = parent;
+      }
+      return parts.join(" > ");
+    };
+
+    const getUniqueSelector = (node) => {
+      if (!node) return undefined;
+      const chain = [];
+      let curNode = node;
+      while (curNode && curNode.nodeType === 1) {
+        const nodeRoot = curNode.getRootNode?.() || document;
+        chain.unshift(buildLocalUniqueSelector(curNode, nodeRoot));
+        if (nodeRoot && nodeRoot !== document && nodeRoot.host) {
+          curNode = nodeRoot.host;
+        } else {
+          break;
+        }
+      }
+      return chain.join(" >>> ");
+    };
+
+    const getContextLabel = (node) => {
+      const container = node.closest?.(
+        "section, article, .card, .service-card, form, header, nav, footer, aside, dialog, tr, li",
+      );
+      if (container) {
+        const heading = container.querySelector?.("h1,h2,h3,h4,h5,h6,legend,.card-title,strong");
+        const hTxt = normalize(heading?.innerText || container.getAttribute?.("aria-label") || "");
+        if (hTxt && hTxt !== normalize(node.innerText || "")) {
+          return hTxt.slice(0, 50);
+        }
+        const tag = container.tagName.toLowerCase();
+        if (["header", "nav", "footer", "form", "aside", "dialog"].includes(tag)) return tag;
+      }
+      return undefined;
+    };
+
+    // --- 2. CLICK & BUTTON PRESS ACTION ---
+    if (
+      act === "click" ||
+      act === "press_button" ||
+      act === "press" ||
+      act === "click_submit" ||
+      act === "click_delete" ||
+      act === "submit"
+    ) {
+      let el = null;
+
+      if ((sel === "__CURRENT__" || val === "__CURRENT__") && opts?.fallbackSelector) {
+        el = queryDeepSelector(opts.fallbackSelector);
+        if (!el) {
+          return {
+            ok: false,
+            stale: true,
+            message: "The previously highlighted element is no longer present on this page.",
+          };
+        }
+      }
+
+      if (!el && sel && sel !== "__CURRENT__") {
+        el = queryDeepSelector(sel);
+        if (
+          !el &&
+          !val &&
+          !opts?.text &&
+          !(Array.isArray(opts?.alternateTargets) && opts.alternateTargets.length > 0)
+        ) {
+          return {
+            ok: false,
+            stale: true,
+            message: "Target element is no longer on this page.",
+          };
+        }
+      }
+
+      if (!el && (val === "__CURRENT__" || opts?.text === "__CURRENT__")) {
+        if (
+          document.activeElement &&
+          document.activeElement !== document.body &&
+          isVisible(document.activeElement)
+        ) {
+          el = document.activeElement;
+        }
+      }
+
+      if (
+        !el &&
+        (val ||
+          opts?.text ||
+          sel ||
+          (Array.isArray(opts?.alternateTargets) && opts.alternateTargets.length > 0)) &&
+        val !== "__CURRENT__"
+      ) {
+        const rawTarget = String(
+          val ||
+            opts?.text ||
+            (Array.isArray(opts?.alternateTargets) ? opts.alternateTargets[0] : "") ||
+            sel,
+        )
+          .trim()
+          .toLowerCase();
+        const cleanTarget = rawTarget
+          .replace(/^(?:the|a|an|ye|yeh|wo|woh|is|this|us|par)\s+/i, "")
+          .replace(/\s+(?:button|btn|tab|link|icon|menu|bar|option|checkbox|radio|switch)$/i, "")
+          .trim();
+
+        const CLICK_SYNONYMS = {
+          login: ["login", "log in", "signin", "sign in", "sign-in", "log-in", "connect"],
+          signin: ["login", "log in", "signin", "sign in", "sign-in", "log-in"],
+          signup: ["signup", "sign up", "register", "create account", "get started"],
+          register: ["signup", "sign up", "register", "create account"],
+          submit: [
+            "submit",
+            "save",
+            "send",
+            "continue",
+            "proceed",
+            "confirm",
+            "done",
+            "apply",
+            "request",
+          ],
+          cart: ["cart", "bag", "basket", "checkout", "shopping cart"],
+          orders: ["orders", "my orders", "order history", "pending orders", "order"],
+          today: ["today", "today's orders", "created today", "order date"],
+          pending: ["pending", "pending orders", "ready to ship", "unshipped", "new orders"],
+          search: ["search", "find", "go", "query"],
+          next: ["next", "continue", "forward", "proceed"],
+          close: ["close", "dismiss", "cancel", "exit"],
+          cancel: ["cancel", "dismiss", "close", "back"],
+        };
+
+        const escapeSymRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const hasWholeTerm = (haystack, needle) =>
+          new RegExp(`(?:^|\\b|\\s)${escapeSymRe(needle)}(?:\\b|\\s|$)`, "i").test(haystack);
+
+        const extraAlts = Array.isArray(opts?.alternateTargets)
+          ? opts.alternateTargets
+              .map((t) =>
+                String(t || "")
+                  .trim()
+                  .toLowerCase(),
+              )
+              .filter(Boolean)
+          : [];
+        const targetTerms = [
+          ...new Set([cleanTarget, rawTarget, ...extraAlts].filter((t) => t && t.length > 0)),
+        ];
+        for (const [key, syns] of Object.entries(CLICK_SYNONYMS)) {
+          if (
+            cleanTarget === key ||
+            hasWholeTerm(cleanTarget, key) ||
+            syns.some((s) => hasWholeTerm(cleanTarget, s))
+          ) {
+            targetTerms.push(...syns);
+          }
+        }
+
+        const clickables = queryAllDeep(
+          'button, a, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], [role="checkbox"], [role="radio"], [role="switch"], input[type="submit"], input[type="button"], input[type="reset"], input[type="checkbox"], input[type="radio"], select, summary, label, [tabindex]:not([tabindex="-1"])',
+        ).filter(isVisible);
+
+        const getElementText = (node) => {
+          const nodeRoot = node.getRootNode?.() || document;
+          let labelTxt = "";
+          const labelledby = node.getAttribute?.("aria-labelledby");
+          if (labelledby) {
+            labelTxt = labelledby
+              .split(/\s+/)
+              .map(
+                (lid) =>
+                  (nodeRoot.getElementById?.(lid) || document.getElementById(lid))?.innerText,
+              )
+              .filter(Boolean)
+              .join(" ");
+          }
+          if (!labelTxt && node.id) {
+            try {
+              const lbl =
+                nodeRoot.querySelector?.(`label[for="${CSS.escape(node.id)}"]`) ||
+                document.querySelector(`label[for="${CSS.escape(node.id)}"]`);
+              if (lbl?.innerText) labelTxt = lbl.innerText;
+            } catch {}
+          }
+          if (!labelTxt) {
+            const wrap = node.closest?.("label");
+            if (wrap?.innerText) labelTxt = wrap.innerText;
+          }
+          return normalize(
+            node.innerText ||
+              node.value ||
+              labelTxt ||
+              node.getAttribute?.("aria-label") ||
+              node.getAttribute?.("title") ||
+              node.getAttribute?.("alt") ||
+              node.getAttribute?.("placeholder") ||
+              node.getAttribute?.("name") ||
+              node.querySelector?.("img[alt]")?.getAttribute("alt") ||
+              node.querySelector?.("svg title")?.textContent ||
+              "",
+          ).toLowerCase();
+        };
+
+        const scoredCandidates = [];
+        for (const cand of clickables) {
+          const t = getElementText(cand);
+          if (!t) continue; // NEVER match empty elements!
+          let score = 0;
+          for (const term of targetTerms) {
+            if (!term) continue;
+            if (t === term) {
+              score = Math.max(score, 100);
+            } else if (t.startsWith(term)) {
+              score = Math.max(score, 75);
+            } else if (t.includes(term)) {
+              score = Math.max(score, 55);
+            } else if (term.includes(t) && t.length >= 3) {
+              score = Math.max(score, 40);
+            }
+          }
+          if (score > 0 && ["BUTTON", "A", "INPUT", "SELECT"].includes(cand.tagName)) {
+            score += 10;
+          }
+          if (score > 0) {
+            score -= Math.min(20, Math.floor(t.length / 25));
+            scoredCandidates.push({ el: cand, score, normText: t });
+          }
+        }
+
+        // Deduplicate nested elements (e.g. a button inside a wrapper with [tabindex])
+        scoredCandidates.sort((a, b) => b.score - a.score);
+        const uniqueCandidates = [];
+        for (const c of scoredCandidates) {
+          const nested = uniqueCandidates.some(
+            (kept) => kept.el.contains(c.el) || c.el.contains(kept.el),
+          );
+          if (!nested) uniqueCandidates.push(c);
+        }
+
+        if (uniqueCandidates.length > 0) {
+          if (typeof opts?.candidateIndex === "number" && opts.candidateIndex >= 1) {
+            el = uniqueCandidates[opts.candidateIndex - 1]?.el || null;
+          } else {
+            const topScore = uniqueCandidates[0].score;
+            const tied = uniqueCandidates.filter(
+              (c, i) =>
+                i === 0 ||
+                c.score === topScore ||
+                (c.score >= topScore - 2 && c.normText === uniqueCandidates[0].normText),
+            );
+            if (
+              tied.length > 1 &&
+              act !== "submit" &&
+              act !== "click_submit" &&
+              act !== "click_delete"
+            ) {
+              return {
+                ok: false,
+                ambiguous: true,
+                action: "click",
+                target: val || opts?.text || cleanTarget,
+                candidates: tied.slice(0, 8).map((c, idx) => ({
+                  index: idx + 1,
+                  text: normalize(
+                    c.el.innerText || c.el.value || c.el.getAttribute?.("aria-label") || c.normText,
+                  ).slice(0, 60),
+                  context: getContextLabel(c.el) || null,
+                  tag: c.el.tagName.toLowerCase(),
+                  selector: getUniqueSelector(c.el),
+                })),
+                message: `Found ${tied.length} matching controls for "${val || opts?.text}". Please clarify which one.`,
+              };
+            }
+            el = uniqueCandidates[0].el;
+          }
+        }
+
+        // Deep leaf match if still not found
+        if (!el) {
+          const allTextNodes = queryAllDeep(
+            "span, p, b, strong, div, h1, h2, h3, h4, h5, h6, label",
+          ).filter(isVisible);
+          for (const term of targetTerms) {
+            if (!term) continue;
+            const matchedLeaf = allTextNodes.find((leaf) => {
+              const t = normalize(leaf.innerText || leaf.textContent || "").toLowerCase();
+              return t && (t === term || (t.includes(term) && t.length < 50));
+            });
+            if (matchedLeaf) {
+              el =
+                matchedLeaf.closest?.(
+                  'button, a, [role="button"], [role="tab"], [role="link"], [role="menuitem"], summary, label',
+                ) || matchedLeaf;
+              break;
+            }
+          }
+        }
+
+        // Form submit fallback
+        if (!el && (act === "click_submit" || act === "submit" || cleanTarget.includes("submit"))) {
+          el = queryAllDeep(
+            'button[type="submit"], input[type="submit"], form button:not([type="button"])',
+          ).find(isVisible);
+        }
+      }
+
+      if (!el) {
+        const rawLabel = sel || val || opts?.text || "target";
+        const displayLabel = rawLabel === "__CURRENT__" ? "highlighted/current element" : rawLabel;
+        return {
+          ok: false,
+          message: `Could not find button or interactive element matching "${displayLabel}".`,
+        };
+      }
+
+      if (el.disabled || el.getAttribute?.("aria-disabled") === "true") {
+        return {
+          ok: false,
+          message: `Element "${normalize(el.innerText || el.value)}" is currently disabled.`,
+        };
+      }
+
+      const urlBefore = window.location.href;
+      const checkedBefore = el.checked;
+      const ariaCheckedBefore = el.getAttribute?.("aria-checked");
+      const ariaSelectedBefore = el.getAttribute?.("aria-selected");
+      const ariaExpandedBefore = el.getAttribute?.("aria-expanded");
+      const dialogSelector =
+        'dialog[open], [role="dialog"], [role="alertdialog"], .modal.show, .modal-open';
+      const dialogsBefore = queryAllDeep(dialogSelector).filter(isVisible).length;
+
+      el.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+      await new Promise((r) => setTimeout(r, 60));
+
+      // Obstruction check via elementFromPoint at center coordinates
+      let clickTargetEl = el;
+      let obstructionWarning = null;
+      try {
+        const rect = clickTargetEl.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          const cx = Math.round(rect.left + rect.width / 2);
+          const cy = Math.round(rect.top + rect.height / 2);
+          const topHit = document.elementFromPoint(cx, cy);
+          const isSameOrRelated =
+            topHit &&
+            (topHit === clickTargetEl ||
+              clickTargetEl.contains?.(topHit) ||
+              topHit.contains?.(clickTargetEl));
+          if (topHit && !isSameOrRelated) {
+            // Retry centering scroll or pick unobstructed clickable descendant
+            clickTargetEl.scrollIntoView({ behavior: "auto", block: "nearest", inline: "nearest" });
+            await new Promise((r) => setTimeout(r, 50));
+            const retryRect = clickTargetEl.getBoundingClientRect();
+            const topHit2 = document.elementFromPoint(
+              Math.round(retryRect.left + retryRect.width / 2),
+              Math.round(retryRect.top + retryRect.height / 2),
+            );
+            const stillBlocked =
+              topHit2 &&
+              topHit2 !== clickTargetEl &&
+              !clickTargetEl.contains?.(topHit2) &&
+              !topHit2.contains?.(clickTargetEl);
+            if (stillBlocked) {
+              const blockerDesc = normalize(
+                topHit2.getAttribute?.("aria-label") || topHit2.className || topHit2.tagName,
+              ).slice(0, 40);
+              obstructionWarning = `Target appears partially covered by "${blockerDesc}".`;
+            }
+          }
+        }
+      } catch {}
+
+      let formSubmittedByClick = false;
+      const targetForm = clickTargetEl.form || clickTargetEl.closest?.("form");
+      const onFormSubmit = () => {
+        formSubmittedByClick = true;
+      };
+      if (targetForm && (act === "submit" || act === "click_submit")) {
+        targetForm.addEventListener("submit", onFormSubmit, { once: true });
+      }
+
+      if (opts?.clickMethod === "alternate") {
+        const r = clickTargetEl.getBoundingClientRect();
         const cx = Math.round(r.left + Math.max(1, r.width / 2));
         const cy = Math.round(r.top + Math.max(1, r.height / 2));
-        const baseEv = {
+        const evOpts = {
           bubbles: true,
           cancelable: true,
           view: window,
           clientX: cx,
           clientY: cy,
-          screenX: cx,
-          screenY: cy,
           button: 0,
         };
-        const ptrEv = { ...baseEv, buttons: 1, pointerId: 1, pointerType: "mouse", isPrimary: true };
+        clickTargetEl.focus?.();
         try {
-          targetEl.dispatchEvent(new PointerEvent("pointerover", ptrEv));
-          targetEl.dispatchEvent(new PointerEvent("pointerdown", ptrEv));
+          clickTargetEl.dispatchEvent(
+            new PointerEvent("pointerover", { ...evOpts, pointerType: "mouse", isPrimary: true }),
+          );
+          clickTargetEl.dispatchEvent(
+            new PointerEvent("pointerdown", {
+              ...evOpts,
+              buttons: 1,
+              pointerType: "mouse",
+              isPrimary: true,
+            }),
+          );
         } catch {}
-        targetEl.dispatchEvent(new MouseEvent("mousedown", { ...baseEv, buttons: 1 }));
-        targetEl.focus?.();
+        clickTargetEl.dispatchEvent(new MouseEvent("mousedown", { ...evOpts, buttons: 1 }));
         try {
-          targetEl.dispatchEvent(new PointerEvent("pointerup", { ...ptrEv, buttons: 0 }));
+          clickTargetEl.dispatchEvent(
+            new PointerEvent("pointerup", {
+              ...evOpts,
+              buttons: 0,
+              pointerType: "mouse",
+              isPrimary: true,
+            }),
+          );
         } catch {}
-        targetEl.dispatchEvent(new MouseEvent("mouseup", { ...baseEv, buttons: 0 }));
-        targetEl.click();
-      };
-
-      const waitForScrollSettle = async (readPos, maxMs = 660) => {
-        let last = readPos();
-        const started = Date.now();
-        await new Promise((r) => setTimeout(r, 120));
-        while (Date.now() - started < maxMs) {
-          const cur = readPos();
-          if (Math.abs(cur.x - last.x) < 1 && Math.abs(cur.y - last.y) < 1) {
-            return;
-          }
-          last = cur;
-          await new Promise((r) => setTimeout(r, 60));
+        clickTargetEl.dispatchEvent(new MouseEvent("mouseup", { ...evOpts, buttons: 0 }));
+        clickTargetEl.dispatchEvent(new MouseEvent("click", evOpts));
+        clickTargetEl.click?.();
+        const clickableAncestor = clickTargetEl.closest?.('button, a, [role="button"]');
+        if (clickableAncestor && clickableAncestor !== clickTargetEl) {
+          clickableAncestor.click?.();
         }
-      };
-
-      // --- 1. SCROLL ACTION (UP, DOWN, LEFT, RIGHT, TOP, BOTTOM, TO_ELEMENT) ---
-      if (
-        act === "scroll" ||
-        act === "scroll_page" ||
-        act === "scroll_down" ||
-        act === "scroll_up" ||
-        act === "scroll_left" ||
-        act === "scroll_right"
-      ) {
-        let direction = String(val || opts?.direction || "down").toLowerCase();
-        if (act === "scroll_down") direction = "down";
-        else if (act === "scroll_up") direction = "up";
-        else if (act === "scroll_left") direction = "left";
-        else if (act === "scroll_right") direction = "right";
-
-        const amount = typeof opts?.amount === "number" ? opts.amount : 450;
-        let targetEl = sel && sel !== "window" && sel !== "document" ? queryDeepSelector(sel) : null;
-
-        // If direction === "to_element" or opts.targetText given, locate target section/element
-        if (!targetEl && (direction === "to_element" || opts?.targetText)) {
-          const qText = normalize(opts?.targetText || val || "").toLowerCase();
-          if (qText) {
-            const getScrollText = (c) =>
-              normalize(
-                c.innerText ||
-                  c.getAttribute?.("aria-label") ||
-                  c.getAttribute?.("placeholder") ||
-                  c.id ||
-                  "",
-              ).toLowerCase();
-
-            const rawMatches = queryAllDeep(
-              "h1, h2, h3, h4, h5, h6, button, a, input, textarea, select, label, p, span, li, section, footer, header, nav, form, main, div",
-            ).filter((c) => {
-              if (!isVisible(c)) return false;
-              const t = getScrollText(c);
-              return t && (t === qText || (t.includes(qText) && t.length < 240));
-            });
-
-            // Exclude wrapper containers that enclose a more specific matching descendant
-            const specificMatches = rawMatches.filter(
-              (c) => !rawMatches.some((other) => other !== c && c.contains(other)),
-            );
-            const pool = specificMatches.length > 0 ? specificMatches : rawMatches;
-
-            const scoreScrollTarget = (c) => {
-              const t = getScrollText(c);
-              let s = 0;
-              if (t === qText) s += 100;
-              else if (t.startsWith(qText)) s += 60;
-              else if (t.includes(qText)) s += 30;
-              if (["H1", "H2", "H3", "H4", "H5", "H6", "BUTTON", "A", "INPUT", "LABEL"].includes(c.tagName)) {
-                s += 35;
-              }
-              const cs = window.getComputedStyle(c);
-              if (
-                (cs.overflowY === "auto" || cs.overflowY === "scroll") &&
-                c.scrollHeight > c.clientHeight + 20 &&
-                c.children.length > 0
-              ) {
-                s -= 80;
-              }
-              s -= Math.min(40, Math.floor(t.length / 8));
-              return s;
-            };
-
-            pool.sort((a, b) => scoreScrollTarget(b) - scoreScrollTarget(a));
-            targetEl = pool[0] || null;
-          }
-          if (!targetEl && direction === "to_element") {
-            return {
-              ok: false,
-              action: "scroll",
-              message: `Could not find "${opts?.targetText || val}" on this page to scroll to.`,
-            };
-          }
-        }
-
-        if (targetEl) {
-          const beforeTop = targetEl.getBoundingClientRect().top;
-          const beforeWinY = window.scrollY || document.documentElement.scrollTop || 0;
-          let scrollParent = targetEl.parentElement;
-          while (scrollParent && scrollParent !== document.body && scrollParent !== document.documentElement) {
-            const cs = window.getComputedStyle(scrollParent);
-            if (
-              (cs.overflowY === "auto" || cs.overflowY === "scroll") &&
-              scrollParent.scrollHeight > scrollParent.clientHeight + 20
-            ) {
-              break;
-            }
-            scrollParent = scrollParent.parentElement;
-          }
-          const hasScrollParent =
-            scrollParent &&
-            scrollParent !== document.body &&
-            scrollParent !== document.documentElement;
-          const beforeParentY = hasScrollParent ? scrollParent.scrollTop : 0;
-
-          if (hasScrollParent) {
-            const elRect = targetEl.getBoundingClientRect();
-            const pRect = scrollParent.getBoundingClientRect();
-            scrollParent.scrollBy({
-              top: elRect.top - pRect.top - scrollParent.clientHeight / 2 + elRect.height / 2,
-              behavior: "smooth",
-            });
-          }
-          targetEl.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
-          await waitForScrollSettle(() => ({
-            x: hasScrollParent ? scrollParent.scrollLeft : window.scrollX || document.documentElement.scrollLeft || 0,
-            y: hasScrollParent ? scrollParent.scrollTop : window.scrollY || document.documentElement.scrollTop || 0,
-          }), 800);
-          const elRectAfter = targetEl.getBoundingClientRect();
-          const afterTop = elRectAfter.top;
-          const afterWinY = window.scrollY || document.documentElement.scrollTop || 0;
-          const afterParentY = hasScrollParent ? scrollParent.scrollTop : 0;
-          const movedPx = Math.round(
-            Math.max(
-              Math.abs(afterTop - beforeTop),
-              Math.abs(afterWinY - beforeWinY),
-              Math.abs(afterParentY - beforeParentY),
-            ),
-          );
-          const vw = window.innerWidth || document.documentElement.clientWidth || 1200;
-          const vh = window.innerHeight || document.documentElement.clientHeight || 800;
-          const inViewport =
-            (elRectAfter.width > 0 || elRectAfter.height > 0) &&
-            elRectAfter.bottom > 0 &&
-            elRectAfter.top < vh &&
-            elRectAfter.right > 0 &&
-            elRectAfter.left < vw;
-          const elLabel = normalize(targetEl.innerText || targetEl.tagName).slice(0, 40);
-          if (!inViewport && movedPx === 0) {
-            return {
-              ok: false,
-              action: "scroll",
-              direction: "to_element",
-              movedPx,
-              inViewport: false,
-              message: `Could not bring "${elLabel}" into the visible viewport.`,
-            };
-          }
-          return {
-            ok: true,
-            action: "scroll",
-            direction: "to_element",
-            movedPx,
-            inViewport,
-            message: inViewport
-              ? `Scrolled to "${elLabel}" successfully.`
-              : `Scrolled toward "${elLabel}" (${movedPx}px), though element remains partially outside viewport.`,
-          };
-        }
-
-        let container = opts?.containerSelector ? queryDeepSelector(opts.containerSelector) : null;
-        if (!container && opts?.containerText) {
-          const ctQuery = normalize(opts.containerText).toLowerCase();
-          const wantH = direction === "left" || direction === "right";
-          const scrollableBoxes = queryAllDeep(
-            "main, [role='main'], [role='region'], aside, div, section, ul, ol, table, tbody",
-          ).filter((el) => {
-            if (!isVisible(el) || el === document.body || el === document.documentElement) return false;
-            const cs = window.getComputedStyle(el);
-            return wantH
-              ? (cs.overflowX === "auto" || cs.overflowX === "scroll" || cs.overflow === "auto" || cs.overflow === "scroll") &&
-                  el.scrollWidth > el.clientWidth + 20
-              : (cs.overflowY === "auto" || cs.overflowY === "scroll" || cs.overflow === "auto" || cs.overflow === "scroll") &&
-                  el.scrollHeight > el.clientHeight + 20;
-          });
-          container =
-            scrollableBoxes.find((el) => {
-              const labelText = normalize(
-                `${el.getAttribute?.("aria-label") || ""} ${el.id || ""} ${el.className || ""} ${el.querySelector?.("h1,h2,h3,h4,h5,h6,strong,legend")?.innerText || ""}`,
-              ).toLowerCase();
-              if (labelText.includes(ctQuery)) return true;
-              const prevHeading = el.previousElementSibling;
-              const prevTxt = normalize(prevHeading?.innerText || "").toLowerCase();
-              return prevTxt && prevTxt.includes(ctQuery);
-            }) ||
-            scrollableBoxes.find((el) =>
-              normalize(el.innerText || "").toLowerCase().includes(ctQuery),
-            ) ||
-            null;
-          if (!container) {
-            return {
-              ok: false,
-              action: "scroll",
-              message: `Could not find scrollable "${opts.containerText}" area on this page.`,
-            };
-          }
-        }
-
-        const findBestScrollContainer = (wantHoriz) => {
-          const scrollCands = queryAllDeep(
-            "main, [role='main'], div, section, ul, table, tbody",
-          ).filter((el) => {
-            if (!isVisible(el) || el === document.body || el === document.documentElement) return false;
-            const cs = window.getComputedStyle(el);
-            if (wantHoriz) {
-              return (
-                (cs.overflowX === "auto" || cs.overflowX === "scroll") &&
-                el.scrollWidth > el.clientWidth + 20
-              );
-            }
-            return (
-              (cs.overflowY === "auto" || cs.overflowY === "scroll") &&
-              el.scrollHeight > el.clientHeight + 20
-            );
-          });
-          scrollCands.sort(
-            (a, b) =>
-              b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight,
-          );
-          return scrollCands[0] || null;
-        };
-
-        const wantHoriz = direction === "left" || direction === "right";
-        // Auto-detect primary scrollable container in SPAs when window is locked (overflow:hidden) or not scrollable
-        if (!container) {
-          const bodyCs = document.body ? window.getComputedStyle(document.body) : null;
-          const docCs = window.getComputedStyle(document.documentElement);
-          const docLockedY =
-            bodyCs?.overflowY === "hidden" ||
-            docCs.overflowY === "hidden" ||
-            (document.documentElement.scrollHeight || 0) <= window.innerHeight + 20;
-          const docLockedX =
-            bodyCs?.overflowX === "hidden" ||
-            docCs.overflowX === "hidden" ||
-            (document.documentElement.scrollWidth || 0) <= window.innerWidth + 20;
-
-          if ((wantHoriz && docLockedX) || (!wantHoriz && docLockedY)) {
-            container = findBestScrollContainer(wantHoriz);
-          }
-        }
-
-        const scrollContainerObj = async (c) => {
-          const beforeY = c.scrollTop;
-          const beforeX = c.scrollLeft;
-          if (direction === "top") c.scrollTo({ top: 0, behavior: "smooth" });
-          else if (direction === "bottom") c.scrollTo({ top: c.scrollHeight, behavior: "smooth" });
-          else if (direction === "up") c.scrollBy({ top: -amount, behavior: "smooth" });
-          else if (direction === "left") c.scrollBy({ left: -amount, behavior: "smooth" });
-          else if (direction === "right") c.scrollBy({ left: amount, behavior: "smooth" });
-          else c.scrollBy({ top: amount, behavior: "smooth" });
-
-          await waitForScrollSettle(() => ({ x: c.scrollLeft, y: c.scrollTop }));
-          const movedPx = Math.round(
-            Math.max(
-              Math.abs(c.scrollTop - beforeY),
-              Math.abs(c.scrollLeft - beforeX),
-            ),
-          );
-          const hasMore =
-            c.scrollHeight > c.scrollTop + c.clientHeight + 20;
-          return {
-            ok: true,
-            action: "scroll",
-            container: c.tagName.toLowerCase(),
-            direction,
-            movedPx,
-            hasMoreBelow: hasMore,
-            message: `Scrolled container (${c.tagName.toLowerCase()}) ${direction}${movedPx ? ` (${movedPx}px)` : ""}.`,
-          };
-        };
-
-        if (container) {
-          return await scrollContainerObj(container);
-        }
-
-        // Window scroll
-        const beforeY = window.scrollY || document.documentElement.scrollTop || 0;
-        const beforeX = window.scrollX || document.documentElement.scrollLeft || 0;
-        if (direction === "top") window.scrollTo({ top: 0, behavior: "smooth" });
-        else if (direction === "bottom") window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
-        else if (direction === "up") window.scrollBy({ top: -amount, behavior: "smooth" });
-        else if (direction === "left") window.scrollBy({ left: -amount, behavior: "smooth" });
-        else if (direction === "right") window.scrollBy({ left: amount, behavior: "smooth" });
-        else window.scrollBy({ top: amount, behavior: "smooth" });
-
-        await waitForScrollSettle(() => ({
-          x: window.scrollX || document.documentElement.scrollLeft || 0,
-          y: window.scrollY || document.documentElement.scrollTop || 0,
-        }));
-
-        const scrollH = document.documentElement.scrollHeight || document.body.scrollHeight || 0;
-        const scrollT = window.scrollY || document.documentElement.scrollTop || 0;
-        const scrollL = window.scrollX || document.documentElement.scrollLeft || 0;
-        const clientH = window.innerHeight || document.documentElement.clientHeight || 0;
-        const movedPx = Math.round(Math.max(Math.abs(scrollT - beforeY), Math.abs(scrollL - beforeX)));
-
-        // Runtime fallback: if window barely moved (0px) and an inner scrollable container exists, scroll that container
-        if (movedPx === 0) {
-          const fallbackContainer = findBestScrollContainer(wantHoriz);
-          if (fallbackContainer) {
-            return await scrollContainerObj(fallbackContainer);
-          }
-        }
-
-        const hasMore = scrollH > scrollT + clientH + 40;
-
-        return {
-          ok: true,
-          action: "scroll",
-          direction,
-          movedPx,
-          scrollPercent:
-            scrollH > clientH ? Math.round((scrollT / (scrollH - clientH)) * 100) : 100,
-          hasMoreBelow: hasMore,
-          message: `Scrolled webpage ${direction}${movedPx > 0 ? ` (${movedPx}px)` : ""}. ${
-            direction === "left" || direction === "right"
-              ? ""
-              : hasMore
-                ? "More content exists below."
-                : "Reached end of scroll range."
-          }`.trim(),
-        };
+      } else {
+        dispatchRealClick(clickTargetEl);
       }
 
-      // Helper: build stable CSS selector & nearby section context label
-      const buildLocalUniqueSelector = (node, nodeRoot) => {
-        const safeCount = (s) => {
+      if (targetForm && (act === "submit" || act === "click_submit")) {
+        targetForm.removeEventListener("submit", onFormSubmit);
+        if (!formSubmittedByClick && typeof targetForm.requestSubmit === "function") {
           try {
-            return (nodeRoot.querySelectorAll ? nodeRoot.querySelectorAll(s) : document.querySelectorAll(s)).length;
-          } catch {
-            return 0;
-          }
+            targetForm.requestSubmit();
+          } catch {}
+        }
+      }
+
+      // Wait briefly for SPA state change / navigation / modal (resolve immediately if full-page navigation starts)
+      await new Promise((r) => {
+        const done = () => {
+          window.removeEventListener("pagehide", done);
+          window.removeEventListener("beforeunload", done);
+          r();
         };
-        if (node.id && safeCount(`#${CSS.escape(node.id)}`) === 1) {
-          return `#${CSS.escape(node.id)}`;
+        window.addEventListener("pagehide", done, { once: true });
+        window.addEventListener("beforeunload", done, { once: true });
+        setTimeout(done, 250);
+      });
+
+      const clickedText = normalize(
+        clickTargetEl.innerText ||
+          clickTargetEl.value ||
+          clickTargetEl.getAttribute?.("aria-label") ||
+          clickTargetEl.tagName,
+      ).slice(0, 60);
+
+      let stateChange = "clicked";
+      if (window.location.href !== urlBefore) {
+        stateChange = "navigated";
+      } else {
+        const dialogsAfter = queryAllDeep(dialogSelector).filter(isVisible).length;
+        if (dialogsAfter > dialogsBefore) {
+          stateChange = "modal_opened";
+        } else if (
+          clickTargetEl.checked !== checkedBefore ||
+          clickTargetEl.getAttribute?.("aria-checked") !== ariaCheckedBefore
+        ) {
+          stateChange = "toggled";
+        } else if (
+          clickTargetEl.getAttribute?.("aria-selected") !== ariaSelectedBefore ||
+          clickTargetEl.getAttribute?.("aria-expanded") !== ariaExpandedBefore
+        ) {
+          stateChange = "selected";
         }
-        const parts = [];
-        let cur = node;
-        while (cur && cur.nodeType === 1 && cur !== nodeRoot && parts.length < 5) {
-          let p = cur.tagName.toLowerCase();
-          if (cur.id && safeCount(`#${CSS.escape(cur.id)}`) === 1) {
-            parts.unshift(`#${CSS.escape(cur.id)}`);
-            break;
-          }
-          const parent = cur.parentElement;
-          if (parent) {
-            const same = [...parent.children].filter((c) => c.tagName === cur.tagName);
-            if (same.length > 1) p += `:nth-of-type(${same.indexOf(cur) + 1})`;
-          }
-          parts.unshift(p);
-          cur = parent;
+      }
+
+      // Capture visible status, alert, error, or confirmation feedback shown by the page
+      const feedbackEls = queryAllDeep(
+        '[role="alert"], [role="status"], [aria-live], .alert, .error, .error-message, .form-error, .invalid-feedback, .success, .toast, .notice',
+      ).filter((node) => isVisible(node) && !node.contains(clickTargetEl));
+      const pageFeedback = [];
+      let hasErrorFeedback = false;
+      for (const fb of feedbackEls) {
+        const fbTxt = normalize(fb.innerText || fb.textContent || "").slice(0, 180);
+        if (!fbTxt || fbTxt === clickedText || pageFeedback.includes(fbTxt)) continue;
+        pageFeedback.push(fbTxt);
+        if (
+          fb.getAttribute?.("role") === "alert" ||
+          fb.classList?.contains("error") ||
+          fb.classList?.contains("form-error") ||
+          fb.classList?.contains("invalid-feedback") ||
+          /\b(?:error|failed|invalid|required|please\s+fix|missing|fix:|cannot|must\s+accept)\b/i.test(
+            fbTxt,
+          )
+        ) {
+          hasErrorFeedback = true;
         }
-        return parts.join(" > ");
+        if (pageFeedback.length >= 3) break;
+      }
+
+      const isNowChecked =
+        typeof clickTargetEl.checked === "boolean"
+          ? clickTargetEl.checked
+          : clickTargetEl.getAttribute?.("aria-checked") === "true";
+
+      let outcomeMsg = `Successfully clicked "${clickedText}".`;
+      if (stateChange === "navigated") {
+        outcomeMsg += ` Navigated to ${window.location.pathname}.`;
+      } else if (stateChange === "modal_opened") {
+        outcomeMsg += " Modal dialog appeared.";
+      } else if (stateChange === "toggled") {
+        outcomeMsg += ` State changed to ${isNowChecked ? "checked" : "unchecked"}.`;
+      } else if (stateChange === "selected") {
+        outcomeMsg += " Selection updated.";
+      }
+      if (obstructionWarning && stateChange === "clicked") {
+        outcomeMsg += ` (${obstructionWarning})`;
+      }
+      if (pageFeedback.length > 0) {
+        outcomeMsg += ` Page reported: "${pageFeedback[0]}"`;
+      }
+
+      return {
+        ok: true,
+        action: "click",
+        tag: clickTargetEl.tagName.toLowerCase(),
+        text: clickedText,
+        stateChange,
+        urlBefore,
+        urlAfter: window.location.href,
+        pageFeedback: pageFeedback.length > 0 ? pageFeedback : undefined,
+        hasErrorFeedback,
+        obstructionWarning: obstructionWarning || undefined,
+        message: outcomeMsg,
       };
+    }
 
-      const getUniqueSelector = (node) => {
-        if (!node) return undefined;
-        const chain = [];
-        let curNode = node;
-        while (curNode && curNode.nodeType === 1) {
-          const nodeRoot = curNode.getRootNode?.() || document;
-          chain.unshift(buildLocalUniqueSelector(curNode, nodeRoot));
-          if (nodeRoot && nodeRoot !== document && nodeRoot.host) {
-            curNode = nodeRoot.host;
-          } else {
-            break;
-          }
-        }
-        return chain.join(" >>> ");
-      };
+    // --- 3. COPY TO CLIPBOARD ACTION ---
+    if (act === "copy_to_clipboard" || act === "copy") {
+      const query = String(val || opts?.query || "").trim();
+      let textsToCopy = [];
 
-      const getContextLabel = (node) => {
-        const container = node.closest?.(
-          "section, article, .card, .service-card, form, header, nav, footer, aside, dialog, tr, li",
-        );
-        if (container) {
-          const heading = container.querySelector?.("h1,h2,h3,h4,h5,h6,legend,.card-title,strong");
-          const hTxt = normalize(heading?.innerText || container.getAttribute?.("aria-label") || "");
-          if (hTxt && hTxt !== normalize(node.innerText || "")) {
-            return hTxt.slice(0, 50);
-          }
-          const tag = container.tagName.toLowerCase();
-          if (["header", "nav", "footer", "form", "aside", "dialog"].includes(tag)) return tag;
-        }
-        return undefined;
-      };
-
-      // --- 2. CLICK & BUTTON PRESS ACTION ---
-      if (
-        act === "click" ||
-        act === "press_button" ||
-        act === "press" ||
-        act === "click_submit" ||
-        act === "click_delete" ||
-        act === "submit"
-      ) {
-        let el = null;
-
-        if ((sel === "__CURRENT__" || val === "__CURRENT__") && opts?.fallbackSelector) {
-          el = queryDeepSelector(opts.fallbackSelector);
-          if (!el) {
-            return {
-              ok: false,
-              stale: true,
-              message: "The previously highlighted element is no longer present on this page.",
-            };
-          }
-        }
-
-        if (!el && sel && sel !== "__CURRENT__") {
-          el = queryDeepSelector(sel);
-          if (!el && !val && !opts?.text && !(Array.isArray(opts?.alternateTargets) && opts.alternateTargets.length > 0)) {
-            return {
-              ok: false,
-              stale: true,
-              message: "Target element is no longer on this page.",
-            };
-          }
-        }
-
-        if (!el && (val === "__CURRENT__" || opts?.text === "__CURRENT__")) {
-          if (
-            document.activeElement &&
-            document.activeElement !== document.body &&
-            isVisible(document.activeElement)
-          ) {
-            el = document.activeElement;
-          }
-        }
-
-        if (!el && (val || opts?.text || sel || (Array.isArray(opts?.alternateTargets) && opts.alternateTargets.length > 0)) && val !== "__CURRENT__") {
-          const rawTarget = String(val || opts?.text || (Array.isArray(opts?.alternateTargets) ? opts.alternateTargets[0] : "") || sel)
-            .trim()
-            .toLowerCase();
-          const cleanTarget = rawTarget
-            .replace(/^(?:the|a|an|ye|yeh|wo|woh|is|this|us|par)\s+/i, "")
-            .replace(/\s+(?:button|btn|tab|link|icon|menu|bar|option|checkbox|radio|switch)$/i, "")
-            .trim();
-
-          const CLICK_SYNONYMS = {
-            login: ["login", "log in", "signin", "sign in", "sign-in", "log-in", "connect"],
-            signin: ["login", "log in", "signin", "sign in", "sign-in", "log-in"],
-            signup: ["signup", "sign up", "register", "create account", "get started"],
-            register: ["signup", "sign up", "register", "create account"],
-            submit: ["submit", "save", "send", "continue", "proceed", "confirm", "done", "apply", "request"],
-            cart: ["cart", "bag", "basket", "checkout", "shopping cart"],
-            orders: ["orders", "my orders", "order history", "pending orders", "order"],
-            today: ["today", "today's orders", "created today", "order date"],
-            pending: ["pending", "pending orders", "ready to ship", "unshipped", "new orders"],
-            search: ["search", "find", "go", "query"],
-            next: ["next", "continue", "forward", "proceed"],
-            close: ["close", "dismiss", "cancel", "exit"],
-            cancel: ["cancel", "dismiss", "close", "back"],
-          };
-
-          const escapeSymRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          const hasWholeTerm = (haystack, needle) =>
-            new RegExp(`(?:^|\\b|\\s)${escapeSymRe(needle)}(?:\\b|\\s|$)`, "i").test(haystack);
-
-          const extraAlts = Array.isArray(opts?.alternateTargets)
-            ? opts.alternateTargets.map((t) => String(t || "").trim().toLowerCase()).filter(Boolean)
-            : [];
-          const targetTerms = [...new Set([cleanTarget, rawTarget, ...extraAlts].filter((t) => t && t.length > 0))];
-          for (const [key, syns] of Object.entries(CLICK_SYNONYMS)) {
-            if (
-              cleanTarget === key ||
-              hasWholeTerm(cleanTarget, key) ||
-              syns.some((s) => hasWholeTerm(cleanTarget, s))
-            ) {
-              targetTerms.push(...syns);
-            }
-          }
-
-          const clickables = queryAllDeep(
-            'button, a, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], [role="checkbox"], [role="radio"], [role="switch"], input[type="submit"], input[type="button"], input[type="reset"], input[type="checkbox"], input[type="radio"], select, summary, label, [tabindex]:not([tabindex="-1"])',
-          ).filter(isVisible);
-
-          const getElementText = (node) => {
-            const nodeRoot = node.getRootNode?.() || document;
-            let labelTxt = "";
-            const labelledby = node.getAttribute?.("aria-labelledby");
-            if (labelledby) {
-              labelTxt = labelledby
-                .split(/\s+/)
-                .map((lid) => (nodeRoot.getElementById?.(lid) || document.getElementById(lid))?.innerText)
+      if (sel) {
+        const els = queryAllDeep(sel).slice(0, opts?.limit || 25);
+        textsToCopy = els
+          .map((el) => normalize(el.innerText || el.value || el.textContent))
+          .filter(Boolean);
+      } else if (query) {
+        const q = query.toLowerCase();
+        if (/^(?:table|tables|rows|table\s+rows)$/.test(q)) {
+          const rows = queryAllDeep("table tr").slice(0, opts?.limit || 40);
+          textsToCopy = rows
+            .map((tr) =>
+              [...tr.querySelectorAll("th, td")]
+                .map((c) => normalize(c.innerText || c.textContent))
                 .filter(Boolean)
-                .join(" ");
-            }
-            if (!labelTxt && node.id) {
-              try {
-                const lbl =
-                  nodeRoot.querySelector?.(`label[for="${CSS.escape(node.id)}"]`) ||
-                  document.querySelector(`label[for="${CSS.escape(node.id)}"]`);
-                if (lbl?.innerText) labelTxt = lbl.innerText;
-              } catch {}
-            }
-            if (!labelTxt) {
-              const wrap = node.closest?.("label");
-              if (wrap?.innerText) labelTxt = wrap.innerText;
-            }
-            return normalize(
-              node.innerText ||
-                node.value ||
-                labelTxt ||
-                node.getAttribute?.("aria-label") ||
-                node.getAttribute?.("title") ||
-                node.getAttribute?.("alt") ||
-                node.getAttribute?.("placeholder") ||
-                node.getAttribute?.("name") ||
-                node.querySelector?.("img[alt]")?.getAttribute("alt") ||
-                node.querySelector?.("svg title")?.textContent ||
-                "",
-            ).toLowerCase();
-          };
-
-          const scoredCandidates = [];
-          for (const cand of clickables) {
-            const t = getElementText(cand);
-            if (!t) continue; // NEVER match empty elements!
-            let score = 0;
-            for (const term of targetTerms) {
-              if (!term) continue;
-              if (t === term) {
-                score = Math.max(score, 100);
-              } else if (t.startsWith(term)) {
-                score = Math.max(score, 75);
-              } else if (t.includes(term)) {
-                score = Math.max(score, 55);
-              } else if (term.includes(t) && t.length >= 3) {
-                score = Math.max(score, 40);
-              }
-            }
-            if (
-              score > 0 &&
-              ["BUTTON", "A", "INPUT", "SELECT"].includes(cand.tagName)
-            ) {
-              score += 10;
-            }
-            if (score > 0) {
-              score -= Math.min(20, Math.floor(t.length / 25));
-              scoredCandidates.push({ el: cand, score, normText: t });
-            }
-          }
-
-          // Deduplicate nested elements (e.g. a button inside a wrapper with [tabindex])
-          scoredCandidates.sort((a, b) => b.score - a.score);
-          const uniqueCandidates = [];
-          for (const c of scoredCandidates) {
-            const nested = uniqueCandidates.some(
-              (kept) => kept.el.contains(c.el) || c.el.contains(kept.el),
-            );
-            if (!nested) uniqueCandidates.push(c);
-          }
-
-          if (uniqueCandidates.length > 0) {
-            if (typeof opts?.candidateIndex === "number" && opts.candidateIndex >= 1) {
-              el = uniqueCandidates[opts.candidateIndex - 1]?.el || null;
-            } else {
-              const topScore = uniqueCandidates[0].score;
-              const tied = uniqueCandidates.filter(
-                (c, i) =>
-                  i === 0 ||
-                  c.score === topScore ||
-                  (c.score >= topScore - 2 && c.normText === uniqueCandidates[0].normText),
-              );
-              if (
-                tied.length > 1 &&
-                act !== "submit" &&
-                act !== "click_submit" &&
-                act !== "click_delete"
-              ) {
-                return {
-                  ok: false,
-                  ambiguous: true,
-                  action: "click",
-                  target: val || opts?.text || cleanTarget,
-                  candidates: tied.slice(0, 8).map((c, idx) => ({
-                    index: idx + 1,
-                    text: normalize(
-                      c.el.innerText || c.el.value || c.el.getAttribute?.("aria-label") || c.normText,
-                    ).slice(0, 60),
-                    context: getContextLabel(c.el) || null,
-                    tag: c.el.tagName.toLowerCase(),
-                    selector: getUniqueSelector(c.el),
-                  })),
-                  message: `Found ${tied.length} matching controls for "${val || opts?.text}". Please clarify which one.`,
-                };
-              }
-              el = uniqueCandidates[0].el;
-            }
-          }
-
-          // Deep leaf match if still not found
-          if (!el) {
-            const allTextNodes = queryAllDeep("span, p, b, strong, div, h1, h2, h3, h4, h5, h6, label").filter(isVisible);
-            for (const term of targetTerms) {
-              if (!term) continue;
-              const matchedLeaf = allTextNodes.find((leaf) => {
-                const t = normalize(leaf.innerText || leaf.textContent || "").toLowerCase();
-                return t && (t === term || (t.includes(term) && t.length < 50));
-              });
-              if (matchedLeaf) {
-                el =
-                  matchedLeaf.closest?.(
-                    'button, a, [role="button"], [role="tab"], [role="link"], [role="menuitem"], summary, label',
-                  ) || matchedLeaf;
-                break;
-              }
-            }
-          }
-
-          // Form submit fallback
-          if (!el && (act === "click_submit" || act === "submit" || cleanTarget.includes("submit"))) {
-            el = queryAllDeep(
-              'button[type="submit"], input[type="submit"], form button:not([type="button"])',
-            ).find(isVisible);
-          }
-        }
-
-        if (!el) {
-          const rawLabel = sel || val || opts?.text || "target";
-          const displayLabel = rawLabel === "__CURRENT__" ? "highlighted/current element" : rawLabel;
-          return {
-            ok: false,
-            message: `Could not find button or interactive element matching "${displayLabel}".`,
-          };
-        }
-
-        if (el.disabled || el.getAttribute?.("aria-disabled") === "true") {
-          return {
-            ok: false,
-            message: `Element "${normalize(el.innerText || el.value)}" is currently disabled.`,
-          };
-        }
-
-        const urlBefore = window.location.href;
-        const checkedBefore = el.checked;
-        const ariaCheckedBefore = el.getAttribute?.("aria-checked");
-        const ariaSelectedBefore = el.getAttribute?.("aria-selected");
-        const ariaExpandedBefore = el.getAttribute?.("aria-expanded");
-        const dialogSelector = 'dialog[open], [role="dialog"], [role="alertdialog"], .modal.show, .modal-open';
-        const dialogsBefore = queryAllDeep(dialogSelector).filter(isVisible).length;
-
-        el.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
-        await new Promise((r) => setTimeout(r, 60));
-
-        // Obstruction check via elementFromPoint at center coordinates
-        let clickTargetEl = el;
-        let obstructionWarning = null;
-        try {
-          const rect = clickTargetEl.getBoundingClientRect();
-          if (rect.width > 0 && rect.height > 0) {
-            const cx = Math.round(rect.left + rect.width / 2);
-            const cy = Math.round(rect.top + rect.height / 2);
-            const topHit = document.elementFromPoint(cx, cy);
-            const isSameOrRelated =
-              topHit &&
-              (topHit === clickTargetEl ||
-                clickTargetEl.contains?.(topHit) ||
-                topHit.contains?.(clickTargetEl));
-            if (topHit && !isSameOrRelated) {
-              // Retry centering scroll or pick unobstructed clickable descendant
-              clickTargetEl.scrollIntoView({ behavior: "auto", block: "nearest", inline: "nearest" });
-              await new Promise((r) => setTimeout(r, 50));
-              const retryRect = clickTargetEl.getBoundingClientRect();
-              const topHit2 = document.elementFromPoint(
-                Math.round(retryRect.left + retryRect.width / 2),
-                Math.round(retryRect.top + retryRect.height / 2),
-              );
-              const stillBlocked =
-                topHit2 &&
-                topHit2 !== clickTargetEl &&
-                !clickTargetEl.contains?.(topHit2) &&
-                !topHit2.contains?.(clickTargetEl);
-              if (stillBlocked) {
-                const blockerDesc = normalize(
-                  topHit2.getAttribute?.("aria-label") || topHit2.className || topHit2.tagName,
-                ).slice(0, 40);
-                obstructionWarning = `Target appears partially covered by "${blockerDesc}".`;
-              }
-            }
-          }
-        } catch {}
-
-        let formSubmittedByClick = false;
-        const targetForm = clickTargetEl.form || clickTargetEl.closest?.("form");
-        const onFormSubmit = () => {
-          formSubmittedByClick = true;
-        };
-        if (targetForm && (act === "submit" || act === "click_submit")) {
-          targetForm.addEventListener("submit", onFormSubmit, { once: true });
-        }
-
-        if (opts?.clickMethod === "alternate") {
-          const r = clickTargetEl.getBoundingClientRect();
-          const cx = Math.round(r.left + Math.max(1, r.width / 2));
-          const cy = Math.round(r.top + Math.max(1, r.height / 2));
-          const evOpts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, button: 0 };
-          clickTargetEl.focus?.();
-          try {
-            clickTargetEl.dispatchEvent(new PointerEvent("pointerover", { ...evOpts, pointerType: "mouse", isPrimary: true }));
-            clickTargetEl.dispatchEvent(new PointerEvent("pointerdown", { ...evOpts, buttons: 1, pointerType: "mouse", isPrimary: true }));
-          } catch {}
-          clickTargetEl.dispatchEvent(new MouseEvent("mousedown", { ...evOpts, buttons: 1 }));
-          try {
-            clickTargetEl.dispatchEvent(new PointerEvent("pointerup", { ...evOpts, buttons: 0, pointerType: "mouse", isPrimary: true }));
-          } catch {}
-          clickTargetEl.dispatchEvent(new MouseEvent("mouseup", { ...evOpts, buttons: 0 }));
-          clickTargetEl.dispatchEvent(new MouseEvent("click", evOpts));
-          clickTargetEl.click?.();
-          const clickableAncestor = clickTargetEl.closest?.('button, a, [role="button"]');
-          if (clickableAncestor && clickableAncestor !== clickTargetEl) {
-            clickableAncestor.click?.();
-          }
+                .join(" | "),
+            )
+            .filter(Boolean);
+        } else if (/^(?:data|list|items|order_id|orders)$/.test(q)) {
+          const items = queryAllDeep("table tbody tr, ul li").slice(0, opts?.limit || 30);
+          textsToCopy = items
+            .map((el) => normalize(el.innerText || el.textContent))
+            .filter(Boolean);
         } else {
-          dispatchRealClick(clickTargetEl);
+          const cand = queryAllDeep("td, span, div, li, p").filter((el) => {
+            const t = normalize(el.innerText || el.textContent).toLowerCase();
+            return t.includes(q) && (!el.children.length || el.children.length < 3);
+          });
+          textsToCopy = cand
+            .slice(0, opts?.limit || 10)
+            .map((el) => normalize(el.innerText || el.textContent));
         }
-
-        if (targetForm && (act === "submit" || act === "click_submit")) {
-          targetForm.removeEventListener("submit", onFormSubmit);
-          if (!formSubmittedByClick && typeof targetForm.requestSubmit === "function") {
-            try {
-              targetForm.requestSubmit();
-            } catch {}
-          }
-        }
-
-        // Wait briefly for SPA state change / navigation / modal (resolve immediately if full-page navigation starts)
-        await new Promise((r) => {
-          const done = () => {
-            window.removeEventListener("pagehide", done);
-            window.removeEventListener("beforeunload", done);
-            r();
-          };
-          window.addEventListener("pagehide", done, { once: true });
-          window.addEventListener("beforeunload", done, { once: true });
-          setTimeout(done, 250);
-        });
-
-        const clickedText = normalize(
-          clickTargetEl.innerText || clickTargetEl.value || clickTargetEl.getAttribute?.("aria-label") || clickTargetEl.tagName,
-        ).slice(0, 60);
-
-        let stateChange = "clicked";
-        if (window.location.href !== urlBefore) {
-          stateChange = "navigated";
-        } else {
-          const dialogsAfter = queryAllDeep(dialogSelector).filter(isVisible).length;
-          if (dialogsAfter > dialogsBefore) {
-            stateChange = "modal_opened";
-          } else if (
-            clickTargetEl.checked !== checkedBefore ||
-            clickTargetEl.getAttribute?.("aria-checked") !== ariaCheckedBefore
-          ) {
-            stateChange = "toggled";
-          } else if (
-            clickTargetEl.getAttribute?.("aria-selected") !== ariaSelectedBefore ||
-            clickTargetEl.getAttribute?.("aria-expanded") !== ariaExpandedBefore
-          ) {
-            stateChange = "selected";
-          }
-        }
-
-        // Capture visible status, alert, error, or confirmation feedback shown by the page
-        const feedbackEls = queryAllDeep(
-          '[role="alert"], [role="status"], [aria-live], .alert, .error, .error-message, .form-error, .invalid-feedback, .success, .toast, .notice',
-        ).filter((node) => isVisible(node) && !node.contains(clickTargetEl));
-        const pageFeedback = [];
-        let hasErrorFeedback = false;
-        for (const fb of feedbackEls) {
-          const fbTxt = normalize(fb.innerText || fb.textContent || "").slice(0, 180);
-          if (!fbTxt || fbTxt === clickedText || pageFeedback.includes(fbTxt)) continue;
-          pageFeedback.push(fbTxt);
-          if (
-            fb.getAttribute?.("role") === "alert" ||
-            fb.classList?.contains("error") ||
-            fb.classList?.contains("form-error") ||
-            fb.classList?.contains("invalid-feedback") ||
-            /\b(?:error|failed|invalid|required|please\s+fix|missing|fix:|cannot|must\s+accept)\b/i.test(fbTxt)
-          ) {
-            hasErrorFeedback = true;
-          }
-          if (pageFeedback.length >= 3) break;
-        }
-
-        const isNowChecked =
-          typeof clickTargetEl.checked === "boolean"
-            ? clickTargetEl.checked
-            : clickTargetEl.getAttribute?.("aria-checked") === "true";
-
-        let outcomeMsg = `Successfully clicked "${clickedText}".`;
-        if (stateChange === "navigated") {
-          outcomeMsg += ` Navigated to ${window.location.pathname}.`;
-        } else if (stateChange === "modal_opened") {
-          outcomeMsg += " Modal dialog appeared.";
-        } else if (stateChange === "toggled") {
-          outcomeMsg += ` State changed to ${isNowChecked ? "checked" : "unchecked"}.`;
-        } else if (stateChange === "selected") {
-          outcomeMsg += " Selection updated.";
-        }
-        if (obstructionWarning && stateChange === "clicked") {
-          outcomeMsg += ` (${obstructionWarning})`;
-        }
-        if (pageFeedback.length > 0) {
-          outcomeMsg += ` Page reported: "${pageFeedback[0]}"`;
-        }
-
-        return {
-          ok: true,
-          action: "click",
-          tag: clickTargetEl.tagName.toLowerCase(),
-          text: clickedText,
-          stateChange,
-          urlBefore,
-          urlAfter: window.location.href,
-          pageFeedback: pageFeedback.length > 0 ? pageFeedback : undefined,
-          hasErrorFeedback,
-          obstructionWarning: obstructionWarning || undefined,
-          message: outcomeMsg,
-        };
       }
 
-      // --- 3. COPY TO CLIPBOARD ACTION ---
-      if (act === "copy_to_clipboard" || act === "copy") {
-        const query = String(val || opts?.query || "").trim();
-        let textsToCopy = [];
+      if (textsToCopy.length === 0) {
+        return { ok: false, message: "No matching content found to copy to clipboard." };
+      }
 
-        if (sel) {
-          const els = queryAllDeep(sel).slice(0, opts?.limit || 25);
-          textsToCopy = els
-            .map((el) => normalize(el.innerText || el.value || el.textContent))
-            .filter(Boolean);
-        } else if (query) {
-          const q = query.toLowerCase();
-          if (/^(?:table|tables|rows|table\s+rows)$/.test(q)) {
-            const rows = queryAllDeep("table tr").slice(0, opts?.limit || 40);
-            textsToCopy = rows
-              .map((tr) =>
-                [...tr.querySelectorAll("th, td")]
-                  .map((c) => normalize(c.innerText || c.textContent))
-                  .filter(Boolean)
-                  .join(" | "),
-              )
-              .filter(Boolean);
-          } else if (/^(?:data|list|items|order_id|orders)$/.test(q)) {
-            const items = queryAllDeep("table tbody tr, ul li").slice(0, opts?.limit || 30);
-            textsToCopy = items
-              .map((el) => normalize(el.innerText || el.textContent))
-              .filter(Boolean);
-          } else {
-            const cand = queryAllDeep("td, span, div, li, p").filter((el) => {
-              const t = normalize(el.innerText || el.textContent).toLowerCase();
-              return t.includes(q) && (!el.children.length || el.children.length < 3);
-            });
-            textsToCopy = cand
-              .slice(0, opts?.limit || 10)
-              .map((el) => normalize(el.innerText || el.textContent));
-          }
-        }
+      const combinedText = textsToCopy.join("\n");
+      let copied = false;
 
-        if (textsToCopy.length === 0) {
-          return { ok: false, message: "No matching content found to copy to clipboard." };
-        }
-
-        const combinedText = textsToCopy.join("\n");
-        let copied = false;
-
-        try {
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(combinedText);
-            copied = true;
-          }
-        } catch {}
-
-        if (!copied) {
-          const ta = document.createElement("textarea");
-          ta.value = combinedText;
-          ta.style.position = "fixed";
-          ta.style.opacity = "0";
-          document.body.appendChild(ta);
-          ta.select();
-          document.execCommand("copy");
-          document.body.removeChild(ta);
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(combinedText);
           copied = true;
         }
+      } catch {}
 
+      if (!copied) {
+        const ta = document.createElement("textarea");
+        ta.value = combinedText;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        copied = true;
+      }
+
+      return {
+        ok: true,
+        action: "copy_to_clipboard",
+        count: textsToCopy.length,
+        copiedItems: textsToCopy.slice(0, 5),
+        previewText: combinedText.slice(0, 200),
+        message: `Copied ${textsToCopy.length} item${textsToCopy.length > 1 ? "s" : ""} to clipboard.`,
+      };
+    }
+
+    // --- 4. TYPE / FILL ACTION ---
+    if (act === "type" || act === "fill_field") {
+      let el = sel ? queryDeepSelector(sel) : null;
+      if (el && !["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) && !el.isContentEditable) {
+        el =
+          el.querySelector?.(
+            'textarea, input:not([type="hidden"]), [contenteditable="true"], [contenteditable=""], select',
+          ) || el;
+      }
+      if (!el && opts?.fallbackSelector) {
+        el = queryDeepSelector(opts.fallbackSelector);
+      }
+      if (!el) return { ok: false, message: "Target input field was not found on this page." };
+
+      const isSensitive =
+        el.type === "password" ||
+        SENSITIVE.test(`${el.name || ""} ${el.id || ""} ${el.type || ""}`);
+      if (isSensitive && !opts?.explicitUserProvided) {
         return {
-          ok: true,
-          action: "copy_to_clipboard",
-          count: textsToCopy.length,
-          copiedItems: textsToCopy.slice(0, 5),
-          previewText: combinedText.slice(0, 200),
-          message: `Copied ${textsToCopy.length} item${textsToCopy.length > 1 ? "s" : ""} to clipboard.`,
+          ok: false,
+          message: "Action blocked: Buddy never types into password or financial fields.",
         };
       }
 
-      // --- 4. TYPE / FILL ACTION ---
-      if (act === "type" || act === "fill_field") {
-        let el = sel ? queryDeepSelector(sel) : null;
-        if (el && !["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) && !el.isContentEditable) {
-          el =
-            el.querySelector?.(
-              'textarea, input:not([type="hidden"]), [contenteditable="true"], [contenteditable=""], select',
-            ) || el;
-        }
-        if (!el && opts?.fallbackSelector) {
-          el = queryDeepSelector(opts.fallbackSelector);
-        }
-        if (!el) return { ok: false, message: "Target input field was not found on this page." };
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.focus();
 
-        const isSensitive =
-          el.type === "password" ||
-          SENSITIVE.test(`${el.name || ""} ${el.id || ""} ${el.type || ""}`);
-        if (isSensitive && !opts?.explicitUserProvided) {
-          return {
-            ok: false,
-            message: "Action blocked: Buddy never types into password or financial fields.",
-          };
-        }
+      const strVal = String(val || "");
+      const isCe =
+        el.isContentEditable ||
+        el.getAttribute?.("contenteditable") === "true" ||
+        el.getAttribute?.("contenteditable") === "" ||
+        el.getAttribute?.("contenteditable") === "plaintext-only";
+      if (
+        !isCe &&
+        el.tagName !== "SELECT" &&
+        el.type !== "checkbox" &&
+        el.type !== "radio" &&
+        el.type !== "date" &&
+        typeof el.maxLength === "number" &&
+        el.maxLength > 0 &&
+        strVal.length > el.maxLength
+      ) {
+        return {
+          ok: false,
+          verified: false,
+          action: "type",
+          field: el.name || el.id || el.placeholder || el.tagName.toLowerCase(),
+          message: `Refused to type: value length (${strVal.length}) exceeds field maxlength (${el.maxLength}).`,
+        };
+      }
 
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-        el.focus();
-
-        const strVal = String(val || "");
-        const isCe =
-          el.isContentEditable ||
-          el.getAttribute?.("contenteditable") === "true" ||
-          el.getAttribute?.("contenteditable") === "" ||
-          el.getAttribute?.("contenteditable") === "plaintext-only";
-        if (
-          !isCe &&
-          el.tagName !== "SELECT" &&
-          el.type !== "checkbox" &&
-          el.type !== "radio" &&
-          el.type !== "date" &&
-          typeof el.maxLength === "number" &&
-          el.maxLength > 0 &&
-          strVal.length > el.maxLength
-        ) {
-          return {
-            ok: false,
-            verified: false,
-            action: "type",
-            field: el.name || el.id || el.placeholder || el.tagName.toLowerCase(),
-            message: `Refused to type: value length (${strVal.length}) exceeds field maxlength (${el.maxLength}).`,
-          };
-        }
-
-        if (el.tagName === "SELECT") {
-          const opt = [...el.options].find(
-            (o) => o.value === strVal || o.text.toLowerCase().includes(strVal.toLowerCase()),
-          );
-          el.value = opt ? opt.value : strVal;
-          el.dispatchEvent(new Event("input", { bubbles: true }));
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-        } else if (el.type === "checkbox") {
-          const desired = Boolean(val);
-          if (el.checked !== desired) el.click();
-        } else if (el.type === "radio") {
-          if (!el.checked) el.click();
-        } else if (isCe) {
-          try {
-            document.execCommand("selectAll", false, null);
-            const okIns = document.execCommand("insertText", false, strVal);
-            if (!okIns || !(el.innerText || el.textContent || "").includes(strVal)) {
-              el.innerText = strVal;
-            }
-          } catch {
+      if (el.tagName === "SELECT") {
+        const opt = [...el.options].find(
+          (o) => o.value === strVal || o.text.toLowerCase().includes(strVal.toLowerCase()),
+        );
+        el.value = opt ? opt.value : strVal;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      } else if (el.type === "checkbox") {
+        const desired = Boolean(val);
+        if (el.checked !== desired) el.click();
+      } else if (el.type === "radio") {
+        if (!el.checked) el.click();
+      } else if (isCe) {
+        try {
+          document.execCommand("selectAll", false, null);
+          const okIns = document.execCommand("insertText", false, strVal);
+          if (!okIns || !(el.innerText || el.textContent || "").includes(strVal)) {
             el.innerText = strVal;
           }
-          try {
-            el.dispatchEvent(
-              new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: strVal }),
-            );
-          } catch {}
-          try {
-            el.dispatchEvent(
-              new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: strVal }),
-            );
-          } catch {}
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-        } else {
-          const proto =
-            el.tagName === "TEXTAREA"
-              ? window.HTMLTextAreaElement.prototype
-              : window.HTMLInputElement.prototype;
-          const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
-          if (nativeSetter) {
-            nativeSetter.call(el, strVal);
-          } else {
-            el.value = strVal;
-          }
-          if (el._valueTracker) el._valueTracker.setValue("");
-          el.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-          el.dispatchEvent(new Event("blur", { bubbles: true }));
+        } catch {
+          el.innerText = strVal;
         }
-
-        const actualValue = isCe ? el.innerText || el.textContent : el.value;
-        const fieldLabel = el.name || el.id || el.placeholder || el.tagName.toLowerCase();
-        const verified =
-          actualValue !== undefined &&
-          actualValue !== null &&
-          (actualValue === strVal ||
-            (strVal.length > 0 && actualValue.toString().includes(strVal)));
-
-        return {
-          ok: verified,
-          verified,
-          action: "type",
-          field: fieldLabel,
-          message: verified
-            ? `Filled "${fieldLabel}" with requested value.`
-            : `Field "${fieldLabel}" rejected or cleared the typed value.`,
-        };
-      }
-
-      // --- 4b. SEARCH BOX FILL + SUBMIT ACTION ---
-      if (act === "search_submit") {
-        const searchCandidates = queryAllDeep(
-          'input[type="search"], [role="searchbox"], input[name*="search" i], input[id*="search" i], input[placeholder*="search" i], input[aria-label*="search" i], input[name="q"], input[name="query"]',
-        ).filter((el) => isVisible(el) && !el.disabled && !el.readOnly);
-        let searchEl = sel ? queryDeepSelector(sel) : searchCandidates[0] || null;
-        if (!searchEl) {
-          return {
-            ok: false,
-            noSearchInput: true,
-            action: "search_submit",
-            message: "No visible search input box was found on this page.",
-          };
-        }
-        const queryStr = String(val || opts?.query || "").trim();
-        searchEl.scrollIntoView({ behavior: "smooth", block: "center" });
-        searchEl.focus();
+        try {
+          el.dispatchEvent(
+            new InputEvent("beforeinput", {
+              bubbles: true,
+              cancelable: true,
+              inputType: "insertText",
+              data: strVal,
+            }),
+          );
+        } catch {}
+        try {
+          el.dispatchEvent(
+            new InputEvent("input", {
+              bubbles: true,
+              cancelable: true,
+              inputType: "insertText",
+              data: strVal,
+            }),
+          );
+        } catch {}
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      } else {
         const proto =
-          searchEl.tagName === "TEXTAREA"
+          el.tagName === "TEXTAREA"
             ? window.HTMLTextAreaElement.prototype
             : window.HTMLInputElement.prototype;
         const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
-        if (nativeSetter) nativeSetter.call(searchEl, queryStr);
-        else searchEl.value = queryStr;
-        if (searchEl._valueTracker) searchEl._valueTracker.setValue("");
-        searchEl.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
-        searchEl.dispatchEvent(new Event("change", { bubbles: true }));
-
-        let submittedWith = "enter_key";
-        const form = searchEl.closest?.("form");
-        const submitBtn = form
-          ? form.querySelector('button[type="submit"], input[type="submit"], button[aria-label*="search" i]')
-          : searchEl.parentElement?.querySelector?.('button, [role="button"]');
-        if (submitBtn && isVisible(submitBtn)) {
-          dispatchRealClick(submitBtn);
-          submittedWith = "search_button";
+        if (nativeSetter) {
+          nativeSetter.call(el, strVal);
         } else {
-          const enterOpts = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true };
-          searchEl.dispatchEvent(new KeyboardEvent("keydown", enterOpts));
-          searchEl.dispatchEvent(new KeyboardEvent("keypress", enterOpts));
-          searchEl.dispatchEvent(new KeyboardEvent("keyup", enterOpts));
-          if (form && typeof form.requestSubmit === "function") {
-            try {
-              form.requestSubmit();
-              submittedWith = "form_submit";
-            } catch {}
-          }
+          el.value = strVal;
         }
-        const fieldLabel = searchEl.getAttribute?.("aria-label") || searchEl.placeholder || searchEl.name || searchEl.id || "search";
-        return {
-          ok: true,
-          verified: true,
-          action: "search_submit",
-          query: queryStr,
-          field: fieldLabel,
-          submittedWith,
-          message: `Searched "${queryStr}" using ${fieldLabel}.`,
-        };
-      }
-
-      // --- 5. SELECT / DROPDOWN ACTION ---
-      if (act === "select") {
-        let desiredValue = String(val || opts?.text || "");
-        let el = sel ? queryDeepSelector(sel) : null;
-        if (!el && opts?.targetField) {
-          const tf = opts.targetField.toLowerCase();
-          const selects = queryAllDeep("select, [role=listbox], [role=combobox]").filter(isVisible);
-          el = selects.find((s) => {
-            const labelTxt =
-              (s.id && document.querySelector(`label[for="${CSS.escape(s.id)}"]`)?.innerText) ||
-              s.closest?.("label")?.innerText ||
-              "";
-            const id = `${s.id || ""} ${s.name || ""} ${s.getAttribute?.("aria-label") || ""} ${labelTxt}`.toLowerCase();
-            return id.includes(tf);
-          });
-          // Fallback for multi-word option like "Pro Plan select karo" where word 0 wasn't a field name
-          if (!el && desiredValue) {
-            const combinedPhrase = `${opts.targetField} ${desiredValue}`.trim().toLowerCase();
-            const phraseMatch = selects.find((s) => {
-              if (s.tagName === "SELECT") {
-                return [...s.options].some(
-                  (o) => o.text.toLowerCase().includes(combinedPhrase) || o.value.toLowerCase() === combinedPhrase,
-                );
-              }
-              return false;
-            });
-            if (phraseMatch) {
-              el = phraseMatch;
-              desiredValue = `${opts.targetField} ${desiredValue}`.trim();
-            }
-          }
-        }
-        if (!el && desiredValue) {
-          const searchCandidates = [
-            opts?.targetField ? `${opts.targetField} ${desiredValue}`.trim() : "",
-            desiredValue,
-          ].filter(Boolean);
-          const selects = queryAllDeep("select, [role=listbox], [role=combobox]").filter(isVisible);
-          for (const candText of searchCandidates) {
-            const target = candText.toLowerCase();
-            el = selects.find((s) => {
-              if (s.tagName === "SELECT") {
-                return [...s.options].some((o) => o.text.toLowerCase().includes(target) || o.value.toLowerCase() === target);
-              }
-              const id = (s.id || s.name || s.getAttribute?.("aria-label") || "").toLowerCase();
-              return id.includes(target);
-            });
-            if (el) {
-              desiredValue = candText;
-              break;
-            }
-          }
-        }
-        if (!el) return { ok: false, message: `Target dropdown matching "${opts?.targetField || desiredValue}" was not found on this page.` };
-
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-        el.focus();
-
-        let verified = false;
-        let selectedLabel = desiredValue;
-
-        if (el.tagName === "SELECT") {
-          const opt = [...el.options].find(
-            (o) =>
-              o.value.toLowerCase() === desiredValue.toLowerCase() ||
-              o.text.toLowerCase() === desiredValue.toLowerCase() ||
-              o.text.toLowerCase().includes(desiredValue.toLowerCase()),
-          );
-          if (opt) {
-            const nativeSelectSetter = Object.getOwnPropertyDescriptor(
-              window.HTMLSelectElement.prototype,
-              "value",
-            )?.set;
-            if (nativeSelectSetter) nativeSelectSetter.call(el, opt.value);
-            else el.value = opt.value;
-            if (el._valueTracker) el._valueTracker.setValue("");
-            selectedLabel = opt.text.trim();
-            verified = el.value === opt.value;
-          }
-          el.dispatchEvent(new Event("input", { bubbles: true }));
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-        } else {
-          dispatchRealClick(el);
-          let roleOpts = [];
-          for (let poll = 0; poll < 6; poll++) {
-            await new Promise((r) => setTimeout(r, 60));
-            roleOpts = queryAllDeep('[role="option"]').filter(isVisible);
-            if (roleOpts.length > 0) break;
-          }
-          const optsPool = roleOpts.length > 0 ? roleOpts : queryAllDeep('[role="menuitem"], li').filter(isVisible);
-          const dvLower = desiredValue.toLowerCase();
-          const optEl =
-            optsPool.find(
-              (o) =>
-                normalize(o.innerText || o.textContent || o.getAttribute?.("data-value") || "").toLowerCase() === dvLower,
-            ) ||
-            optsPool.find((o) =>
-              normalize(o.innerText || o.textContent || o.getAttribute?.("data-value") || "").toLowerCase().includes(dvLower),
-            );
-          if (optEl) {
-            optEl.scrollIntoView?.({ block: "nearest" });
-            dispatchRealClick(optEl);
-            verified = true;
-          }
-        }
-
-        return {
-          ok: verified,
-          verified,
-          action: "select",
-          message: verified
-            ? `Selected "${selectedLabel}" in dropdown.`
-            : `Option "${desiredValue}" was not found in dropdown.`,
-        };
-      }
-
-      // --- 6. CHECK / UNCHECK ACTION ---
-      if (act === "check" || act === "uncheck") {
-        let el = sel ? queryDeepSelector(sel) : null;
-        if (!el && (val || opts?.text)) {
-          const q = String(val || opts?.text).toLowerCase();
-          const boxes = queryAllDeep('input[type="checkbox"], input[type="radio"], [role="checkbox"], [role="radio"], [role="switch"]').filter(isVisible);
-          el = boxes.find((b) => {
-            const lbl =
-              (b.id && document.querySelector(`label[for="${CSS.escape(b.id)}"]`)?.innerText) ||
-              b.closest?.("label")?.innerText ||
-              "";
-            const txt = `${b.name || ""} ${b.id || ""} ${b.getAttribute?.("aria-label") || ""} ${lbl}`.toLowerCase();
-            return txt.includes(q);
-          });
-        }
-        if (!el) return { ok: false, message: `Target checkbox/radio matching "${val || sel}" was not found on this page.` };
-
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-        const shouldCheck = act === "check";
-        const currentChecked =
-          el.type === "checkbox" || el.type === "radio"
-            ? el.checked
-            : el.getAttribute?.("aria-checked") === "true";
-
-        if (currentChecked !== shouldCheck) {
-          dispatchRealClick(el);
-        }
-        if ((el.type === "checkbox" || el.type === "radio") && el.checked !== shouldCheck) {
-          el.checked = shouldCheck;
-          el.dispatchEvent(new Event("input", { bubbles: true }));
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-        }
-
-        const nowChecked =
-          el.type === "checkbox" || el.type === "radio"
-            ? el.checked
-            : el.getAttribute?.("aria-checked") === "true";
-        const okChecked = nowChecked === shouldCheck;
-
-        return {
-          ok: okChecked,
-          verified: okChecked,
-          action: act,
-          message: okChecked
-            ? `${shouldCheck ? "Checked" : "Unchecked"} "${el.name || el.id || val || "checkbox"}".`
-            : `Checkbox "${el.name || el.id || val || "checkbox"}" did not change to ${shouldCheck ? "checked" : "unchecked"}.`,
-        };
-      }
-
-      // --- 7. KEYBOARD ACTION ---
-      if (act === "keyboard") {
-        const targetKey = String(val || opts?.key || "Enter");
-        const el = sel ? queryDeepSelector(sel) : document.activeElement || document.body;
-        const keyOpts = { key: targetKey, code: targetKey, bubbles: true, cancelable: true };
-        el.dispatchEvent(new KeyboardEvent("keydown", keyOpts));
-        el.dispatchEvent(new KeyboardEvent("keypress", keyOpts));
-        el.dispatchEvent(new KeyboardEvent("keyup", keyOpts));
-
-        return {
-          ok: true,
-          verified: true,
-          action: "keyboard",
-          message: `Dispatched keyboard key "${targetKey}".`,
-        };
-      }
-
-      // --- 8. OPEN LINK ACTION ---
-      if (act === "open_link" || act === "open") {
-        let el = sel ? queryDeepSelector(sel) : null;
-        if (sel && !el && !val && !opts?.text) {
-          return {
-            ok: false,
-            stale: true,
-            message: "Target link is no longer present on this page.",
-          };
-        }
-        if (!el && (val || opts?.text)) {
-          const needle = String(val || opts?.text).trim().toLowerCase();
-          const links = queryAllDeep('a[href], [role="link"]').filter(isVisible);
-          const linkScores = [];
-          for (const a of links) {
-            const txt = normalize(a.innerText || a.getAttribute("aria-label") || a.title || "").toLowerCase();
-            const hrefStr = (a.getAttribute("href") || "").toLowerCase();
-            let s = 0;
-            if (txt === needle) s = 100;
-            else if (txt.startsWith(needle)) s = 75;
-            else if (txt.includes(needle)) s = 55;
-            else if (hrefStr.includes(needle)) s = 40;
-            if (s > 0) linkScores.push({ el: a, score: s, normText: txt });
-          }
-          linkScores.sort((a, b) => b.score - a.score);
-          if (linkScores.length > 0) {
-            if (typeof opts?.candidateIndex === "number" && opts.candidateIndex >= 1) {
-              el = linkScores[opts.candidateIndex - 1]?.el || null;
-            } else {
-              const topScore = linkScores[0].score;
-              const tiedLinks = linkScores.filter(
-                (c, i) =>
-                  i === 0 ||
-                  c.score === topScore ||
-                  (c.score >= topScore - 2 && c.normText === linkScores[0].normText),
-              );
-              if (tiedLinks.length > 1) {
-                return {
-                  ok: false,
-                  ambiguous: true,
-                  action: "open_link",
-                  target: val || opts?.text,
-                  candidates: tiedLinks.slice(0, 8).map((c, idx) => ({
-                    index: idx + 1,
-                    text: normalize(c.el.innerText || c.el.getAttribute("aria-label") || c.el.href || "").slice(0, 60),
-                    context: getContextLabel(c.el) || null,
-                    tag: c.el.tagName.toLowerCase(),
-                    selector: getUniqueSelector(c.el),
-                  })),
-                  message: `Found ${tiedLinks.length} links matching "${val || opts?.text}". Please choose which one.`,
-                };
-              }
-              el = linkScores[0].el;
-            }
-          }
-        }
-        if (!el) {
-          return {
-            ok: false,
-            message: `Could not find link matching "${val || opts?.text || sel || "target"}".`,
-          };
-        }
-        const urlBefore = window.location.href;
-        const rawHref = el.getAttribute?.("href") || el.href || "";
-        let resolvedHref = "";
-        if (rawHref && !/^\s*javascript:/i.test(rawHref)) {
-          try {
-            resolvedHref = new URL(rawHref, urlBefore).href;
-          } catch {
-            if (el.tagName === "A") {
-              return {
-                ok: false,
-                action: "open_link",
-                message: `Cannot open malformed link URL "${rawHref.slice(0, 80)}".`,
-              };
-            }
-          }
-        }
-        const label = normalize(el.innerText || el.getAttribute?.("aria-label") || resolvedHref || "link").slice(0, 60);
-        const isBlank = el.target === "_blank" || el.getAttribute?.("target") === "_blank";
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-        dispatchRealClick(el);
-        await new Promise((r) => {
-          const done = () => {
-            window.removeEventListener("pagehide", done);
-            window.removeEventListener("beforeunload", done);
-            r();
-          };
-          window.addEventListener("pagehide", done, { once: true });
-          window.addEventListener("beforeunload", done, { once: true });
-          setTimeout(done, 250);
-        });
-        const navigated = window.location.href !== urlBefore;
-        const destinationUrl = (navigated ? window.location.href : resolvedHref) || undefined;
-        return {
-          ok: true,
-          action: "open_link",
-          href: resolvedHref || undefined,
-          newUrl: destinationUrl,
-          openedNewTab: isBlank,
-          urlBefore,
-          urlAfter: window.location.href,
-          stateChange: navigated ? "navigated" : isBlank ? "new_tab" : "clicked",
-          message: `Opened link "${label}"${destinationUrl ? ` (${destinationUrl})` : ""}.`,
-        };
-      }
-
-      // --- 9. PHASE 2 INTERACTION ACTIONS (HOVER, DOUBLE CLICK, RIGHT CLICK, FOCUS, CLEAR, DRAG & DROP) ---
-      const resolvePhase2El = (selectorArg, textArg, poolSelector = 'button, a, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], input, textarea, select, [contenteditable="true"], [tabindex]:not([tabindex="-1"]), td, li, div, span') => {
-        if (selectorArg) {
-          const direct = queryDeepSelector(selectorArg);
-          if (direct) return direct;
-        }
-        const hint = normalize(String(textArg || "")).toLowerCase()
-          .replace(/^(?:the|a|an|ye|yeh|wo|woh|is|this)\s+/i, "")
-          .replace(/\s+(?:button|btn|tab|link|menu|field|box|input|element|row)$/i, "")
-          .trim();
-        if (!hint) return null;
-        const nodes = queryAllDeep(poolSelector).filter(isVisible);
-        let best = null;
-        let bestScore = 0;
-        for (const n of nodes) {
-          const t = normalize(
-            n.innerText || n.value || n.getAttribute?.("aria-label") || n.getAttribute?.("placeholder") || n.getAttribute?.("title") || n.getAttribute?.("name") || "",
-          ).toLowerCase();
-          if (!t) continue;
-          let sc = 0;
-          if (t === hint) sc = 100;
-          else if (t.startsWith(hint)) sc = 75;
-          else if (t.includes(hint)) sc = 55;
-          if (sc > 0 && ["BUTTON", "A", "INPUT", "SELECT", "TEXTAREA"].includes(n.tagName)) sc += 10;
-          sc -= Math.min(20, Math.floor(t.length / 25));
-          if (sc > bestScore) {
-            bestScore = sc;
-            best = n;
-          }
-        }
-        return best;
-      };
-
-      if (act === "hover_element" || act === "hover") {
-        const el = resolvePhase2El(sel, opts?.text || val);
-        if (!el) return { ok: false, action: "hover_element", message: `Element "${sel || opts?.text || val || "target"}" not found for hover.` };
-        el.scrollIntoView?.({ behavior: "smooth", block: "center" });
-        const beforeTextLen = (document.body?.innerText || "").length;
-        const r = el.getBoundingClientRect();
-        const evOpts = { bubbles: true, cancelable: true, clientX: Math.round(r.left + r.width / 2), clientY: Math.round(r.top + r.height / 2) };
-        try {
-          el.dispatchEvent(new PointerEvent("pointerover", evOpts));
-          el.dispatchEvent(new PointerEvent("pointerenter", evOpts));
-        } catch {}
-        el.dispatchEvent(new MouseEvent("mouseover", evOpts));
-        el.dispatchEvent(new MouseEvent("mouseenter", evOpts));
-        await new Promise((res) => setTimeout(res, 120));
-        const afterTextLen = (document.body?.innerText || "").length;
-        const label = normalize(el.innerText || el.getAttribute?.("aria-label") || el.tagName).slice(0, 50);
-        return {
-          ok: true,
-          verified: true,
-          hovered: true,
-          selector: getUniqueSelector(el),
-          text: label,
-          action: "hover_element",
-          domDelta: afterTextLen - beforeTextLen,
-          message: `Hovered over "${label}".`,
-        };
-      }
-
-      if (act === "double_click") {
-        const el = resolvePhase2El(sel, opts?.text || val);
-        if (!el) return { ok: false, action: "double_click", message: `Element "${sel || opts?.text || val || "target"}" not found for double click.` };
-        el.scrollIntoView?.({ behavior: "smooth", block: "center" });
-        dispatchRealClick(el);
-        dispatchRealClick(el);
-        const r = el.getBoundingClientRect();
-        el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, clientX: Math.round(r.left + r.width / 2), clientY: Math.round(r.top + r.height / 2) }));
-        const label = normalize(el.innerText || el.getAttribute?.("aria-label") || el.tagName).slice(0, 40);
-        return {
-          ok: true,
-          verified: true,
-          focused: document.activeElement === el,
-          selector: getUniqueSelector(el),
-          text: label,
-          action: "double_click",
-          message: `Double-clicked "${label}".`,
-        };
-      }
-
-      if (act === "right_click") {
-        const el = resolvePhase2El(sel, opts?.text || val);
-        if (!el) return { ok: false, action: "right_click", message: `Element "${sel || opts?.text || val || "target"}" not found for right click.` };
-        el.scrollIntoView?.({ behavior: "smooth", block: "center" });
-        const r = el.getBoundingClientRect();
-        const evOpts = { bubbles: true, cancelable: true, button: 2, buttons: 2, clientX: Math.round(r.left + r.width / 2), clientY: Math.round(r.top + r.height / 2) };
-        el.dispatchEvent(new MouseEvent("mousedown", evOpts));
-        el.dispatchEvent(new MouseEvent("mouseup", { ...evOpts, buttons: 0 }));
-        el.dispatchEvent(new MouseEvent("contextmenu", evOpts));
-        const label = normalize(el.innerText || el.getAttribute?.("aria-label") || el.tagName).slice(0, 40);
-        return {
-          ok: true,
-          verified: true,
-          contextMenuTriggered: true,
-          selector: getUniqueSelector(el),
-          text: label,
-          action: "right_click",
-          message: `Triggered context menu on "${label}".`,
-        };
-      }
-
-      if (act === "focus_element" || act === "focus") {
-        const el = resolvePhase2El(sel, opts?.text || val, 'input, textarea, select, [contenteditable="true"], [role="combobox"], button, a, [tabindex]:not([tabindex="-1"])');
-        if (!el) return { ok: false, action: "focus_element", message: `Element "${sel || opts?.text || val || "target"}" not found to focus.` };
-        el.scrollIntoView?.({ behavior: "smooth", block: "center" });
-        el.focus?.();
-        el.dispatchEvent(new FocusEvent("focus", { bubbles: true }));
-        const isFocused = document.activeElement === el || el.contains?.(document.activeElement);
-        return {
-          ok: true,
-          verified: isFocused,
-          isFocused,
-          selector: getUniqueSelector(el),
-          action: "focus_element",
-          message: isFocused ? `Focused element "${normalize(el.name || el.id || el.placeholder || sel || "target")}".` : `Focused container around "${sel || opts?.text || "target"}".`,
-        };
-      }
-
-      if (act === "clear_field") {
-        const el = sel
-          ? queryDeepSelector(sel)
-          : opts?.text || (val && val !== "__CURRENT__")
-            ? resolvePhase2El(null, opts?.text || val, 'input:not([type="hidden"]), textarea, [contenteditable="true"]')
-            : document.activeElement;
-        if (!el || el === document.body) return { ok: false, action: "clear_field", message: "No editable field found to clear." };
-        const fieldDesc = `${el.name || ""} ${el.id || ""} ${el.type || ""} ${el.getAttribute?.("aria-label") || ""}`;
-        if (SENSITIVE.test(fieldDesc) || el.type === "password") {
-          return { ok: false, action: "clear_field", message: "Security block: cannot modify sensitive/password field." };
-        }
-        const prevVal = el.isContentEditable ? (el.innerText || "") : (el.value || "");
-        if (el.isContentEditable) {
-          el.innerText = "";
-        } else {
-          const proto = el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement?.prototype : window.HTMLInputElement?.prototype;
-          const nativeSet = proto ? Object.getOwnPropertyDescriptor(proto, "value")?.set : null;
-          if (nativeSet) nativeSet.call(el, "");
-          else el.value = "";
-        }
-        el.dispatchEvent(new Event("input", { bubbles: true }));
+        if (el._valueTracker) el._valueTracker.setValue("");
+        el.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
-        const currentVal = el.isContentEditable ? (el.innerText || "") : (el.value || "");
-        const cleared = currentVal.trim() === "";
-        const fieldSel = sel || getUniqueSelector(el) || (el.id ? `#${el.id}` : "");
+        el.dispatchEvent(new Event("blur", { bubbles: true }));
+      }
+
+      const actualValue = isCe ? el.innerText || el.textContent : el.value;
+      const fieldLabel = el.name || el.id || el.placeholder || el.tagName.toLowerCase();
+      const verified =
+        actualValue !== undefined &&
+        actualValue !== null &&
+        (actualValue === strVal || (strVal.length > 0 && actualValue.toString().includes(strVal)));
+
+      return {
+        ok: verified,
+        verified,
+        action: "type",
+        field: fieldLabel,
+        message: verified
+          ? `Filled "${fieldLabel}" with requested value.`
+          : `Field "${fieldLabel}" rejected or cleared the typed value.`,
+      };
+    }
+
+    // --- 4b. SEARCH BOX FILL + SUBMIT ACTION ---
+    if (act === "search_submit") {
+      const searchCandidates = queryAllDeep(
+        'input[type="search"], [role="searchbox"], input[name*="search" i], input[id*="search" i], input[placeholder*="search" i], input[aria-label*="search" i], input[name="q"], input[name="query"]',
+      ).filter((el) => isVisible(el) && !el.disabled && !el.readOnly);
+      let searchEl = sel ? queryDeepSelector(sel) : searchCandidates[0] || null;
+      if (!searchEl) {
         return {
-          ok: cleared,
-          verified: cleared,
-          selector: fieldSel,
-          previousValue: prevVal,
-          undoRecord: {
-            id: `undo_${Date.now().toString(36)}`,
-            selector: fieldSel,
-            fieldLabel: el.name || el.id || el.placeholder || "field",
-            previousValue: prevVal,
-            newValue: "",
-            capturedAt: new Date().toISOString(),
-          },
-          action: "clear_field",
-          message: cleared ? `Cleared "${el.name || el.id || el.placeholder || "field"}" cleanly.` : "Field did not clear completely.",
+          ok: false,
+          noSearchInput: true,
+          action: "search_submit",
+          message: "No visible search input box was found on this page.",
         };
       }
+      const queryStr = String(val || opts?.query || "").trim();
+      searchEl.scrollIntoView({ behavior: "smooth", block: "center" });
+      searchEl.focus();
+      const proto =
+        searchEl.tagName === "TEXTAREA"
+          ? window.HTMLTextAreaElement.prototype
+          : window.HTMLInputElement.prototype;
+      const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+      if (nativeSetter) nativeSetter.call(searchEl, queryStr);
+      else searchEl.value = queryStr;
+      if (searchEl._valueTracker) searchEl._valueTracker.setValue("");
+      searchEl.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+      searchEl.dispatchEvent(new Event("change", { bubbles: true }));
 
-      if (act === "drag_and_drop") {
-        const src = sel ? queryDeepSelector(sel) : null;
-        const dstSel = opts?.targetSelector || val;
-        const dst = dstSel ? queryDeepSelector(dstSel) : null;
-        if (!src || !dst) {
-          return {
-            ok: false,
-            action: "drag_and_drop",
-            message: !src ? `Source element "${sel}" not found.` : `Drop target "${dstSel}" not found.`,
-          };
-        }
-        const beforeRect = src.getBoundingClientRect();
-        const dt = typeof DataTransfer !== "undefined" ? new DataTransfer() : undefined;
-        src.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer: dt }));
-        dst.dispatchEvent(new DragEvent("dragenter", { bubbles: true, cancelable: true, dataTransfer: dt }));
-        dst.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));
-        dst.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
-        src.dispatchEvent(new DragEvent("dragend", { bubbles: true, cancelable: true, dataTransfer: dt }));
-        await new Promise((res) => setTimeout(res, 100));
-        const afterRect = src.getBoundingClientRect();
-        const moved = Math.abs(afterRect.top - beforeRect.top) > 2 || Math.abs(afterRect.left - beforeRect.left) > 2 || dst.contains(src);
-        return {
-          ok: true,
-          verified: moved,
-          action: "drag_and_drop",
-          message: moved ? "Dragged and dropped element; position change verified." : "Dispatched drag-and-drop sequence onto target.",
+      let submittedWith = "enter_key";
+      const form = searchEl.closest?.("form");
+      const submitBtn = form
+        ? form.querySelector(
+            'button[type="submit"], input[type="submit"], button[aria-label*="search" i]',
+          )
+        : searchEl.parentElement?.querySelector?.('button, [role="button"]');
+      if (submitBtn && isVisible(submitBtn)) {
+        dispatchRealClick(submitBtn);
+        submittedWith = "search_button";
+      } else {
+        const enterOpts = {
+          key: "Enter",
+          code: "Enter",
+          keyCode: 13,
+          which: 13,
+          bubbles: true,
+          cancelable: true,
         };
+        searchEl.dispatchEvent(new KeyboardEvent("keydown", enterOpts));
+        searchEl.dispatchEvent(new KeyboardEvent("keypress", enterOpts));
+        searchEl.dispatchEvent(new KeyboardEvent("keyup", enterOpts));
+        if (form && typeof form.requestSubmit === "function") {
+          try {
+            form.requestSubmit();
+            submittedWith = "form_submit";
+          } catch {}
+        }
       }
+      const fieldLabel =
+        searchEl.getAttribute?.("aria-label") ||
+        searchEl.placeholder ||
+        searchEl.name ||
+        searchEl.id ||
+        "search";
+      return {
+        ok: true,
+        verified: true,
+        action: "search_submit",
+        query: queryStr,
+        field: fieldLabel,
+        submittedWith,
+        message: `Searched "${queryStr}" using ${fieldLabel}.`,
+      };
+    }
 
-      if (act === "scroll_to_element" || act === "scroll_container") {
-        const target = act === "scroll_to_element" ? (sel ? queryDeepSelector(sel) : null) : null;
-        const container = opts?.containerSelector ? queryDeepSelector(opts.containerSelector) : (act === "scroll_container" && sel ? queryDeepSelector(sel) : null);
-        if (act === "scroll_to_element" && !target) {
-          return { ok: false, action: act, message: `Element "${sel || opts?.targetText || "target"}" not found.` };
-        }
-        if (act === "scroll_container" && !container) {
-          return { ok: false, action: act, message: `Scrollable container "${opts?.containerSelector || sel}" not found.` };
-        }
-        if (target) {
-          target.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
-          await new Promise((r) => setTimeout(r, 180));
-          const r = target.getBoundingClientRect();
-          const inViewport = r.bottom > 0 && r.top < (window.innerHeight || 800);
-          return { ok: true, verified: inViewport, inViewport, action: act, message: inViewport ? "Scrolled target element into viewport." : "Scrolled toward element." };
-        }
-        const prevY = container.scrollTop;
-        const prevX = container.scrollLeft;
-        const dir = String(val || opts?.direction || "down").toLowerCase();
-        const delta = typeof opts?.amount === "number" ? opts.amount : 360;
-        if (dir === "top") container.scrollTop = 0;
-        else if (dir === "bottom") container.scrollTop = container.scrollHeight;
-        else if (dir === "left") container.scrollLeft -= delta;
-        else if (dir === "right") container.scrollLeft += delta;
-        else if (dir === "up") container.scrollTop -= delta;
-        else container.scrollTop += delta;
-        await new Promise((r) => setTimeout(r, 100));
-        return {
-          ok: true,
-          verified: container.scrollTop !== prevY || container.scrollLeft !== prevX,
-          scrollTop: Math.round(container.scrollTop),
-          scrollLeft: Math.round(container.scrollLeft),
-          action: act,
-          message: `Scrolled container ${dir}.`,
-        };
-      }
-
-      if (act === "scroll_until_text") {
-        const needle = normalize(String(val || opts?.text || "")).toLowerCase();
-        if (!needle) return { ok: false, action: act, message: "No text specified for scroll_until_text." };
-        const maxScrolls = Math.min(20, Math.max(1, Number(opts?.maxScrolls) || 10));
-        const scroller = opts?.containerSelector ? queryDeepSelector(opts.containerSelector) : null;
-        for (let i = 0; i <= maxScrolls; i++) {
-          const hit = queryAllDeep("h1,h2,h3,h4,h5,h6,button,a,p,span,td,li,div,label")
-            .filter(isVisible)
-            .find((el) => normalize(el.innerText || "").toLowerCase().includes(needle));
-          if (hit) {
-            hit.scrollIntoView?.({ behavior: "smooth", block: "center" });
-            return {
-              ok: true,
-              verified: true,
-              found: true,
-              iterations: i,
-              action: act,
-              message: `Found "${needle}" after ${i} scroll step(s).`,
-            };
-          }
-          if (i === maxScrolls) break;
-          if (scroller) scroller.scrollBy({ top: Math.max(250, scroller.clientHeight * 0.8), behavior: "smooth" });
-          else window.scrollBy({ top: Math.max(350, (window.innerHeight || 720) * 0.8), behavior: "smooth" });
-          await new Promise((r) => setTimeout(r, 240));
-        }
-        return { ok: false, verified: false, found: false, iterations: maxScrolls, action: act, message: `Scrolled ${maxScrolls} times but could not find "${needle}".` };
-      }
-
-      if (act === "infinite_scroll") {
-        const maxIter = Math.min(20, Math.max(1, Number(opts?.maxIterations) || 8));
-        const targetTextLower = String(opts?.targetText || val || "").trim().toLowerCase();
-        const maxItems = Number(opts?.maxItems) || 100;
-        const seen = new Set();
-        const items = [];
-        let lastHeight = 0;
-        let stalled = 0;
-        let endOfFeed = false;
-        let iters = 0;
-
-        for (let i = 0; i < maxIter; i++) {
-          iters = i + 1;
-          const cards = queryAllDeep('[data-testid*="item"], [data-testid*="product"], [class*="card"], article, tr, li').filter(isVisible);
-          let newlyAdded = 0;
-          for (const c of cards) {
-            const t = normalize(c.innerText || "").slice(0, 140);
-            if (!t || t.length < 3) continue;
-            const k = t.toLowerCase();
-            if (!seen.has(k)) {
-              seen.add(k);
-              items.push(t);
-              newlyAdded++;
+    // --- 5. SELECT / DROPDOWN ACTION ---
+    if (act === "select") {
+      let desiredValue = String(val || opts?.text || "");
+      let el = sel ? queryDeepSelector(sel) : null;
+      if (!el && opts?.targetField) {
+        const tf = opts.targetField.toLowerCase();
+        const selects = queryAllDeep("select, [role=listbox], [role=combobox]").filter(isVisible);
+        el = selects.find((s) => {
+          const labelTxt =
+            (s.id && document.querySelector(`label[for="${CSS.escape(s.id)}"]`)?.innerText) ||
+            s.closest?.("label")?.innerText ||
+            "";
+          const id =
+            `${s.id || ""} ${s.name || ""} ${s.getAttribute?.("aria-label") || ""} ${labelTxt}`.toLowerCase();
+          return id.includes(tf);
+        });
+        // Fallback for multi-word option like "Pro Plan select karo" where word 0 wasn't a field name
+        if (!el && desiredValue) {
+          const combinedPhrase = `${opts.targetField} ${desiredValue}`.trim().toLowerCase();
+          const phraseMatch = selects.find((s) => {
+            if (s.tagName === "SELECT") {
+              return [...s.options].some(
+                (o) =>
+                  o.text.toLowerCase().includes(combinedPhrase) ||
+                  o.value.toLowerCase() === combinedPhrase,
+              );
             }
+            return false;
+          });
+          if (phraseMatch) {
+            el = phraseMatch;
+            desiredValue = `${opts.targetField} ${desiredValue}`.trim();
           }
-          const h = document.documentElement?.scrollHeight || document.body?.scrollHeight || 0;
-          if (newlyAdded === 0 && h <= lastHeight + 8) stalled++;
-          else stalled = 0;
-          lastHeight = Math.max(lastHeight, h);
-          if (targetTextLower && items.some((it) => it.toLowerCase().includes(targetTextLower))) break;
-          if (items.length >= maxItems) break;
-          if (stalled >= 2) {
-            endOfFeed = true;
+        }
+      }
+      if (!el && desiredValue) {
+        const searchCandidates = [
+          opts?.targetField ? `${opts.targetField} ${desiredValue}`.trim() : "",
+          desiredValue,
+        ].filter(Boolean);
+        const selects = queryAllDeep("select, [role=listbox], [role=combobox]").filter(isVisible);
+        for (const candText of searchCandidates) {
+          const target = candText.toLowerCase();
+          el = selects.find((s) => {
+            if (s.tagName === "SELECT") {
+              return [...s.options].some(
+                (o) => o.text.toLowerCase().includes(target) || o.value.toLowerCase() === target,
+              );
+            }
+            const id = (s.id || s.name || s.getAttribute?.("aria-label") || "").toLowerCase();
+            return id.includes(target);
+          });
+          if (el) {
+            desiredValue = candText;
             break;
           }
-          window.scrollBy({ top: Math.max(500, (window.innerHeight || 720) * 0.85), behavior: "smooth" });
-          await new Promise((r) => setTimeout(r, 320));
         }
-        return {
-          ok: true,
-          verified: true,
-          action: act,
-          iterations: iters,
-          uniqueItemsCount: items.length,
-          endOfFeed,
-          extractedData: items.slice(0, maxItems),
-          message: `Collected ${items.length} unique item(s) across ${iters} scroll step(s)${endOfFeed ? " (end of feed reached)" : ""}.`,
-        };
       }
-
-      if (act === "paginate") {
-        const targetPage = opts?.targetPage || val || "next";
-        const controlsPool = queryAllDeep('a, button, [role="button"], [role="link"]').filter(isVisible);
-        let btn = null;
-        if (targetPage === "next") {
-          btn = document.querySelector('a[rel="next"], button[aria-label*="next" i], .pagination .next') ||
-            controlsPool.find((c) => /^next\b/i.test(normalize(c.innerText || c.getAttribute?.("aria-label") || "")));
-        } else if (targetPage === "prev" || targetPage === "previous") {
-          btn = document.querySelector('a[rel="prev"], button[aria-label*="prev" i], .pagination .prev') ||
-            controlsPool.find((c) => /^prev/i.test(normalize(c.innerText || c.getAttribute?.("aria-label") || "")));
-        } else if (targetPage === "last") {
-          btn = controlsPool.find((c) => /\blast\b/i.test(normalize(c.innerText || c.getAttribute?.("aria-label") || ""))) ||
-            controlsPool.filter((c) => /^\d+$/.test(normalize(c.innerText || ""))).sort((a, b) => Number(b.innerText) - Number(a.innerText))[0];
-        } else {
-          const pStr = String(targetPage).trim();
-          btn = controlsPool.find((c) => normalize(c.innerText || "") === pStr || normalize(c.getAttribute?.("aria-label") || "").toLowerCase() === `page ${pStr}`);
-        }
-        if (!btn) return { ok: false, action: act, message: `Pagination control "${targetPage}" not found.` };
-        if (btn.disabled || btn.getAttribute?.("aria-disabled") === "true") {
-          return { ok: false, action: act, message: `Pagination control "${targetPage}" is disabled.` };
-        }
-        const urlBefore = location.href;
-        btn.scrollIntoView?.({ behavior: "smooth", block: "center" });
-        dispatchRealClick(btn);
-        await new Promise((r) => setTimeout(r, 200));
+      if (!el)
         return {
-          ok: true,
-          verified: true,
-          urlChanged: location.href !== urlBefore,
-          action: act,
-          message: `Navigated to pagination "${targetPage}".`,
+          ok: false,
+          message: `Target dropdown matching "${opts?.targetField || desiredValue}" was not found on this page.`,
         };
-      }
 
-      if (
-        act === "select_custom_dropdown" ||
-        act === "select_combobox_option" ||
-        act === "interact_with_listbox" ||
-        act === "interact_with_autocomplete"
-      ) {
-        const dropdownPool = '[role="combobox"], [role="listbox"], .ant-select, .MuiSelect-select, [class*="react-select"], select';
-        const trigger = sel
-          ? queryDeepSelector(sel)
-          : opts?.targetField
-            ? resolvePhase2El(null, opts.targetField, dropdownPool)
-            : queryAllDeep(dropdownPool).filter(isVisible)[0];
-        if (!trigger) return { ok: false, action: act, message: `Dropdown/combobox "${sel || opts?.targetField || "target"}" not found.` };
-        const desired = String(val || opts?.value || "").trim();
-        if (!desired) return { ok: false, action: act, message: "No option value specified." };
-        const desiredLower = desired.toLowerCase();
-        const prevSelected = normalize(trigger.getAttribute?.("data-selected-value") || trigger.value || trigger.innerText || "");
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.focus();
 
-        trigger.scrollIntoView?.({ behavior: "smooth", block: "center" });
-        trigger.focus?.();
-        if (act === "interact_with_autocomplete" || trigger.tagName === "INPUT") {
-          const proto = window.HTMLInputElement?.prototype;
-          const nativeSet = proto ? Object.getOwnPropertyDescriptor(proto, "value")?.set : null;
-          if (nativeSet) nativeSet.call(trigger, desired);
-          else trigger.value = desired;
-          trigger.dispatchEvent(new Event("input", { bubbles: true }));
-          await new Promise((r) => setTimeout(r, 180));
-        } else {
-          dispatchRealClick(trigger);
-          await new Promise((r) => setTimeout(r, 150));
+      let verified = false;
+      let selectedLabel = desiredValue;
+
+      if (el.tagName === "SELECT") {
+        const opt = [...el.options].find(
+          (o) =>
+            o.value.toLowerCase() === desiredValue.toLowerCase() ||
+            o.text.toLowerCase() === desiredValue.toLowerCase() ||
+            o.text.toLowerCase().includes(desiredValue.toLowerCase()),
+        );
+        if (opt) {
+          const nativeSelectSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLSelectElement.prototype,
+            "value",
+          )?.set;
+          if (nativeSelectSetter) nativeSelectSetter.call(el, opt.value);
+          else el.value = opt.value;
+          if (el._valueTracker) el._valueTracker.setValue("");
+          selectedLabel = opt.text.trim();
+          verified = el.value === opt.value;
         }
-
-        const optPool = queryAllDeep('[role="option"], [role="menuitem"], .ant-select-item-option, .MuiMenuItem-root, [class*="-option"], li').filter(isVisible);
-        const matchOpt =
-          optPool.find((o) => normalize(o.innerText || o.textContent || "").toLowerCase() === desiredLower) ||
-          optPool.find((o) => normalize(o.innerText || o.textContent || "").toLowerCase().includes(desiredLower));
-
-        if (!matchOpt) {
-          return {
-            ok: false,
-            verified: false,
-            action: act,
-            message: `Option "${desired}" was not found inside opened dropdown menu.`,
-          };
-        }
-        const selectedText = normalize(matchOpt.innerText || matchOpt.textContent || desired);
-        dispatchRealClick(matchOpt);
-        matchOpt.setAttribute?.("aria-selected", "true");
-        trigger.setAttribute?.("data-selected-value", selectedText);
-        const triggerSel = sel || getUniqueSelector(trigger) || "";
-        return {
-          ok: true,
-          verified: true,
-          selectedText,
-          selector: triggerSel,
-          undoRecord: triggerSel
-            ? {
-                id: `undo_${Date.now().toString(36)}`,
-                selector: triggerSel,
-                fieldLabel: opts?.targetField || trigger.getAttribute?.("aria-label") || trigger.name || "dropdown",
-                previousValue: prevSelected,
-                newValue: selectedText,
-                capturedAt: new Date().toISOString(),
-              }
-            : undefined,
-          action: act,
-          message: `Selected "${selectedText}" cleanly.`,
-        };
-      }
-
-      if (act === "extract_table") {
-        const tbl = (sel ? queryDeepSelector(sel) : null) || queryAllDeep('table, [role="grid"]').filter(isVisible)[0];
-        if (!tbl) return { ok: false, action: act, message: "No visible table or ARIA grid found on this page." };
-        const headerEls = [...tbl.querySelectorAll('thead th, thead td, [role="columnheader"]')];
-        const headers = headerEls.map((h) => normalize(h.innerText || ""));
-        const rowEls = [...tbl.querySelectorAll('tbody tr, [role="row"]')].slice(0, Number(opts?.maxRows) || 100);
-        const rows = [];
-        for (const rEl of rowEls) {
-          const cells = [...rEl.querySelectorAll('td, th, [role="gridcell"], [role="cell"]')].map((c) => normalize(c.innerText || ""));
-          if (cells.length === 0 || (headers.length && cells.join("|") === headers.join("|"))) continue;
-          if (SENSITIVE.test(cells.join(" "))) continue;
-          if (headers.length) {
-            const obj = {};
-            headers.forEach((h, i) => {
-              obj[h || `col_${i + 1}`] = cells[i] || "";
-            });
-            rows.push(obj);
-          } else {
-            rows.push({ values: cells });
-          }
-        }
-        return {
-          ok: true,
-          verified: true,
-          action: act,
-          headers,
-          rowCount: rows.length,
-          extractedData: rows,
-          message: `Extracted ${rows.length} table row(s).`,
-        };
-      }
-
-      if (act === "validate_form_errors") {
-        const rootForm = (sel ? queryDeepSelector(sel) : null) || document;
-        const fields = [...rootForm.querySelectorAll('input, textarea, select, [role="combobox"]')].filter(isVisible);
-        const errs = [];
-        for (const f of fields) {
-          const lbl = f.name || f.id || f.getAttribute?.("aria-label") || f.placeholder || "field";
-          const valStr = normalize(f.value || f.innerText || "");
-          if ((f.required || f.getAttribute?.("aria-required") === "true") && !valStr) {
-            errs.push({ field: lbl, kind: "required", message: `${lbl} is required.` });
-          } else if (f.getAttribute?.("aria-invalid") === "true" || (typeof f.checkValidity === "function" && !f.checkValidity())) {
-            errs.push({ field: lbl, kind: "invalid", message: f.validationMessage || `${lbl} has invalid value.` });
-          }
-        }
-        const disabledSubmits = queryAllDeep('button[type="submit"], input[type="submit"]')
-          .filter((b) => isVisible(b) && (b.disabled || b.getAttribute?.("aria-disabled") === "true"))
-          .map((b) => normalize(b.innerText || b.value || "Submit"));
-        return {
-          ok: true,
-          verified: true,
-          valid: errs.length === 0 && disabledSubmits.length === 0,
-          errorCount: errs.length,
-          errors: errs,
-          disabledSubmits,
-          action: act,
-          message: errs.length === 0 ? "Form validation passed cleanly." : `Detected ${errs.length} form validation error(s).`,
-        };
-      }
-
-      if (act === "undo_reversible_action") {
-        const rec = opts?.undoRecord;
-        if (!rec && opts?.scope !== "navigation") {
-          return { ok: false, action: act, message: "No undo record available to revert." };
-        }
-        if (opts?.scope === "navigation") {
-          window.history.back();
-          return { ok: true, verified: true, action: act, message: "Navigated back in browser history." };
-        }
-        const el = rec?.selector ? queryDeepSelector(rec.selector) : null;
-        if (!el) return { ok: false, action: act, message: `Field "${rec?.selector || "target"}" no longer exists for undo.` };
-        if (el.isContentEditable) el.innerText = rec.previousValue || "";
-        else el.value = rec.previousValue || "";
         el.dispatchEvent(new Event("input", { bubbles: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
-        return {
-          ok: true,
-          verified: true,
-          restoredValue: rec.previousValue || "",
-          action: act,
-          message: `Restored "${rec.fieldLabel || "field"}" back to previous value.`,
-        };
+      } else {
+        dispatchRealClick(el);
+        let roleOpts = [];
+        for (let poll = 0; poll < 6; poll++) {
+          await new Promise((r) => setTimeout(r, 60));
+          roleOpts = queryAllDeep('[role="option"]').filter(isVisible);
+          if (roleOpts.length > 0) break;
+        }
+        const optsPool =
+          roleOpts.length > 0 ? roleOpts : queryAllDeep('[role="menuitem"], li').filter(isVisible);
+        const dvLower = desiredValue.toLowerCase();
+        const optEl =
+          optsPool.find(
+            (o) =>
+              normalize(
+                o.innerText || o.textContent || o.getAttribute?.("data-value") || "",
+              ).toLowerCase() === dvLower,
+          ) ||
+          optsPool.find((o) =>
+            normalize(o.innerText || o.textContent || o.getAttribute?.("data-value") || "")
+              .toLowerCase()
+              .includes(dvLower),
+          );
+        if (optEl) {
+          optEl.scrollIntoView?.({ block: "nearest" });
+          dispatchRealClick(optEl);
+          verified = true;
+        }
       }
 
-      if (act === "coordinate_action") {
-        const coord = opts?.coordinate;
-        if (!coord || typeof coord.x !== "number" || typeof coord.y !== "number") {
-          return { ok: false, action: act, message: "Missing coordinate target." };
+      return {
+        ok: verified,
+        verified,
+        action: "select",
+        message: verified
+          ? `Selected "${selectedLabel}" in dropdown.`
+          : `Option "${desiredValue}" was not found in dropdown.`,
+      };
+    }
+
+    // --- 6. CHECK / UNCHECK ACTION ---
+    if (act === "check" || act === "uncheck") {
+      let el = sel ? queryDeepSelector(sel) : null;
+      if (!el && (val || opts?.text)) {
+        const q = String(val || opts?.text).toLowerCase();
+        const boxes = queryAllDeep(
+          'input[type="checkbox"], input[type="radio"], [role="checkbox"], [role="radio"], [role="switch"]',
+        ).filter(isVisible);
+        el = boxes.find((b) => {
+          const lbl =
+            (b.id && document.querySelector(`label[for="${CSS.escape(b.id)}"]`)?.innerText) ||
+            b.closest?.("label")?.innerText ||
+            "";
+          const txt =
+            `${b.name || ""} ${b.id || ""} ${b.getAttribute?.("aria-label") || ""} ${lbl}`.toLowerCase();
+          return txt.includes(q);
+        });
+      }
+      if (!el)
+        return {
+          ok: false,
+          message: `Target checkbox/radio matching "${val || sel}" was not found on this page.`,
+        };
+
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      const shouldCheck = act === "check";
+      const currentChecked =
+        el.type === "checkbox" || el.type === "radio"
+          ? el.checked
+          : el.getAttribute?.("aria-checked") === "true";
+
+      if (currentChecked !== shouldCheck) {
+        dispatchRealClick(el);
+      }
+      if ((el.type === "checkbox" || el.type === "radio") && el.checked !== shouldCheck) {
+        el.checked = shouldCheck;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+
+      const nowChecked =
+        el.type === "checkbox" || el.type === "radio"
+          ? el.checked
+          : el.getAttribute?.("aria-checked") === "true";
+      const okChecked = nowChecked === shouldCheck;
+
+      return {
+        ok: okChecked,
+        verified: okChecked,
+        action: act,
+        message: okChecked
+          ? `${shouldCheck ? "Checked" : "Unchecked"} "${el.name || el.id || val || "checkbox"}".`
+          : `Checkbox "${el.name || el.id || val || "checkbox"}" did not change to ${shouldCheck ? "checked" : "unchecked"}.`,
+      };
+    }
+
+    // --- 7. KEYBOARD ACTION ---
+    if (act === "keyboard") {
+      const targetKey = String(val || opts?.key || "Enter");
+      const el = sel ? queryDeepSelector(sel) : document.activeElement || document.body;
+      const keyOpts = { key: targetKey, code: targetKey, bubbles: true, cancelable: true };
+      el.dispatchEvent(new KeyboardEvent("keydown", keyOpts));
+      el.dispatchEvent(new KeyboardEvent("keypress", keyOpts));
+      el.dispatchEvent(new KeyboardEvent("keyup", keyOpts));
+
+      return {
+        ok: true,
+        verified: true,
+        action: "keyboard",
+        message: `Dispatched keyboard key "${targetKey}".`,
+      };
+    }
+
+    // --- 8. OPEN LINK ACTION ---
+    if (act === "open_link" || act === "open") {
+      let el = sel ? queryDeepSelector(sel) : null;
+      if (sel && !el && !val && !opts?.text) {
+        return {
+          ok: false,
+          stale: true,
+          message: "Target link is no longer present on this page.",
+        };
+      }
+      if (!el && (val || opts?.text)) {
+        const needle = String(val || opts?.text)
+          .trim()
+          .toLowerCase();
+        const links = queryAllDeep('a[href], [role="link"]').filter(isVisible);
+        const linkScores = [];
+        for (const a of links) {
+          const txt = normalize(
+            a.innerText || a.getAttribute("aria-label") || a.title || "",
+          ).toLowerCase();
+          const hrefStr = (a.getAttribute("href") || "").toLowerCase();
+          let s = 0;
+          if (txt === needle) s = 100;
+          else if (txt.startsWith(needle)) s = 75;
+          else if (txt.includes(needle)) s = 55;
+          else if (hrefStr.includes(needle)) s = 40;
+          if (s > 0) linkScores.push({ el: a, score: s, normText: txt });
         }
-        const curVw = window.visualViewport?.width || window.innerWidth || 1280;
-        const curVh = window.visualViewport?.height || window.innerHeight || 720;
-        const curSx = window.scrollX || 0;
-        const curSy = window.scrollY || 0;
-        const curZoom = window.visualViewport?.scale || 1;
-        if (
-          Date.now() - (coord.capturedAt || 0) > (coord.maxAgeMs || 8000) ||
-          Math.abs(curSx - (coord.scrollX || 0)) > 24 ||
-          Math.abs(curSy - (coord.scrollY || 0)) > 24 ||
-          Math.abs(curVw - (coord.viewportWidth || curVw)) > 12 ||
-          Math.abs(curZoom - (coord.zoomScale || 1)) > 0.05
+        linkScores.sort((a, b) => b.score - a.score);
+        if (linkScores.length > 0) {
+          if (typeof opts?.candidateIndex === "number" && opts.candidateIndex >= 1) {
+            el = linkScores[opts.candidateIndex - 1]?.el || null;
+          } else {
+            const topScore = linkScores[0].score;
+            const tiedLinks = linkScores.filter(
+              (c, i) =>
+                i === 0 ||
+                c.score === topScore ||
+                (c.score >= topScore - 2 && c.normText === linkScores[0].normText),
+            );
+            if (tiedLinks.length > 1) {
+              return {
+                ok: false,
+                ambiguous: true,
+                action: "open_link",
+                target: val || opts?.text,
+                candidates: tiedLinks.slice(0, 8).map((c, idx) => ({
+                  index: idx + 1,
+                  text: normalize(
+                    c.el.innerText || c.el.getAttribute("aria-label") || c.el.href || "",
+                  ).slice(0, 60),
+                  context: getContextLabel(c.el) || null,
+                  tag: c.el.tagName.toLowerCase(),
+                  selector: getUniqueSelector(c.el),
+                })),
+                message: `Found ${tiedLinks.length} links matching "${val || opts?.text}". Please choose which one.`,
+              };
+            }
+            el = linkScores[0].el;
+          }
+        }
+      }
+      if (!el) {
+        return {
+          ok: false,
+          message: `Could not find link matching "${val || opts?.text || sel || "target"}".`,
+        };
+      }
+      const urlBefore = window.location.href;
+      const rawHref = el.getAttribute?.("href") || el.href || "";
+      let resolvedHref = "";
+      if (rawHref && !/^\s*javascript:/i.test(rawHref)) {
+        try {
+          resolvedHref = new URL(rawHref, urlBefore).href;
+        } catch {
+          if (el.tagName === "A") {
+            return {
+              ok: false,
+              action: "open_link",
+              message: `Cannot open malformed link URL "${rawHref.slice(0, 80)}".`,
+            };
+          }
+        }
+      }
+      const label = normalize(
+        el.innerText || el.getAttribute?.("aria-label") || resolvedHref || "link",
+      ).slice(0, 60);
+      const isBlank = el.target === "_blank" || el.getAttribute?.("target") === "_blank";
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      dispatchRealClick(el);
+      await new Promise((r) => {
+        const done = () => {
+          window.removeEventListener("pagehide", done);
+          window.removeEventListener("beforeunload", done);
+          r();
+        };
+        window.addEventListener("pagehide", done, { once: true });
+        window.addEventListener("beforeunload", done, { once: true });
+        setTimeout(done, 250);
+      });
+      const navigated = window.location.href !== urlBefore;
+      const destinationUrl = (navigated ? window.location.href : resolvedHref) || undefined;
+      return {
+        ok: true,
+        action: "open_link",
+        href: resolvedHref || undefined,
+        newUrl: destinationUrl,
+        openedNewTab: isBlank,
+        urlBefore,
+        urlAfter: window.location.href,
+        stateChange: navigated ? "navigated" : isBlank ? "new_tab" : "clicked",
+        message: `Opened link "${label}"${destinationUrl ? ` (${destinationUrl})` : ""}.`,
+      };
+    }
+
+    // --- 9. PHASE 2 INTERACTION ACTIONS (HOVER, DOUBLE CLICK, RIGHT CLICK, FOCUS, CLEAR, DRAG & DROP) ---
+    const resolvePhase2El = (
+      selectorArg,
+      textArg,
+      poolSelector = 'button, a, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], input, textarea, select, [contenteditable="true"], [tabindex]:not([tabindex="-1"]), td, li, div, span',
+    ) => {
+      if (selectorArg) {
+        const direct = queryDeepSelector(selectorArg);
+        if (direct) return direct;
+      }
+      const hint = normalize(String(textArg || ""))
+        .toLowerCase()
+        .replace(/^(?:the|a|an|ye|yeh|wo|woh|is|this)\s+/i, "")
+        .replace(/\s+(?:button|btn|tab|link|menu|field|box|input|element|row)$/i, "")
+        .trim();
+      if (!hint) return null;
+      const nodes = queryAllDeep(poolSelector).filter(isVisible);
+      let best = null;
+      let bestScore = 0;
+      for (const n of nodes) {
+        const t = normalize(
+          n.innerText ||
+            n.value ||
+            n.getAttribute?.("aria-label") ||
+            n.getAttribute?.("placeholder") ||
+            n.getAttribute?.("title") ||
+            n.getAttribute?.("name") ||
+            "",
+        ).toLowerCase();
+        if (!t) continue;
+        let sc = 0;
+        if (t === hint) sc = 100;
+        else if (t.startsWith(hint)) sc = 75;
+        else if (t.includes(hint)) sc = 55;
+        if (sc > 0 && ["BUTTON", "A", "INPUT", "SELECT", "TEXTAREA"].includes(n.tagName)) sc += 10;
+        sc -= Math.min(20, Math.floor(t.length / 25));
+        if (sc > bestScore) {
+          bestScore = sc;
+          best = n;
+        }
+      }
+      return best;
+    };
+
+    if (act === "hover_element" || act === "hover") {
+      const el = resolvePhase2El(sel, opts?.text || val);
+      if (!el)
+        return {
+          ok: false,
+          action: "hover_element",
+          message: `Element "${sel || opts?.text || val || "target"}" not found for hover.`,
+        };
+      el.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      const beforeTextLen = (document.body?.innerText || "").length;
+      const r = el.getBoundingClientRect();
+      const evOpts = {
+        bubbles: true,
+        cancelable: true,
+        clientX: Math.round(r.left + r.width / 2),
+        clientY: Math.round(r.top + r.height / 2),
+      };
+      try {
+        el.dispatchEvent(new PointerEvent("pointerover", evOpts));
+        el.dispatchEvent(new PointerEvent("pointerenter", evOpts));
+      } catch {}
+      el.dispatchEvent(new MouseEvent("mouseover", evOpts));
+      el.dispatchEvent(new MouseEvent("mouseenter", evOpts));
+      await new Promise((res) => setTimeout(res, 120));
+      const afterTextLen = (document.body?.innerText || "").length;
+      const label = normalize(el.innerText || el.getAttribute?.("aria-label") || el.tagName).slice(
+        0,
+        50,
+      );
+      return {
+        ok: true,
+        verified: true,
+        hovered: true,
+        selector: getUniqueSelector(el),
+        text: label,
+        action: "hover_element",
+        domDelta: afterTextLen - beforeTextLen,
+        message: `Hovered over "${label}".`,
+      };
+    }
+
+    if (act === "double_click") {
+      const el = resolvePhase2El(sel, opts?.text || val);
+      if (!el)
+        return {
+          ok: false,
+          action: "double_click",
+          message: `Element "${sel || opts?.text || val || "target"}" not found for double click.`,
+        };
+      el.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      dispatchRealClick(el);
+      dispatchRealClick(el);
+      const r = el.getBoundingClientRect();
+      el.dispatchEvent(
+        new MouseEvent("dblclick", {
+          bubbles: true,
+          cancelable: true,
+          clientX: Math.round(r.left + r.width / 2),
+          clientY: Math.round(r.top + r.height / 2),
+        }),
+      );
+      const label = normalize(el.innerText || el.getAttribute?.("aria-label") || el.tagName).slice(
+        0,
+        40,
+      );
+      return {
+        ok: true,
+        verified: true,
+        focused: document.activeElement === el,
+        selector: getUniqueSelector(el),
+        text: label,
+        action: "double_click",
+        message: `Double-clicked "${label}".`,
+      };
+    }
+
+    if (act === "right_click") {
+      const el = resolvePhase2El(sel, opts?.text || val);
+      if (!el)
+        return {
+          ok: false,
+          action: "right_click",
+          message: `Element "${sel || opts?.text || val || "target"}" not found for right click.`,
+        };
+      el.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      const r = el.getBoundingClientRect();
+      const evOpts = {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        buttons: 2,
+        clientX: Math.round(r.left + r.width / 2),
+        clientY: Math.round(r.top + r.height / 2),
+      };
+      el.dispatchEvent(new MouseEvent("mousedown", evOpts));
+      el.dispatchEvent(new MouseEvent("mouseup", { ...evOpts, buttons: 0 }));
+      el.dispatchEvent(new MouseEvent("contextmenu", evOpts));
+      const label = normalize(el.innerText || el.getAttribute?.("aria-label") || el.tagName).slice(
+        0,
+        40,
+      );
+      return {
+        ok: true,
+        verified: true,
+        contextMenuTriggered: true,
+        selector: getUniqueSelector(el),
+        text: label,
+        action: "right_click",
+        message: `Triggered context menu on "${label}".`,
+      };
+    }
+
+    if (act === "focus_element" || act === "focus") {
+      const el = resolvePhase2El(
+        sel,
+        opts?.text || val,
+        'input, textarea, select, [contenteditable="true"], [role="combobox"], button, a, [tabindex]:not([tabindex="-1"])',
+      );
+      if (!el)
+        return {
+          ok: false,
+          action: "focus_element",
+          message: `Element "${sel || opts?.text || val || "target"}" not found to focus.`,
+        };
+      el.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      el.focus?.();
+      el.dispatchEvent(new FocusEvent("focus", { bubbles: true }));
+      const isFocused = document.activeElement === el || el.contains?.(document.activeElement);
+      return {
+        ok: true,
+        verified: isFocused,
+        isFocused,
+        selector: getUniqueSelector(el),
+        action: "focus_element",
+        message: isFocused
+          ? `Focused element "${normalize(el.name || el.id || el.placeholder || sel || "target")}".`
+          : `Focused container around "${sel || opts?.text || "target"}".`,
+      };
+    }
+
+    if (act === "clear_field") {
+      const el = sel
+        ? queryDeepSelector(sel)
+        : opts?.text || (val && val !== "__CURRENT__")
+          ? resolvePhase2El(
+              null,
+              opts?.text || val,
+              'input:not([type="hidden"]), textarea, [contenteditable="true"]',
+            )
+          : document.activeElement;
+      if (!el || el === document.body)
+        return { ok: false, action: "clear_field", message: "No editable field found to clear." };
+      const fieldDesc = `${el.name || ""} ${el.id || ""} ${el.type || ""} ${el.getAttribute?.("aria-label") || ""}`;
+      if (SENSITIVE.test(fieldDesc) || el.type === "password") {
+        return {
+          ok: false,
+          action: "clear_field",
+          message: "Security block: cannot modify sensitive/password field.",
+        };
+      }
+      const prevVal = el.isContentEditable ? el.innerText || "" : el.value || "";
+      if (el.isContentEditable) {
+        el.innerText = "";
+      } else {
+        const proto =
+          el.tagName === "TEXTAREA"
+            ? window.HTMLTextAreaElement?.prototype
+            : window.HTMLInputElement?.prototype;
+        const nativeSet = proto ? Object.getOwnPropertyDescriptor(proto, "value")?.set : null;
+        if (nativeSet) nativeSet.call(el, "");
+        else el.value = "";
+      }
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      const currentVal = el.isContentEditable ? el.innerText || "" : el.value || "";
+      const cleared = currentVal.trim() === "";
+      const fieldSel = sel || getUniqueSelector(el) || (el.id ? `#${el.id}` : "");
+      return {
+        ok: cleared,
+        verified: cleared,
+        selector: fieldSel,
+        previousValue: prevVal,
+        undoRecord: {
+          id: `undo_${Date.now().toString(36)}`,
+          selector: fieldSel,
+          fieldLabel: el.name || el.id || el.placeholder || "field",
+          previousValue: prevVal,
+          newValue: "",
+          capturedAt: new Date().toISOString(),
+        },
+        action: "clear_field",
+        message: cleared
+          ? `Cleared "${el.name || el.id || el.placeholder || "field"}" cleanly.`
+          : "Field did not clear completely.",
+      };
+    }
+
+    if (act === "drag_and_drop") {
+      const src = sel ? queryDeepSelector(sel) : null;
+      const dstSel = opts?.targetSelector || val;
+      const dst = dstSel ? queryDeepSelector(dstSel) : null;
+      if (!src || !dst) {
+        return {
+          ok: false,
+          action: "drag_and_drop",
+          message: !src
+            ? `Source element "${sel}" not found.`
+            : `Drop target "${dstSel}" not found.`,
+        };
+      }
+      const beforeRect = src.getBoundingClientRect();
+      const dt = typeof DataTransfer !== "undefined" ? new DataTransfer() : undefined;
+      src.dispatchEvent(
+        new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer: dt }),
+      );
+      dst.dispatchEvent(
+        new DragEvent("dragenter", { bubbles: true, cancelable: true, dataTransfer: dt }),
+      );
+      dst.dispatchEvent(
+        new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }),
+      );
+      dst.dispatchEvent(
+        new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }),
+      );
+      src.dispatchEvent(
+        new DragEvent("dragend", { bubbles: true, cancelable: true, dataTransfer: dt }),
+      );
+      await new Promise((res) => setTimeout(res, 100));
+      const afterRect = src.getBoundingClientRect();
+      const moved =
+        Math.abs(afterRect.top - beforeRect.top) > 2 ||
+        Math.abs(afterRect.left - beforeRect.left) > 2 ||
+        dst.contains(src);
+      return {
+        ok: true,
+        verified: moved,
+        action: "drag_and_drop",
+        message: moved
+          ? "Dragged and dropped element; position change verified."
+          : "Dispatched drag-and-drop sequence onto target.",
+      };
+    }
+
+    if (act === "scroll_to_element" || act === "scroll_container") {
+      const target = act === "scroll_to_element" ? (sel ? queryDeepSelector(sel) : null) : null;
+      const container = opts?.containerSelector
+        ? queryDeepSelector(opts.containerSelector)
+        : act === "scroll_container" && sel
+          ? queryDeepSelector(sel)
+          : null;
+      if (act === "scroll_to_element" && !target) {
+        return {
+          ok: false,
+          action: act,
+          message: `Element "${sel || opts?.targetText || "target"}" not found.`,
+        };
+      }
+      if (act === "scroll_container" && !container) {
+        return {
+          ok: false,
+          action: act,
+          message: `Scrollable container "${opts?.containerSelector || sel}" not found.`,
+        };
+      }
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+        await new Promise((r) => setTimeout(r, 180));
+        const r = target.getBoundingClientRect();
+        const inViewport = r.bottom > 0 && r.top < (window.innerHeight || 800);
+        return {
+          ok: true,
+          verified: inViewport,
+          inViewport,
+          action: act,
+          message: inViewport
+            ? "Scrolled target element into viewport."
+            : "Scrolled toward element.",
+        };
+      }
+      const prevY = container.scrollTop;
+      const prevX = container.scrollLeft;
+      const dir = String(val || opts?.direction || "down").toLowerCase();
+      const delta = typeof opts?.amount === "number" ? opts.amount : 360;
+      if (dir === "top") container.scrollTop = 0;
+      else if (dir === "bottom") container.scrollTop = container.scrollHeight;
+      else if (dir === "left") container.scrollLeft -= delta;
+      else if (dir === "right") container.scrollLeft += delta;
+      else if (dir === "up") container.scrollTop -= delta;
+      else container.scrollTop += delta;
+      await new Promise((r) => setTimeout(r, 100));
+      return {
+        ok: true,
+        verified: container.scrollTop !== prevY || container.scrollLeft !== prevX,
+        scrollTop: Math.round(container.scrollTop),
+        scrollLeft: Math.round(container.scrollLeft),
+        action: act,
+        message: `Scrolled container ${dir}.`,
+      };
+    }
+
+    if (act === "scroll_until_text") {
+      const needle = normalize(String(val || opts?.text || "")).toLowerCase();
+      if (!needle)
+        return { ok: false, action: act, message: "No text specified for scroll_until_text." };
+      const maxScrolls = Math.min(20, Math.max(1, Number(opts?.maxScrolls) || 10));
+      const scroller = opts?.containerSelector ? queryDeepSelector(opts.containerSelector) : null;
+      for (let i = 0; i <= maxScrolls; i++) {
+        const hit = queryAllDeep("h1,h2,h3,h4,h5,h6,button,a,p,span,td,li,div,label")
+          .filter(isVisible)
+          .find((el) =>
+            normalize(el.innerText || "")
+              .toLowerCase()
+              .includes(needle),
+          );
+        if (hit) {
+          hit.scrollIntoView?.({ behavior: "smooth", block: "center" });
+          return {
+            ok: true,
+            verified: true,
+            found: true,
+            iterations: i,
+            action: act,
+            message: `Found "${needle}" after ${i} scroll step(s).`,
+          };
+        }
+        if (i === maxScrolls) break;
+        if (scroller)
+          scroller.scrollBy({
+            top: Math.max(250, scroller.clientHeight * 0.8),
+            behavior: "smooth",
+          });
+        else
+          window.scrollBy({
+            top: Math.max(350, (window.innerHeight || 720) * 0.8),
+            behavior: "smooth",
+          });
+        await new Promise((r) => setTimeout(r, 240));
+      }
+      return {
+        ok: false,
+        verified: false,
+        found: false,
+        iterations: maxScrolls,
+        action: act,
+        message: `Scrolled ${maxScrolls} times but could not find "${needle}".`,
+      };
+    }
+
+    if (act === "infinite_scroll") {
+      const maxIter = Math.min(20, Math.max(1, Number(opts?.maxIterations) || 8));
+      const targetTextLower = String(opts?.targetText || val || "")
+        .trim()
+        .toLowerCase();
+      const maxItems = Number(opts?.maxItems) || 100;
+      const seen = new Set();
+      const items = [];
+      let lastHeight = 0;
+      let stalled = 0;
+      let endOfFeed = false;
+      let iters = 0;
+
+      for (let i = 0; i < maxIter; i++) {
+        iters = i + 1;
+        const cards = queryAllDeep(
+          '[data-testid*="item"], [data-testid*="product"], [class*="card"], article, tr, li',
+        ).filter(isVisible);
+        let newlyAdded = 0;
+        for (const c of cards) {
+          const t = normalize(c.innerText || "").slice(0, 140);
+          if (!t || t.length < 3) continue;
+          const k = t.toLowerCase();
+          if (!seen.has(k)) {
+            seen.add(k);
+            items.push(t);
+            newlyAdded++;
+          }
+        }
+        const h = document.documentElement?.scrollHeight || document.body?.scrollHeight || 0;
+        if (newlyAdded === 0 && h <= lastHeight + 8) stalled++;
+        else stalled = 0;
+        lastHeight = Math.max(lastHeight, h);
+        if (targetTextLower && items.some((it) => it.toLowerCase().includes(targetTextLower)))
+          break;
+        if (items.length >= maxItems) break;
+        if (stalled >= 2) {
+          endOfFeed = true;
+          break;
+        }
+        window.scrollBy({
+          top: Math.max(500, (window.innerHeight || 720) * 0.85),
+          behavior: "smooth",
+        });
+        await new Promise((r) => setTimeout(r, 320));
+      }
+      return {
+        ok: true,
+        verified: true,
+        action: act,
+        iterations: iters,
+        uniqueItemsCount: items.length,
+        endOfFeed,
+        extractedData: items.slice(0, maxItems),
+        message: `Collected ${items.length} unique item(s) across ${iters} scroll step(s)${endOfFeed ? " (end of feed reached)" : ""}.`,
+      };
+    }
+
+    if (act === "paginate") {
+      const targetPage = opts?.targetPage || val || "next";
+      const controlsPool = queryAllDeep('a, button, [role="button"], [role="link"]').filter(
+        isVisible,
+      );
+      let btn = null;
+      if (targetPage === "next") {
+        btn =
+          document.querySelector(
+            'a[rel="next"], button[aria-label*="next" i], .pagination .next',
+          ) ||
+          controlsPool.find((c) =>
+            /^next\b/i.test(normalize(c.innerText || c.getAttribute?.("aria-label") || "")),
+          );
+      } else if (targetPage === "prev" || targetPage === "previous") {
+        btn =
+          document.querySelector(
+            'a[rel="prev"], button[aria-label*="prev" i], .pagination .prev',
+          ) ||
+          controlsPool.find((c) =>
+            /^prev/i.test(normalize(c.innerText || c.getAttribute?.("aria-label") || "")),
+          );
+      } else if (targetPage === "last") {
+        btn =
+          controlsPool.find((c) =>
+            /\blast\b/i.test(normalize(c.innerText || c.getAttribute?.("aria-label") || "")),
+          ) ||
+          controlsPool
+            .filter((c) => /^\d+$/.test(normalize(c.innerText || "")))
+            .sort((a, b) => Number(b.innerText) - Number(a.innerText))[0];
+      } else {
+        const pStr = String(targetPage).trim();
+        btn = controlsPool.find(
+          (c) =>
+            normalize(c.innerText || "") === pStr ||
+            normalize(c.getAttribute?.("aria-label") || "").toLowerCase() === `page ${pStr}`,
+        );
+      }
+      if (!btn)
+        return { ok: false, action: act, message: `Pagination control "${targetPage}" not found.` };
+      if (btn.disabled || btn.getAttribute?.("aria-disabled") === "true") {
+        return {
+          ok: false,
+          action: act,
+          message: `Pagination control "${targetPage}" is disabled.`,
+        };
+      }
+      const urlBefore = location.href;
+      btn.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      dispatchRealClick(btn);
+      await new Promise((r) => setTimeout(r, 200));
+      return {
+        ok: true,
+        verified: true,
+        urlChanged: location.href !== urlBefore,
+        action: act,
+        message: `Navigated to pagination "${targetPage}".`,
+      };
+    }
+
+    if (
+      act === "select_custom_dropdown" ||
+      act === "select_combobox_option" ||
+      act === "interact_with_listbox" ||
+      act === "interact_with_autocomplete"
+    ) {
+      const dropdownPool =
+        '[role="combobox"], [role="listbox"], .ant-select, .MuiSelect-select, [class*="react-select"], select';
+      const trigger = sel
+        ? queryDeepSelector(sel)
+        : opts?.targetField
+          ? resolvePhase2El(null, opts.targetField, dropdownPool)
+          : queryAllDeep(dropdownPool).filter(isVisible)[0];
+      if (!trigger)
+        return {
+          ok: false,
+          action: act,
+          message: `Dropdown/combobox "${sel || opts?.targetField || "target"}" not found.`,
+        };
+      const desired = String(val || opts?.value || "").trim();
+      if (!desired) return { ok: false, action: act, message: "No option value specified." };
+      const desiredLower = desired.toLowerCase();
+      const prevSelected = normalize(
+        trigger.getAttribute?.("data-selected-value") || trigger.value || trigger.innerText || "",
+      );
+
+      trigger.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      trigger.focus?.();
+      if (act === "interact_with_autocomplete" || trigger.tagName === "INPUT") {
+        const proto = window.HTMLInputElement?.prototype;
+        const nativeSet = proto ? Object.getOwnPropertyDescriptor(proto, "value")?.set : null;
+        if (nativeSet) nativeSet.call(trigger, desired);
+        else trigger.value = desired;
+        trigger.dispatchEvent(new Event("input", { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 180));
+      } else {
+        dispatchRealClick(trigger);
+        await new Promise((r) => setTimeout(r, 150));
+      }
+
+      const optPool = queryAllDeep(
+        '[role="option"], [role="menuitem"], .ant-select-item-option, .MuiMenuItem-root, [class*="-option"], li',
+      ).filter(isVisible);
+      const matchOpt =
+        optPool.find(
+          (o) => normalize(o.innerText || o.textContent || "").toLowerCase() === desiredLower,
+        ) ||
+        optPool.find((o) =>
+          normalize(o.innerText || o.textContent || "")
+            .toLowerCase()
+            .includes(desiredLower),
+        );
+
+      if (!matchOpt) {
+        return {
+          ok: false,
+          verified: false,
+          action: act,
+          message: `Option "${desired}" was not found inside opened dropdown menu.`,
+        };
+      }
+      const selectedText = normalize(matchOpt.innerText || matchOpt.textContent || desired);
+      dispatchRealClick(matchOpt);
+      matchOpt.setAttribute?.("aria-selected", "true");
+      trigger.setAttribute?.("data-selected-value", selectedText);
+      const triggerSel = sel || getUniqueSelector(trigger) || "";
+      return {
+        ok: true,
+        verified: true,
+        selectedText,
+        selector: triggerSel,
+        undoRecord: triggerSel
+          ? {
+              id: `undo_${Date.now().toString(36)}`,
+              selector: triggerSel,
+              fieldLabel:
+                opts?.targetField ||
+                trigger.getAttribute?.("aria-label") ||
+                trigger.name ||
+                "dropdown",
+              previousValue: prevSelected,
+              newValue: selectedText,
+              capturedAt: new Date().toISOString(),
+            }
+          : undefined,
+        action: act,
+        message: `Selected "${selectedText}" cleanly.`,
+      };
+    }
+
+    if (act === "extract_table") {
+      const tbl =
+        (sel ? queryDeepSelector(sel) : null) ||
+        queryAllDeep('table, [role="grid"]').filter(isVisible)[0];
+      if (!tbl)
+        return {
+          ok: false,
+          action: act,
+          message: "No visible table or ARIA grid found on this page.",
+        };
+      const headerEls = [...tbl.querySelectorAll('thead th, thead td, [role="columnheader"]')];
+      const headers = headerEls.map((h) => normalize(h.innerText || ""));
+      const rowEls = [...tbl.querySelectorAll('tbody tr, [role="row"]')].slice(
+        0,
+        Number(opts?.maxRows) || 100,
+      );
+      const rows = [];
+      for (const rEl of rowEls) {
+        const cells = [...rEl.querySelectorAll('td, th, [role="gridcell"], [role="cell"]')].map(
+          (c) => normalize(c.innerText || ""),
+        );
+        if (cells.length === 0 || (headers.length && cells.join("|") === headers.join("|")))
+          continue;
+        if (SENSITIVE.test(cells.join(" "))) continue;
+        if (headers.length) {
+          const obj = {};
+          headers.forEach((h, i) => {
+            obj[h || `col_${i + 1}`] = cells[i] || "";
+          });
+          rows.push(obj);
+        } else {
+          rows.push({ values: cells });
+        }
+      }
+      return {
+        ok: true,
+        verified: true,
+        action: act,
+        headers,
+        rowCount: rows.length,
+        extractedData: rows,
+        message: `Extracted ${rows.length} table row(s).`,
+      };
+    }
+
+    if (act === "validate_form_errors") {
+      const rootForm = (sel ? queryDeepSelector(sel) : null) || document;
+      const fields = [
+        ...rootForm.querySelectorAll('input, textarea, select, [role="combobox"]'),
+      ].filter(isVisible);
+      const errs = [];
+      for (const f of fields) {
+        const lbl = f.name || f.id || f.getAttribute?.("aria-label") || f.placeholder || "field";
+        const valStr = normalize(f.value || f.innerText || "");
+        if ((f.required || f.getAttribute?.("aria-required") === "true") && !valStr) {
+          errs.push({ field: lbl, kind: "required", message: `${lbl} is required.` });
+        } else if (
+          f.getAttribute?.("aria-invalid") === "true" ||
+          (typeof f.checkValidity === "function" && !f.checkValidity())
         ) {
-          return { ok: false, stale: true, action: act, message: "Visual coordinate is stale after viewport/scroll/zoom change. Re-capture required." };
+          errs.push({
+            field: lbl,
+            kind: "invalid",
+            message: f.validationMessage || `${lbl} has invalid value.`,
+          });
         }
-        const hit = document.elementFromPoint(coord.x, coord.y);
-        if (!hit || hit.closest?.("#ai-buddy-arm-overlay")) {
-          return { ok: false, action: act, message: "No interactive page element found at visual coordinate." };
-        }
-        dispatchRealClick(hit);
+      }
+      const disabledSubmits = queryAllDeep('button[type="submit"], input[type="submit"]')
+        .filter((b) => isVisible(b) && (b.disabled || b.getAttribute?.("aria-disabled") === "true"))
+        .map((b) => normalize(b.innerText || b.value || "Submit"));
+      return {
+        ok: true,
+        verified: true,
+        valid: errs.length === 0 && disabledSubmits.length === 0,
+        errorCount: errs.length,
+        errors: errs,
+        disabledSubmits,
+        action: act,
+        message:
+          errs.length === 0
+            ? "Form validation passed cleanly."
+            : `Detected ${errs.length} form validation error(s).`,
+      };
+    }
+
+    if (act === "undo_reversible_action") {
+      const rec = opts?.undoRecord;
+      if (!rec && opts?.scope !== "navigation") {
+        return { ok: false, action: act, message: "No undo record available to revert." };
+      }
+      if (opts?.scope === "navigation") {
+        window.history.back();
         return {
           ok: true,
           verified: true,
           action: act,
-          message: `Clicked visual target "${normalize(hit.innerText || hit.tagName).slice(0, 40)}".`,
+          message: "Navigated back in browser history.",
         };
       }
+      const el = rec?.selector ? queryDeepSelector(rec.selector) : null;
+      if (!el)
+        return {
+          ok: false,
+          action: act,
+          message: `Field "${rec?.selector || "target"}" no longer exists for undo.`,
+        };
+      if (el.isContentEditable) el.innerText = rec.previousValue || "";
+      else el.value = rec.previousValue || "";
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return {
+        ok: true,
+        verified: true,
+        restoredValue: rec.previousValue || "",
+        action: act,
+        message: `Restored "${rec.fieldLabel || "field"}" back to previous value.`,
+      };
+    }
 
-      return { ok: false, message: `Unknown browser action: ${act}` };
+    if (act === "coordinate_action") {
+      const coord = opts?.coordinate;
+      if (!coord || typeof coord.x !== "number" || typeof coord.y !== "number") {
+        return { ok: false, action: act, message: "Missing coordinate target." };
+      }
+      const curVw = window.visualViewport?.width || window.innerWidth || 1280;
+      const curVh = window.visualViewport?.height || window.innerHeight || 720;
+      const curSx = window.scrollX || 0;
+      const curSy = window.scrollY || 0;
+      const curZoom = window.visualViewport?.scale || 1;
+      if (
+        Date.now() - (coord.capturedAt || 0) > (coord.maxAgeMs || 8000) ||
+        Math.abs(curSx - (coord.scrollX || 0)) > 24 ||
+        Math.abs(curSy - (coord.scrollY || 0)) > 24 ||
+        Math.abs(curVw - (coord.viewportWidth || curVw)) > 12 ||
+        Math.abs(curZoom - (coord.zoomScale || 1)) > 0.05
+      ) {
+        return {
+          ok: false,
+          stale: true,
+          action: act,
+          message:
+            "Visual coordinate is stale after viewport/scroll/zoom change. Re-capture required.",
+        };
+      }
+      const hit = document.elementFromPoint(coord.x, coord.y);
+      if (!hit || hit.closest?.("#ai-buddy-arm-overlay")) {
+        return {
+          ok: false,
+          action: act,
+          message: "No interactive page element found at visual coordinate.",
+        };
+      }
+      dispatchRealClick(hit);
+      return {
+        ok: true,
+        verified: true,
+        action: act,
+        message: `Clicked visual target "${normalize(hit.innerText || hit.tagName).slice(0, 40)}".`,
+      };
+    }
+
+    return { ok: false, message: `Unknown browser action: ${act}` };
   };
 
   const tabUrlBefore = tab.url;
@@ -7194,7 +7950,8 @@ async function executeAction(action, selector, value, options = {}) {
 
   if (
     finalResult?.ok &&
-    (options?.trackDownload || /download/i.test(`${options?.text || ""} ${finalResult?.text || ""}`))
+    (options?.trackDownload ||
+      /download/i.test(`${options?.text || ""} ${finalResult?.text || ""}`))
   ) {
     const dlInfo = await waitForTriggeredDownload(actionStartedAt, 2000).catch(() => null);
     if (dlInfo?.found) {
@@ -7217,124 +7974,127 @@ async function extractPageData(selector, extractType = "order_id", query, option
   }
 
   const extractFrameFunc = (sel, type, q, opts) => {
-      const normalize = (t) => (t || "").replace(/\s+/g, " ").trim();
-      const queryAllDeep = (selector, root = document) => {
-        const out = [...root.querySelectorAll(selector)];
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-        let node;
-        while ((node = walker.nextNode())) {
-          if (node.shadowRoot) {
-            out.push(...queryAllDeep(selector, node.shadowRoot));
+    const normalize = (t) => (t || "").replace(/\s+/g, " ").trim();
+    const queryAllDeep = (selector, root = document) => {
+      const out = [...root.querySelectorAll(selector)];
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+      let node;
+      while ((node = walker.nextNode())) {
+        if (node.shadowRoot) {
+          out.push(...queryAllDeep(selector, node.shadowRoot));
+        }
+      }
+      return out;
+    };
+    const extracted = [];
+
+    // 1. Extract Order IDs pattern (supports standard + Meesho sub-order IDs like 123456789_1)
+    if (type === "order_id" || type === "orders") {
+      const orderIdPattern =
+        /(?:sub[-_\s]*order[-_\s]*id|order[-_\s]*id|oid|#)\s*[:#-]?\s*([a-zA-Z0-9_-]{4,28})/i;
+      const meeshoSubOrderPattern = /\b(\d{6,16}(?:_\d+)?)\b/;
+      const rows = queryAllDeep(
+        sel ||
+          'table tbody tr, [data-testid*="order" i], [data-row-key], div.order-card, [class*="order-card" i], [class*="orderRow" i]',
+      );
+
+      const seenOrderIds = new Set();
+      if (rows.length > 0) {
+        rows.forEach((row, i) => {
+          const rowText = normalize(row.innerText || row.textContent);
+          if (!rowText) return;
+          const match = rowText.match(orderIdPattern);
+          const cells = [...row.querySelectorAll("td, th, span, p, strong, div")]
+            .map((c) => normalize(c.innerText))
+            .filter(Boolean);
+          const idCandidate =
+            cells.find((c) => /^\d{6,16}(?:_\d+)?$/.test(c)) ||
+            cells.find((c) => /^[A-Z]{2,6}[-_]?[A-Z0-9_-]{3,20}$/i.test(c) && /\d/.test(c)) ||
+            (match ? match[1] : null) ||
+            rowText.match(meeshoSubOrderPattern)?.[1] ||
+            null;
+
+          if (idCandidate && !seenOrderIds.has(idCandidate)) {
+            seenOrderIds.add(idCandidate);
+            const status = /pending|ready\s*to\s*ship|unshipped|processing|on\s*hold/i.test(rowText)
+              ? "pending"
+              : /shipped|delivered|dispatched|cancelled|returned/i.test(rowText)
+                ? "completed"
+                : "unknown";
+            extracted.push({
+              orderId: idCandidate,
+              rowNumber: i + 1,
+              status,
+              details: rowText.slice(0, 140),
+            });
+          }
+        });
+      }
+
+      // If no structured rows found, search visible page text for order / sub-order IDs
+      if (extracted.length === 0) {
+        const orderIdGlobal =
+          /(?:sub[-_\s]*order[-_\s]*id|order[-_\s]*id|oid|#)\s*[:#-]?\s*([a-zA-Z0-9_-]{4,28})/gi;
+        const pageText = document.body?.innerText || "";
+        let m;
+        while ((m = orderIdGlobal.exec(pageText)) !== null && extracted.length < 40) {
+          const id = m[1];
+          if (id && /\d/.test(id) && !seenOrderIds.has(id)) {
+            seenOrderIds.add(id);
+            extracted.push({
+              orderId: id,
+              status: "unknown",
+              details: "Extracted from visible page content",
+            });
           }
         }
-        return out;
-      };
-      const extracted = [];
+      }
 
-      // 1. Extract Order IDs pattern (supports standard + Meesho sub-order IDs like 123456789_1)
-      if (type === "order_id" || type === "orders") {
-        const orderIdPattern =
-          /(?:sub[-_\s]*order[-_\s]*id|order[-_\s]*id|oid|#)\s*[:#-]?\s*([a-zA-Z0-9_-]{4,28})/i;
-        const meeshoSubOrderPattern = /\b(\d{6,16}(?:_\d+)?)\b/;
-        const rows = queryAllDeep(
-          sel ||
-            'table tbody tr, [data-testid*="order" i], [data-row-key], div.order-card, [class*="order-card" i], [class*="orderRow" i]',
-        );
+      // When pending orders were explicitly requested, prefer rows with pending status if any exist
+      const wantPending = String(opts?.statusFilter || q || "")
+        .toLowerCase()
+        .includes("pending");
+      const pendingOnly = wantPending ? extracted.filter((item) => item.status === "pending") : [];
+      const finalList = pendingOnly.length > 0 ? pendingOnly : extracted;
 
-        const seenOrderIds = new Set();
-        if (rows.length > 0) {
-          rows.forEach((row, i) => {
-            const rowText = normalize(row.innerText || row.textContent);
-            if (!rowText) return;
-            const match = rowText.match(orderIdPattern);
-            const cells = [...row.querySelectorAll("td, th, span, p, strong, div")]
-              .map((c) => normalize(c.innerText))
-              .filter(Boolean);
-            const idCandidate =
-              cells.find((c) => /^\d{6,16}(?:_\d+)?$/.test(c)) ||
-              cells.find((c) => /^[A-Z]{2,6}[-_]?[A-Z0-9_-]{3,20}$/i.test(c) && /\d/.test(c)) ||
-              (match ? match[1] : null) ||
-              (rowText.match(meeshoSubOrderPattern)?.[1] || null);
-
-            if (idCandidate && !seenOrderIds.has(idCandidate)) {
-              seenOrderIds.add(idCandidate);
-              const status = /pending|ready\s*to\s*ship|unshipped|processing|on\s*hold/i.test(rowText)
-                ? "pending"
-                : /shipped|delivered|dispatched|cancelled|returned/i.test(rowText)
-                  ? "completed"
-                  : "unknown";
-              extracted.push({
-                orderId: idCandidate,
-                rowNumber: i + 1,
-                status,
-                details: rowText.slice(0, 140),
-              });
-            }
-          });
-        }
-
-        // If no structured rows found, search visible page text for order / sub-order IDs
-        if (extracted.length === 0) {
-          const orderIdGlobal =
-            /(?:sub[-_\s]*order[-_\s]*id|order[-_\s]*id|oid|#)\s*[:#-]?\s*([a-zA-Z0-9_-]{4,28})/gi;
-          const pageText = document.body?.innerText || "";
-          let m;
-          while ((m = orderIdGlobal.exec(pageText)) !== null && extracted.length < 40) {
-            const id = m[1];
-            if (id && /\d/.test(id) && !seenOrderIds.has(id)) {
-              seenOrderIds.add(id);
-              extracted.push({
-                orderId: id,
-                status: "unknown",
-                details: "Extracted from visible page content",
-              });
-            }
-          }
-        }
-
-        // When pending orders were explicitly requested, prefer rows with pending status if any exist
-        const wantPending = String(opts?.statusFilter || q || "").toLowerCase().includes("pending");
-        const pendingOnly = wantPending ? extracted.filter((item) => item.status === "pending") : [];
-        const finalList = pendingOnly.length > 0 ? pendingOnly : extracted;
-
-        if (finalList.length === 0) {
-          return {
-            ok: false,
-            count: 0,
-            type: "order_id",
-            extracted: [],
-            summary: "No matching order IDs were found on this page.",
-          };
-        }
-
+      if (finalList.length === 0) {
         return {
-          ok: true,
-          count: finalList.length,
+          ok: false,
+          count: 0,
           type: "order_id",
-          extracted: finalList,
-          summary: `Extracted ${finalList.length} ${pendingOnly.length > 0 ? "pending " : ""}order IDs from page.`,
+          extracted: [],
+          summary: "No matching order IDs were found on this page.",
         };
       }
 
-      // 2. Generic list or table extraction
-      const elements = queryAllDeep(sel || "table tbody tr, ul li");
-      elements.forEach((el, idx) => {
-        if (idx < (opts?.limit || 50)) {
-          const t = normalize(el.innerText || el.textContent);
-          if (t) extracted.push(t);
-        }
-      });
-
       return {
-        ok: extracted.length > 0,
-        count: extracted.length,
-        type: "list",
-        extracted,
-        summary:
-          extracted.length > 0
-            ? `Extracted ${extracted.length} items from page.`
-            : "No matching table rows or list items were found on this page.",
+        ok: true,
+        count: finalList.length,
+        type: "order_id",
+        extracted: finalList,
+        summary: `Extracted ${finalList.length} ${pendingOnly.length > 0 ? "pending " : ""}order IDs from page.`,
       };
+    }
+
+    // 2. Generic list or table extraction
+    const elements = queryAllDeep(sel || "table tbody tr, ul li");
+    elements.forEach((el, idx) => {
+      if (idx < (opts?.limit || 50)) {
+        const t = normalize(el.innerText || el.textContent);
+        if (t) extracted.push(t);
+      }
+    });
+
+    return {
+      ok: extracted.length > 0,
+      count: extracted.length,
+      type: "list",
+      extracted,
+      summary:
+        extracted.length > 0
+          ? `Extracted ${extracted.length} items from page.`
+          : "No matching table rows or list items were found on this page.",
+    };
   };
 
   const extractRun = await runTabScript({
@@ -7553,8 +8313,15 @@ async function closeBrowserTabSafely({ tabId, url, allowCloseUserTab = false } =
   if (!target) {
     return { ok: false, message: "Target tab not found to close." };
   }
-  if (target.pinned || RESTRICTED.test(target.url || "") || (target.url || "").startsWith(chrome.runtime.getURL(""))) {
-    return { ok: false, message: "Safety block: cannot close pinned, restricted, or extension tabs." };
+  if (
+    target.pinned ||
+    RESTRICTED.test(target.url || "") ||
+    (target.url || "").startsWith(chrome.runtime.getURL(""))
+  ) {
+    return {
+      ok: false,
+      message: "Safety block: cannot close pinned, restricted, or extension tabs.",
+    };
   }
   if (!swBuddyOpenedTabs.has(target.id) && !allowCloseUserTab) {
     return {
@@ -7580,7 +8347,9 @@ async function readTabSnapshot(tabId) {
     label: `readTabSnapshot:${target.id}`,
   });
   const snap = run.results?.[0]?.result || null;
-  return snap ? { ok: true, tabId: target.id, snapshot: snap } : { ok: false, message: "Could not read snapshot from tab." };
+  return snap
+    ? { ok: true, tabId: target.id, snapshot: snap }
+    : { ok: false, message: "Could not read snapshot from tab." };
 }
 
 async function keyboardAction(key = "Enter", selector, options = {}) {
@@ -7699,11 +8468,13 @@ async function waitForCondition(selector, text, timeoutMs = 4000) {
     label: "waitForCondition",
   });
 
-  return waitRun.results?.[0]?.result || {
-    ok: false,
-    found: false,
-    message: waitRun.error || "Wait condition timed out.",
-  };
+  return (
+    waitRun.results?.[0]?.result || {
+      ok: false,
+      found: false,
+      message: waitRun.error || "Wait condition timed out.",
+    }
+  );
 }
 
 const SAFE_PORTAL_URL_MAP = {
@@ -7740,7 +8511,9 @@ function isAllowedDownloadUrl(rawUrl) {
   if (!rawUrl || typeof rawUrl !== "string") return false;
   try {
     const parsed = new URL(rawUrl);
-    return parsed.protocol === "https:" || parsed.protocol === "http:" || parsed.protocol === "blob:";
+    return (
+      parsed.protocol === "https:" || parsed.protocol === "http:" || parsed.protocol === "blob:"
+    );
   } catch {
     return false;
   }
@@ -7897,7 +8670,9 @@ async function getExtensionHealthReport() {
     "selectedProvider",
   ]);
   const apiBase = await resolveExtensionApiBase(session, lastBase);
-  const authValid = Boolean(session && session.accessToken && !session.isGuest);
+  const bearerToken =
+    session && !session.isGuest ? session.accessToken || session.access_token || null : null;
+  let authValid = Boolean(bearerToken);
   let backendReachable = false;
   let configuredProviders = {};
   let serverAiConfigured = false;
@@ -7905,18 +8680,35 @@ async function getExtensionHealthReport() {
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 2500);
+    const headers = {};
+    if (bearerToken) headers["Authorization"] = `Bearer ${bearerToken}`;
     const res = await fetch(`${apiBase}/api/public/extension/health`, {
       method: "GET",
+      headers,
       signal: ctrl.signal,
     }).finally(() => clearTimeout(timer));
     if (res.ok) {
       const data = await res.json().catch(() => null);
-      if (data?.ok) {
-        backendReachable = true;
+      if (data && typeof data === "object") {
+        backendReachable =
+          typeof data.backendReachable === "boolean"
+            ? data.backendReachable
+            : typeof data.checks?.backend?.ok === "boolean"
+              ? data.checks.backend.ok
+              : Boolean(data.ok);
         configuredProviders = data.providers || data.configuredProviders || {};
+        const configuredList = Array.isArray(data.providers?.configuredProviders)
+          ? data.providers.configuredProviders
+          : [];
         serverAiConfigured =
           Boolean(data.aiConfigured) ||
+          Boolean(data.checks?.ai?.ok) ||
+          Boolean(data.providers?.geminiConfigured) ||
+          configuredList.length > 0 ||
           Object.values(configuredProviders).some((p) => p === true || p?.configured === true);
+        if (bearerToken && typeof data.authValid === "boolean") {
+          authValid = data.authValid;
+        }
       }
     } else {
       healthErr = `HTTP ${res.status}`;
@@ -7999,7 +8791,9 @@ async function executePlanStepInTab(step, options = {}) {
 
   // 1b. File Download (direct URL or download-button click + chrome.downloads tracking)
   if (step.action === "download") {
-    const directUrl = step.url || (typeof step.value === "string" && /^https?:|^blob:/i.test(step.value) ? step.value : null);
+    const directUrl =
+      step.url ||
+      (typeof step.value === "string" && /^https?:|^blob:/i.test(step.value) ? step.value : null);
     if (directUrl) {
       const dlRes = await downloadFileFromUrl(directUrl, step.filenameHint);
       return {
@@ -8009,12 +8803,17 @@ async function executePlanStepInTab(step, options = {}) {
         error: dlRes.ok ? undefined : dlRes.message,
       };
     }
-    const actRes = await executeAction("click", step.selector, step.textTarget || step.value || "download", {
-      text: step.textTarget || step.value || "download",
-      alternateTargets: Array.isArray(step.alternateTargets) ? step.alternateTargets : undefined,
-      trackDownload: true,
-      ...options,
-    });
+    const actRes = await executeAction(
+      "click",
+      step.selector,
+      step.textTarget || step.value || "download",
+      {
+        text: step.textTarget || step.value || "download",
+        alternateTargets: Array.isArray(step.alternateTargets) ? step.alternateTargets : undefined,
+        trackDownload: true,
+        ...options,
+      },
+    );
     return {
       ok: Boolean(actRes.ok),
       verified: Boolean(actRes.ok && (actRes.downloadTriggered || actRes.stateChange)),
@@ -8025,7 +8824,10 @@ async function executePlanStepInTab(step, options = {}) {
 
   // 1c. Verify Page (URL / expected text)
   if (step.action === "verify_page") {
-    const expectText = step.expectedText || step.textTarget || (typeof step.value === "string" && !/^https?:/i.test(step.value) ? step.value : undefined);
+    const expectText =
+      step.expectedText ||
+      step.textTarget ||
+      (typeof step.value === "string" && !/^https?:/i.test(step.value) ? step.value : undefined);
     if (step.url) {
       const cur = await activeTab().catch(() => null);
       if (cur?.url && cur.url.toLowerCase().includes(String(step.url).toLowerCase())) {
@@ -8044,7 +8846,11 @@ async function executePlanStepInTab(step, options = {}) {
 
   // 2. Data extraction
   if (step.action === "extract") {
-    if (step.value === "copy_list" && Array.isArray(options?.extractedDataStore) && options.extractedDataStore.length > 0) {
+    if (
+      step.value === "copy_list" &&
+      Array.isArray(options?.extractedDataStore) &&
+      options.extractedDataStore.length > 0
+    ) {
       const formattedText = options.extractedDataStore
         .map((d) =>
           typeof d === "string"
@@ -8102,11 +8908,22 @@ async function executePlanStepInTab(step, options = {}) {
   // 3. Tab operations (open, close with safety guard, switch, read multi-tab)
   if (step.action === "switch_tab") {
     const res = await switchTab(step.tabId);
-    return { ok: res.ok, verified: res.ok, result: res.ok ? `Switched to tab ${step.tabId}` : undefined, error: res.ok ? undefined : res.message };
+    return {
+      ok: res.ok,
+      verified: res.ok,
+      result: res.ok ? `Switched to tab ${step.tabId}` : undefined,
+      error: res.ok ? undefined : res.message,
+    };
   }
   if (step.action === "open_tab") {
     const res = await openBrowserTab(step.url || step.value, true);
-    return { ok: res.ok, verified: res.ok, result: res.ok ? res.message : undefined, error: res.ok ? undefined : res.message, extractedData: { tabId: res.tabId, url: res.url } };
+    return {
+      ok: res.ok,
+      verified: res.ok,
+      result: res.ok ? res.message : undefined,
+      error: res.ok ? undefined : res.message,
+      extractedData: { tabId: res.tabId, url: res.url },
+    };
   }
   if (step.action === "close_tab") {
     const res = await closeBrowserTabSafely({
@@ -8117,7 +8934,12 @@ async function executePlanStepInTab(step, options = {}) {
     if (res.requiresApproval) {
       return { ok: false, awaitingApproval: true, message: res.message };
     }
-    return { ok: res.ok, verified: res.ok, result: res.ok ? res.message : undefined, error: res.ok ? undefined : res.message };
+    return {
+      ok: res.ok,
+      verified: res.ok,
+      result: res.ok ? res.message : undefined,
+      error: res.ok ? undefined : res.message,
+    };
   }
 
   // 4. Keyboard actions
@@ -8176,11 +8998,17 @@ async function executePlanStepInTab(step, options = {}) {
 
     if (requested.length > 0) {
       for (const reqKey of requested) {
-        const norm = String(reqKey).toLowerCase().replace(/[^a-z]/g, "");
+        const norm = String(reqKey)
+          .toLowerCase()
+          .replace(/[^a-z]/g, "");
         const candidates = FIELD_ALIASES[norm] || [reqKey];
         const matchedDocKey = candidates.find((k) => docFields[k]);
         if (matchedDocKey && docFields[matchedDocKey]) {
-          pairs.push({ target: matchedDocKey, value: docFields[matchedDocKey], overwrite: Boolean(step.overwrite) });
+          pairs.push({
+            target: matchedDocKey,
+            value: docFields[matchedDocKey],
+            overwrite: Boolean(step.overwrite),
+          });
         } else {
           missing.push(reqKey);
         }
@@ -8213,7 +9041,10 @@ async function executePlanStepInTab(step, options = {}) {
       ok: fillRes?.ok && (filledCount > 0 || preservedCount > 0),
       verified: filledCount > 0 || preservedCount > 0,
       result: `Filled ${filledCount} field(s) from uploaded document${missing.length ? ` (missing in doc: ${missing.join(", ")})` : ""}.`,
-      error: filledCount === 0 && preservedCount === 0 ? "No matching editable fields found on this page." : undefined,
+      error:
+        filledCount === 0 && preservedCount === 0
+          ? "No matching editable fields found on this page."
+          : undefined,
     };
   }
 
@@ -8275,7 +9106,12 @@ async function executePlanStepInTab(step, options = {}) {
   let actRes = await executeAction(step.action, sanitizedSelector, step.value, execOpts);
 
   // Closed-loop recoverable retry: if target not found on first try and alternateTargets/text exists, settle DOM and retry once
-  if (!actRes?.ok && !actRes?.stale && Array.isArray(step.alternateTargets) && step.alternateTargets.length > 0) {
+  if (
+    !actRes?.ok &&
+    !actRes?.stale &&
+    Array.isArray(step.alternateTargets) &&
+    step.alternateTargets.length > 0
+  ) {
     await waitForPageSettle(1200).catch(() => {});
     actRes = await executeAction(step.action, undefined, step.alternateTargets[0], {
       ...execOpts,
@@ -8287,7 +9123,10 @@ async function executePlanStepInTab(step, options = {}) {
   // Classify failures cleanly for Self-Healing diagnostics: only log extension bugs, not normal website element absence
   if (!actRes?.ok && actRes?.message) {
     const msg = String(actRes.message);
-    const isExtensionBug = /TypeError|ReferenceError|SyntaxError|Cannot read propert|runTabScript|executeScript/i.test(msg);
+    const isExtensionBug =
+      /TypeError|ReferenceError|SyntaxError|Cannot read propert|runTabScript|executeScript/i.test(
+        msg,
+      );
     if (isExtensionBug) {
       reportSwRuntimeError("browser_executor", msg, {
         currentOperation: `executePlanStepInTab:${step.action}`,

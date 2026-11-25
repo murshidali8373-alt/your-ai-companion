@@ -177,19 +177,32 @@ export const Route = createFileRoute("/api/public/extension/agents")({
           privacyMode: body.privacyMode,
         });
 
-        const run = await executeAgentDag({
-          runId,
-          userId,
-          objective: body.objective,
-          subtasks,
-          runner,
-          maxConcurrency: body.maxConcurrency ?? 4,
-          onCheckpoint: async (state) => {
-            await persistRun(userId, state);
-          },
-        });
+        try {
+          const run = await executeAgentDag({
+            runId,
+            userId,
+            objective: body.objective,
+            subtasks,
+            runner,
+            maxConcurrency: body.maxConcurrency ?? 4,
+            onCheckpoint: async (state) => {
+              await persistRun(userId, state);
+            },
+          });
 
-        return extensionJsonResponse(request, { ok: true, run, isGuest });
+          return extensionJsonResponse(request, { ok: true, run, isGuest });
+        } catch (err) {
+          console.error("[extension/agents] POST error:", err);
+          return extensionJsonResponse(
+            request,
+            {
+              ok: false,
+              error: "agent_execution_failed",
+              message: err instanceof Error ? err.message : "Failed to execute agent plan.",
+            },
+            500,
+          );
+        }
       },
 
       PATCH: async ({ request }) => {
@@ -313,19 +326,32 @@ export const Route = createFileRoute("/api/public/extension/agents")({
           objective: existing.objective,
         });
 
-        const updatedRun = await executeAgentDag({
-          runId: existing.runId,
-          userId,
-          objective: existing.objective,
-          subtasks: existing.subtasks,
-          runner,
-          existingRunState: existing,
-          onCheckpoint: async (state) => {
-            await persistRun(userId, state);
-          },
-        });
+        try {
+          const updatedRun = await executeAgentDag({
+            runId: existing.runId,
+            userId,
+            objective: existing.objective,
+            subtasks: existing.subtasks,
+            runner,
+            existingRunState: existing,
+            onCheckpoint: async (state) => {
+              await persistRun(userId, state);
+            },
+          });
 
-        return extensionJsonResponse(request, { ok: true, run: updatedRun, isGuest });
+          return extensionJsonResponse(request, { ok: true, run: updatedRun, isGuest });
+        } catch (err) {
+          console.error("[extension/agents] PATCH error:", err);
+          return extensionJsonResponse(
+            request,
+            {
+              ok: false,
+              error: "agent_execution_failed",
+              message: err instanceof Error ? err.message : "Failed to update agent run.",
+            },
+            500,
+          );
+        }
       },
     },
   },

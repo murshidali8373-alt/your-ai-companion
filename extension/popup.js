@@ -24,7 +24,11 @@ async function refreshHealthLine() {
       return;
     }
     const backendPart = h.backendReachable ? "Backend: Online" : "Backend: Offline";
-    const aiPart = h.aiOperational ? "AI: Ready" : h.aiConfigured ? "AI: Limited" : "AI: Missing Key";
+    const aiPart = h.aiOperational
+      ? "AI: Ready"
+      : h.aiConfigured
+        ? "AI: Limited"
+        : "AI: Missing Key";
     const authPart = h.authValid ? "Signed In" : "Guest";
     el.textContent = `${backendPart} · ${aiPart} · ${authPart}`;
   } catch {
@@ -84,8 +88,12 @@ $("connect").onclick = async () => {
           break;
         }
         if (
-          (u.hostname.includes("run.app") || u.hostname === "localhost" || u.hostname === "127.0.0.1") &&
-          (await fetch(`${u.origin}/api/public/extension/health`).then((r) => r.ok).catch(() => false))
+          (u.hostname.includes("run.app") ||
+            u.hostname === "localhost" ||
+            u.hostname === "127.0.0.1") &&
+          (await fetch(`${u.origin}/api/public/extension/health`)
+            .then((r) => r.ok)
+            .catch(() => false))
         ) {
           buddyTab = t;
           break;
@@ -153,7 +161,11 @@ async function sendPopupRuntimeMessage(payload) {
         resolve(reply);
       });
     });
-    console.debug("[AI Buddy][Popup] response", { traceId, type: payload?.type, ok: Boolean(res?.ok || res?.reply) });
+    console.debug("[AI Buddy][Popup] response", {
+      traceId,
+      type: payload?.type,
+      ok: Boolean(res?.ok || res?.reply),
+    });
     return res;
   } catch (err) {
     console.error("[AI Buddy][Popup] sendMessage failed", {
@@ -170,24 +182,75 @@ $("signout").onclick = async () => {
   render();
 };
 
+async function copyPopupText(text) {
+  const value = String(text ?? "");
+  if (!value) return false;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {}
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = value;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return Boolean(ok);
+  } catch {
+    return false;
+  }
+}
+
+if ($("copyAnswer")) {
+  $("copyAnswer").onclick = async () => {
+    const text = $("answer")?.textContent || "";
+    if (!text) return;
+    const copied = await copyPopupText(text);
+    if (copied) {
+      $("copyAnswer").textContent = "✓ Copied";
+      setTimeout(() => {
+        if ($("copyAnswer")) $("copyAnswer").textContent = "📋 Copy";
+      }, 1500);
+    }
+  };
+}
+
 let busy = false;
+function setPopupBusy(isBusy) {
+  busy = isBusy;
+  if ($("send")) $("send").disabled = isBusy;
+  document.querySelectorAll("[data-q]").forEach((b) => {
+    b.disabled = isBusy;
+  });
+}
+
 async function send(question, intent) {
   if (busy || !question.trim()) return;
-  busy = true;
-  $("send").disabled = true;
+  setPopupBusy(true);
+  $("status").classList.remove("status-error");
   $("status").textContent = "Reading the page and thinking…";
-  $("answer").hidden = true;
+  if ($("answerWrap")) $("answerWrap").hidden = true;
   try {
     const res = await sendPopupRuntimeMessage({ type: "ASK", question, intent });
     if (res?.error) {
+      $("status").classList.add("status-error");
       $("status").textContent = res.message || "Something went wrong. Try again.";
       if (res.error === "signed_out") render();
       return;
     }
     $("answer").textContent = res?.reply?.answer || "No answer came back.";
-    $("answer").hidden = false;
+    if ($("answerWrap")) $("answerWrap").hidden = false;
+    if (intent === "answer" && $("q")) {
+      $("q").value = "";
+    }
     const notes = [];
     if (res?.activeProvider === "error") {
+      $("status").classList.add("status-error");
       notes.push(res?.providerFailure?.message || "Selected AI provider unavailable.");
     } else if (!res?.pageReadable && res?.intent !== "general") {
       notes.push("Answered generally without active page access.");
@@ -195,10 +258,11 @@ async function send(question, intent) {
     if (res?.highlightSelector) notes.push("I outlined the element on the page.");
     $("status").textContent = notes.join(" ");
   } catch {
+    $("status").classList.add("status-error");
     $("status").textContent = "Buddy could not be reached. Check your connection.";
   } finally {
-    busy = false;
-    $("send").disabled = false;
+    setPopupBusy(false);
+    $("q")?.focus();
   }
 }
 
@@ -212,21 +276,22 @@ $("q").addEventListener("keydown", (e) => {
 document
   .querySelectorAll("[data-q]")
   .forEach((b) => (b.onclick = () => send(b.dataset.q, b.dataset.i)));
-chrome.storage.local.get(["session", "lastBase"]).then(({ session, lastBase }) => {
-  if (session?.apiBase) {
-    const cleanBase = normalizeBaseUrl(session.apiBase);
-    chrome.storage.local
-      .set({
-        lastBase: cleanBase,
-        ...(cleanBase !== session.apiBase
-          ? { session: { ...session, apiBase: cleanBase } }
-          : {}),
-      })
-      .catch(() => {});
-  } else if (!lastBase) {
-    chrome.storage.local.set({ lastBase: DEFAULT_BASE }).catch(() => {});
-  }
-}).catch(() => {});
+chrome.storage.local
+  .get(["session", "lastBase"])
+  .then(({ session, lastBase }) => {
+    if (session?.apiBase) {
+      const cleanBase = normalizeBaseUrl(session.apiBase);
+      chrome.storage.local
+        .set({
+          lastBase: cleanBase,
+          ...(cleanBase !== session.apiBase ? { session: { ...session, apiBase: cleanBase } } : {}),
+        })
+        .catch(() => {});
+    } else if (!lastBase) {
+      chrome.storage.local.set({ lastBase: DEFAULT_BASE }).catch(() => {});
+    }
+  })
+  .catch(() => {});
 render();
 
 if ($("openSidePanel")) {

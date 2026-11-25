@@ -81,12 +81,18 @@ export const Route = createFileRoute("/api/public/extension/health")({
           checks["backend"] = { ok: true, detail: "reachable" };
         }
 
+        const backendReachable = Boolean(checks["backend"]?.ok);
+        const aiConfigured = hasAnyProvider;
+        const authValid = Boolean(auth);
         const ok = Object.values(checks).every((c) => c.ok);
         const readiness = evaluateReleaseReadiness();
         return extensionJsonResponse(
           request,
           {
             ok,
+            backendReachable,
+            aiConfigured,
+            authValid,
             checks,
             providers: {
               geminiConfigured: hasGemini,

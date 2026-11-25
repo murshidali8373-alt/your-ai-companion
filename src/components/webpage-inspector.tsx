@@ -533,13 +533,38 @@ export function WebpageInspector({
     setMultiActionPlan(nextPlan);
   };
 
-  const handleCopyExtractedList = () => {
+  const handleCopyExtractedList = async () => {
     const text = extractedItems
       .map((item, idx) => `${idx + 1}. ${item.orderId} — ${item.status} (${item.details})`)
       .join("\n");
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText(text);
+    if (!text) return;
+    let copied = false;
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        copied = true;
+      }
+    } catch {
+      copied = false;
+    }
+    if (!copied && typeof document !== "undefined") {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        copied = document.execCommand("copy");
+        ta.remove();
+      } catch {
+        copied = false;
+      }
+    }
+    if (copied) {
       toast.success("Parsed snapshot items copied to clipboard.");
+    } else {
+      toast.error("Could not copy to clipboard.");
     }
   };
 
@@ -742,7 +767,7 @@ export function WebpageInspector({
                   );
                 }
               }}
-              className="rounded-lg border border-border bg-background px-2.5 py-1 text-xs"
+              className="rounded-lg border border-border bg-background px-2.5 py-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
               <option value="meesho_supplier">Sample: Meesho Supplier Panel</option>
               <option value="flight_booking">Sample: Flight Booking Page</option>
@@ -921,7 +946,7 @@ export function WebpageInspector({
             onChange={(e) => setMultiTaskInstruction(e.target.value)}
             rows={2}
             placeholder="Enter complex instruction (e.g. Open panel, filter today's orders, copy pending order IDs...)"
-            className="flex-1 rounded-xl border border-border bg-background p-3 text-xs text-foreground focus:border-primary focus:outline-none"
+            className="flex-1 rounded-xl border border-border bg-background p-3 text-xs text-foreground focus-visible:border-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           />
           <div className="flex flex-col gap-1.5 shrink-0 justify-end">
             <Button
@@ -1007,9 +1032,9 @@ export function WebpageInspector({
                       st.status === "running"
                         ? "border-primary bg-primary/10"
                         : st.status === "completed"
-                          ? "border-emerald-500/40 bg-emerald-500/5 text-muted-foreground"
+                          ? "border-success/40 bg-success/5 text-muted-foreground"
                           : st.status === "awaiting_approval"
-                            ? "border-amber-500/60 bg-amber-500/10"
+                            ? "border-warning/60 bg-warning/10"
                             : st.status === "failed"
                               ? "border-destructive/60 bg-destructive/10 text-destructive"
                               : isCurrent
@@ -1020,7 +1045,7 @@ export function WebpageInspector({
                     <div className="flex items-center gap-2.5 min-w-0 pr-2">
                       <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted/60 text-[10px] font-bold">
                         {st.status === "completed" ? (
-                          <Check className="h-3.5 w-3.5 text-emerald-500" />
+                          <Check className="h-3.5 w-3.5 text-success" />
                         ) : (
                           idx + 1
                         )}
@@ -1032,11 +1057,7 @@ export function WebpageInspector({
                             selector: {st.selector}
                           </div>
                         )}
-                        {st.result && (
-                          <div className="text-[10px] text-emerald-600 dark:text-emerald-400">
-                            ✓ {st.result}
-                          </div>
-                        )}
+                        {st.result && <div className="text-[10px] text-success">✓ {st.result}</div>}
                         {st.error && (
                           <div className="text-[10px] text-destructive">✗ {st.error}</div>
                         )}
@@ -1047,7 +1068,7 @@ export function WebpageInspector({
                       {st.isConsequential && (
                         <Badge
                           variant="outline"
-                          className="text-[9px] border-amber-500/50 text-amber-600"
+                          className="text-[9px] border-warning/50 text-warning"
                         >
                           Consequential
                         </Badge>
@@ -1074,8 +1095,8 @@ export function WebpageInspector({
 
             {/* Consequential Action Approval Card */}
             {pendingApprovalMultiStep && (
-              <div className="rounded-xl border border-amber-500/60 bg-amber-500/10 p-4 space-y-2.5">
-                <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 font-semibold text-xs">
+              <div className="rounded-xl border border-warning/60 bg-warning/10 p-4 space-y-2.5">
+                <div className="flex items-center gap-2 text-warning font-semibold text-xs">
                   <ShieldAlert className="h-4 w-4" />
                   <span>Consequential Step Requires Explicit Confirmation</span>
                 </div>
@@ -1087,7 +1108,7 @@ export function WebpageInspector({
                   <Button
                     size="sm"
                     onClick={handleApproveConsequentialStep}
-                    className="bg-amber-600 hover:bg-amber-700 text-white text-xs h-7 px-3"
+                    className="bg-warning text-warning-foreground hover:bg-warning/90 text-xs h-7 px-3"
                   >
                     Confirm & Proceed
                   </Button>
@@ -1213,9 +1234,7 @@ export function WebpageInspector({
                       className="flex items-center justify-between gap-2 py-0.5 border-b border-border/40 last:border-0"
                     >
                       <span className="font-semibold text-foreground">{item.orderId}</span>
-                      <span className="text-[10px] text-amber-600 dark:text-amber-400">
-                        {item.status}
-                      </span>
+                      <span className="text-[10px] text-warning">{item.status}</span>
                       <span className="text-muted-foreground text-[11px] truncate max-w-[200px]">
                         {item.details}
                       </span>
@@ -1260,12 +1279,12 @@ export function WebpageInspector({
                     isCurrent
                       ? "border-primary bg-primary/10 font-medium text-foreground"
                       : isPast
-                        ? "border-emerald-500/40 bg-emerald-500/5 text-muted-foreground"
+                        ? "border-success/40 bg-success/5 text-muted-foreground"
                         : "border-border/60 bg-card/40 text-muted-foreground/60"
                   }`}
                 >
                   <div className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold">
-                    {isPast ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : i + 1}
+                    {isPast ? <CheckCircle2 className="h-4 w-4 text-success" /> : i + 1}
                   </div>
                   <span className="mt-1 capitalize text-[11px] truncate w-full">
                     {st.replace("_", " ")}
@@ -1282,7 +1301,7 @@ export function WebpageInspector({
             </div>
             {plan.steps.map((s, idx) => (
               <div key={idx} className="flex items-start gap-2 text-muted-foreground">
-                <span className="text-emerald-500 shrink-0">✓ [{s.stage}]</span>
+                <span className="text-success shrink-0">✓ [{s.stage}]</span>
                 <span>{s.detail}</span>
               </div>
             ))}
@@ -1332,7 +1351,7 @@ export function WebpageInspector({
                   }
                   className={`flex items-center justify-between rounded-xl border p-3 text-left text-xs transition-colors hover:border-ring ${
                     isSensitiveAction
-                      ? "border-amber-500/40 bg-amber-500/5 hover:bg-amber-500/10"
+                      ? "border-warning/40 bg-warning/5 hover:bg-warning/10"
                       : "border-border/80 bg-card hover:bg-secondary/40"
                   }`}
                 >
@@ -1345,7 +1364,7 @@ export function WebpageInspector({
                   {isSensitiveAction ? (
                     <Badge
                       variant="outline"
-                      className="border-amber-500/50 text-amber-600 text-[10px] shrink-0"
+                      className="border-warning/50 text-warning text-[10px] shrink-0"
                     >
                       High Impact
                     </Badge>
@@ -1364,7 +1383,7 @@ export function WebpageInspector({
         <Dialog open={true} onOpenChange={(open) => !open && setApprovalModalAction(null)}>
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
+              <DialogTitle className="flex items-center gap-2 text-warning">
                 <ShieldAlert className="h-5 w-5" />
                 Confirmation Required
               </DialogTitle>
@@ -1405,7 +1424,7 @@ export function WebpageInspector({
               <Button
                 size="sm"
                 onClick={handleConfirmApproval}
-                className="bg-amber-600 hover:bg-amber-700 text-white"
+                className="bg-warning text-warning-foreground hover:bg-warning/90"
               >
                 Confirm & Allow Action
               </Button>

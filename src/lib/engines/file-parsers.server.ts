@@ -15,8 +15,14 @@
  * - Non-destructive edits always produce a new verified artifact without overwriting source
  */
 
+import fs from "node:fs";
 import path from "node:path";
 import ExcelJS from "exceljs";
+import {
+  redactSensitiveFields,
+  resolveSafeWorkspacePath,
+  sanitizeScopeId,
+} from "@/lib/persistence/store.server";
 import {
   Document,
   HeadingLevel,
@@ -99,6 +105,10 @@ export interface WorkspaceArtifact {
 }
 
 const ARTIFACT_STORE_KEY = "__aiBuddyWorkspaceArtifactsV1";
+const MAX_ARTIFACTS_PER_OWNER = 40;
+const WORKSPACE_ARTIFACTS_META = "workspace_artifacts_meta.json";
+
+type WorkspaceArtifactMeta = Omit<WorkspaceArtifact, "buffer">;
 
 function getArtifactStore(): Map<string, WorkspaceArtifact> {
   const g = globalThis as Record<string, unknown>;
@@ -106,6 +116,58 @@ function getArtifactStore(): Map<string, WorkspaceArtifact> {
     g[ARTIFACT_STORE_KEY] = new Map<string, WorkspaceArtifact>();
   }
   return g[ARTIFACT_STORE_KEY] as Map<string, WorkspaceArtifact>;
+}
+
+function readOwnerMetaSync(ownerId: string): WorkspaceArtifactMeta[] {
+  try {
+    const metaPath = resolveSafeWorkspacePath(ownerId, "collections", WORKSPACE_ARTIFACTS_META);
+    if (!fs.existsSync(metaPath)) return [];
+    const parsed = JSON.parse(fs.readFileSync(metaPath, "utf8")) as unknown;
+    return Array.isArray(parsed) ? (parsed as WorkspaceArtifactMeta[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeOwnerMetaSync(ownerId: string, list: WorkspaceArtifactMeta[]): void {
+  const metaPath = resolveSafeWorkspacePath(ownerId, "collections", WORKSPACE_ARTIFACTS_META);
+  fs.mkdirSync(path.dirname(metaPath), { recursive: true });
+  const tmpPath = `${metaPath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(redactSensitiveFields(list), null, 2), "utf8");
+  fs.renameSync(tmpPath, metaPath);
+}
+
+function writeArtifactBinSync(ownerId: string, artifactId: string, buffer: Buffer): void {
+  const binPath = resolveSafeWorkspacePath(ownerId, "workspace_artifacts", `${artifactId}.bin`);
+  fs.mkdirSync(path.dirname(binPath), { recursive: true });
+  const tmpPath = `${binPath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmpPath, buffer);
+  fs.renameSync(tmpPath, binPath);
+}
+
+function readArtifactBinSync(ownerId: string, artifactId: string): Buffer | null {
+  try {
+    const binPath = resolveSafeWorkspacePath(ownerId, "workspace_artifacts", `${artifactId}.bin`);
+    if (!fs.existsSync(binPath)) return null;
+    return fs.readFileSync(binPath);
+  } catch {
+    return null;
+  }
+}
+
+function deleteArtifactBinSync(ownerId: string, artifactId: string): void {
+  try {
+    const binPath = resolveSafeWorkspacePath(ownerId, "workspace_artifacts", `${artifactId}.bin`);
+    if (fs.existsSync(binPath)) {
+      fs.unlinkSync(binPath);
+    }
+  } catch {
+    // Best-effort cleanup
+  }
+}
+
+export function clearWorkspaceArtifactCacheForTests(): void {
+  getArtifactStore().clear();
 }
 
 export function sanitizeWorkspaceFilename(rawName: string): string {
@@ -137,11 +199,12 @@ export function storeWorkspaceArtifact(params: {
       `File exceeds maximum supported workspace size (${MAX_FILE_BYTES / (1024 * 1024)} MB).`,
     );
   }
+  const ownerScope = sanitizeScopeId(params.ownerId);
   const safeName = sanitizeWorkspaceFilename(params.filename);
   const ext = detectSupportedExtension(safeName) ?? "txt";
   const artifact: WorkspaceArtifact = {
     artifactId: `art_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
-    ownerId: params.ownerId || "guest",
+    ownerId: ownerScope,
     filename: safeName,
     extension: ext,
     mimeType: params.mimeType,
@@ -152,13 +215,36 @@ export function storeWorkspaceArtifact(params: {
     verified: params.verified ?? true,
     createdAt: new Date().toISOString(),
   };
+
   const store = getArtifactStore();
   store.set(artifact.artifactId, artifact);
-  // Bound store to 80 recent artifacts to prevent memory leaks
-  if (store.size > 80) {
-    const oldestKey = store.keys().next().value;
-    if (oldestKey) store.delete(oldestKey);
+  // Keep per-owner isolation & bound memory cache without evicting other users' files
+  const ownerCacheIds = Array.from(store.values())
+    .filter((a) => a.ownerId === ownerScope)
+    .map((a) => a.artifactId);
+  while (ownerCacheIds.length > MAX_ARTIFACTS_PER_OWNER) {
+    const oldest = ownerCacheIds.shift();
+    if (oldest) store.delete(oldest);
   }
+
+  try {
+    writeArtifactBinSync(ownerScope, artifact.artifactId, params.buffer);
+    const { buffer: _buf, ...meta } = artifact;
+    const existingMeta = readOwnerMetaSync(ownerScope).filter(
+      (m) => m.artifactId !== artifact.artifactId,
+    );
+    const updatedMeta = [meta, ...existingMeta];
+    if (updatedMeta.length > MAX_ARTIFACTS_PER_OWNER) {
+      const evicted = updatedMeta.splice(MAX_ARTIFACTS_PER_OWNER);
+      for (const old of evicted) {
+        deleteArtifactBinSync(ownerScope, old.artifactId);
+      }
+    }
+    writeOwnerMetaSync(ownerScope, updatedMeta);
+  } catch (err) {
+    console.warn("[file-parsers] disk persistence skipped:", err);
+  }
+
   return artifact;
 }
 
@@ -166,27 +252,63 @@ export function getWorkspaceArtifact(
   artifactId: string,
   ownerId?: string | null,
 ): WorkspaceArtifact | null {
-  const art = getArtifactStore().get(artifactId);
-  if (!art) return null;
-  if (ownerId && art.ownerId !== ownerId) return null;
-  if (!ownerId && art.ownerId !== "guest") return null;
-  return art;
+  const targetOwner = sanitizeScopeId(ownerId);
+  const cached = getArtifactStore().get(artifactId);
+  if (cached) {
+    return cached.ownerId === targetOwner ? cached : null;
+  }
+
+  const metaList = readOwnerMetaSync(targetOwner);
+  const meta = metaList.find((m) => m.artifactId === artifactId && m.ownerId === targetOwner);
+  if (!meta) return null;
+
+  const buffer = readArtifactBinSync(targetOwner, artifactId);
+  if (!buffer) return null;
+
+  const hydrated: WorkspaceArtifact = {
+    ...meta,
+    buffer,
+  };
+  getArtifactStore().set(artifactId, hydrated);
+  return hydrated;
 }
 
 export function listWorkspaceArtifacts(
   ownerId?: string | null,
 ): Array<Omit<WorkspaceArtifact, "buffer">> {
-  const targetOwner = ownerId || "guest";
-  return Array.from(getArtifactStore().values())
+  const targetOwner = sanitizeScopeId(ownerId);
+  const diskMeta = readOwnerMetaSync(targetOwner);
+  const memMeta = Array.from(getArtifactStore().values())
     .filter((a) => a.ownerId === targetOwner)
     .map(({ buffer: _buf, ...meta }) => meta)
     .reverse();
+
+  if (diskMeta.length === 0) return memMeta;
+
+  const seen = new Set<string>();
+  const merged: WorkspaceArtifactMeta[] = [];
+  for (const item of [...memMeta, ...diskMeta]) {
+    if (seen.has(item.artifactId)) continue;
+    seen.add(item.artifactId);
+    merged.push(item);
+  }
+  return merged;
 }
 
 export function deleteWorkspaceArtifact(artifactId: string, ownerId?: string | null): boolean {
-  const existing = getWorkspaceArtifact(artifactId, ownerId);
+  const targetOwner = sanitizeScopeId(ownerId);
+  const existing = getWorkspaceArtifact(artifactId, targetOwner);
   if (!existing) return false;
-  return getArtifactStore().delete(artifactId);
+
+  getArtifactStore().delete(artifactId);
+  deleteArtifactBinSync(targetOwner, artifactId);
+  try {
+    const nextMeta = readOwnerMetaSync(targetOwner).filter((m) => m.artifactId !== artifactId);
+    writeOwnerMetaSync(targetOwner, nextMeta);
+  } catch {
+    // Best-effort metadata update
+  }
+  return true;
 }
 
 // ============================================================================

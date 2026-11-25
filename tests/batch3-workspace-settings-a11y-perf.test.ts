@@ -134,4 +134,84 @@ describe("Batch 3 — Extension Accessibility, Narrow 320–360px Responsiveness
     expect(buddyHealth).toContain("document.hidden");
     expect(talkingBuddy).toContain("document.hidden");
   });
+
+  it("guards draft approvals, DAG mutations, clipboard fallback, and workflow run/pause/delete error feedback", () => {
+    const workCenter = readProjectFile("src/components/work-center-panel.tsx");
+    const inspector = readProjectFile("src/components/webpage-inspector.tsx");
+    const spJs = readProjectFile("extension/sidepanel.js");
+    const spHtml = readProjectFile("extension/sidepanel.html");
+
+    expect(workCenter).toContain("approvingDraftId");
+    expect(workCenter).toContain("disabled={controlDag.isPending}");
+    expect(inspector).toContain('document.execCommand("copy")');
+    expect(spJs).toContain("copyTextSafely");
+    expect(spJs).toContain("msg-md-copy-btn");
+    expect(spJs).toContain('"▶ Run"');
+    expect(spJs).toContain('"▶ Resume"');
+    expect(spJs).toContain("toggleRes");
+    expect(spJs).toContain("delRes");
+    expect(spHtml).toContain(".msg-provider-warning");
+  });
+
+  it("supports chat retry, composer drag/paste uploads, popup copy, voice-bar start guard, and emotion switch semantics", () => {
+    const spJs = readProjectFile("extension/sidepanel.js");
+    const spHtml = readProjectFile("extension/sidepanel.html");
+    const popupHtml = readProjectFile("extension/popup.html");
+    const popupJs = readProjectFile("extension/popup.js");
+    const emotionPanel = readProjectFile("src/components/buddy-emotion-control-panel.tsx");
+    const verificationDash = readProjectFile("src/components/verification-dashboard.tsx");
+    const voiceBar = readProjectFile("src/components/voice-bar.tsx");
+
+    expect(spJs).toContain("onRetry");
+    expect(spJs).toContain("↻ Retry");
+    expect(spJs).toContain("drag-over");
+    expect(spJs).toContain('addEventListener("paste"');
+    expect(spHtml).toContain(".msg-error");
+
+    expect(popupHtml).toContain('id="copyAnswer"');
+    expect(popupJs).toContain("copyPopupText");
+    expect(popupJs).toContain("status-error");
+
+    expect(emotionPanel).toContain('role="switch"');
+    expect(emotionPanel).toContain("aria-checked={simulateReducedMotion}");
+    expect(verificationDash).toContain("copyTextWithFallback");
+    expect(voiceBar).toContain("aria-pressed={listening}");
+    expect(voiceBar).toContain("Could not start voice capture");
+  });
+
+  it("hardens Chrome side panel against DOM XSS, stale voice/status overwrites, sign-out races, and pointer arrow leaks", () => {
+    const spHtml = readProjectFile("extension/sidepanel.html");
+    const spJs = readProjectFile("extension/sidepanel.js");
+    const bgJs = readProjectFile("extension/background.js");
+
+    // Safe origin resolution + shared async sign-out
+    expect(spJs).toContain("function normalizeBackendOrigin(raw)");
+    expect(spJs).toContain("normalizeBackendOrigin(session?.apiBase || lastBase)");
+    expect(spJs).toContain("async function performSignOut()");
+    expect(spJs).toContain('$("signoutBtn").onclick = () => performSignOut()');
+    expect(spJs).toContain('$("settingsSignOutBtn").onclick = () => performSignOut()');
+
+    // Semantic provider buttons & design token hygiene (no hardcoded #fde68a)
+    expect(spJs).toContain("function renderProviderRowsSafe(");
+    expect(spJs).not.toContain("#fde68a");
+    expect(spHtml).toContain(".provider-row-item");
+    expect(spHtml).toContain('id="pageContextToggle"');
+    expect(spHtml).toContain('aria-pressed="true"');
+    expect(spHtml).toContain("flex-wrap: wrap");
+
+    // No dynamic innerHTML in formFillReport, provider list, workspace artifacts, or sendBtn
+    expect(spJs).not.toContain("reportEl.innerHTML");
+    expect(spJs).not.toContain("list.innerHTML");
+    expect(spJs).not.toContain("sendBtn.innerHTML");
+
+    // Post-action status/speech guards & voice state cleanup
+    expect(spJs).toContain("let suppressPostActionStatus = false;");
+    expect(spJs).toContain("let suppressPostActionSpeech = false;");
+    expect(spJs).toContain('liveVoiceState === "processing"');
+
+    // Content script highlight cleans up pointer SVG when target element collapses
+    expect(bgJs).toContain('const overlaySvg = root.querySelector("svg")');
+    expect(bgJs).toContain('overlaySvg.style.display = "none"');
+    expect(bgJs).toContain('overlaySvg.style.display = "block"');
+  });
 });

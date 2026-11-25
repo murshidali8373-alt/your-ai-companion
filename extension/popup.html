@@ -15,6 +15,8 @@
         --ring: rgba(99, 102, 241, 0.65);
         --text: #f8fafc;
         --text-muted: #94a3b8;
+        --destructive-text: #fca5a5;
+        --success-text: #6ee7b7;
         --radius-sm: 6px;
         --radius-md: 10px;
       }
@@ -91,17 +93,35 @@
         gap: 6px;
         flex-wrap: wrap;
       }
-      .answer {
-        white-space: pre-wrap;
+      .answer-wrap {
         background: var(--surface-card);
         border: 1px solid var(--border);
         border-radius: var(--radius-md);
         padding: 10px;
+        display: grid;
+        gap: 6px;
+      }
+      .answer-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 11px;
+        color: var(--text-muted);
+      }
+      .copy-btn {
+        padding: 2px 7px;
+        font-size: 11px;
+      }
+      .answer {
+        white-space: pre-wrap;
         line-height: 1.45;
       }
       .muted {
         color: var(--text-muted);
         font-size: 12px;
+      }
+      .status-error {
+        color: var(--destructive-text);
       }
       [hidden] {
         display: none !important;
@@ -141,8 +161,16 @@
           <button class="ghost" id="upgradeConnect" hidden>Connect account</button>
           <button class="ghost" id="signout">Sign out</button>
         </div>
-        <div id="status" class="muted"></div>
-        <div id="answer" class="answer" hidden></div>
+        <div id="status" class="muted" role="status" aria-live="polite"></div>
+        <div id="answerWrap" class="answer-wrap" hidden>
+          <div class="answer-header">
+            <span>Buddy</span>
+            <button type="button" id="copyAnswer" class="ghost copy-btn" aria-label="Copy answer">
+              📋 Copy
+            </button>
+          </div>
+          <div id="answer" class="answer"></div>
+        </div>
         <div id="who" class="muted"></div>
       </div>
     </div>

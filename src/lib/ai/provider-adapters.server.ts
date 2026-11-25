@@ -12,9 +12,105 @@
  * - GitHub Models
  */
 
-import { getGeminiKey } from "./provider-keys.server";
-import { AiError, normalizeProviderError } from "./errors";
+import { getGeminiKey, getOllamaBaseUrl, getProviderKey, isRealKey } from "./provider-keys.server";
+import { AiError, normalizeGatewayError, normalizeProviderError } from "./errors";
 import { type ModelEntry, type ProviderId, PROVIDERS } from "./model-hub";
+
+const INFERENCE_TIMEOUT_MS = 30_000;
+const VERIFY_TIMEOUT_MS = 10_000;
+
+const PRIVATE_IPV4_RE = /^(?:10\.|127\.|0\.|169\.254\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/;
+
+function isPrivateOrLocalHostname(rawHost: string): boolean {
+  const host = rawHost.toLowerCase().replace(/^\[|\]$/g, "");
+  if (!host) return true;
+  if (
+    host === "localhost" ||
+    host === "::1" ||
+    host === "::" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local") ||
+    host.endsWith(".internal")
+  ) {
+    return true;
+  }
+  if (PRIVATE_IPV4_RE.test(host)) return true;
+  if (host.startsWith("::ffff:")) {
+    const mapped = host.slice("::ffff:".length);
+    if (PRIVATE_IPV4_RE.test(mapped)) return true;
+  }
+  if (/^(?:fc|fd)[0-9a-f:]*$/i.test(host) || /^fe80:/i.test(host)) {
+    return true;
+  }
+  return false;
+}
+
+export function validateProviderBaseUrl(
+  rawUrl: string,
+  options: { allowLocalhost?: boolean; provider?: string } = {},
+): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl.trim());
+  } catch {
+    throw new AiError("bad_request", "Invalid custom provider URL.", {
+      provider: options.provider,
+    });
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new AiError("bad_request", "Provider URL must not contain embedded credentials.", {
+      provider: options.provider,
+    });
+  }
+
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const isLoopback = host === "localhost" || host === "127.0.0.1" || host === "::1";
+
+  if (options.allowLocalhost && isLoopback) {
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new AiError("bad_request", "Unsupported protocol for local Ollama URL.", {
+        provider: options.provider,
+      });
+    }
+    return parsed.toString().replace(/\/+$/, "");
+  }
+
+  if (parsed.protocol !== "https:") {
+    throw new AiError("bad_request", "Custom provider URL must use HTTPS.", {
+      provider: options.provider,
+    });
+  }
+
+  if (isPrivateOrLocalHostname(parsed.hostname)) {
+    throw new AiError(
+      "bad_request",
+      "Custom provider URL cannot target private or local network addresses.",
+      { provider: options.provider },
+    );
+  }
+
+  return parsed.toString().replace(/\/+$/, "");
+}
+
+function resolveCredential(
+  userApiKey: string | undefined,
+  provider: ProviderId,
+): string | undefined {
+  if (isRealKey(userApiKey)) return userApiKey.trim();
+  return getProviderKey(provider);
+}
+
+function resolveSafeBaseUrl(
+  customBaseUrl: string | undefined,
+  defaultBaseUrl: string,
+  provider: ProviderId,
+  allowLocalhost = false,
+): string {
+  const candidate = customBaseUrl?.trim();
+  if (!candidate) return defaultBaseUrl.replace(/\/+$/, "");
+  return validateProviderBaseUrl(candidate, { allowLocalhost, provider });
+}
 
 export interface ProviderCallOptions {
   systemPrompt: string;
@@ -40,17 +136,8 @@ export interface ProviderVerificationResult {
  * with jittered exponential backoff for temporary 503 high-demand / 504 timeout spikes.
  */
 export async function callGemini(model: ModelEntry, opts: ProviderCallOptions): Promise<string> {
-  // Ensure server environment has loaded .env if not already present
-  if (typeof process.loadEnvFile === "function" && !process.env["GEMINI_API_KEY"]) {
-    try {
-      process.loadEnvFile(".env");
-    } catch {
-      // Ignore if .env is missing in container
-    }
-  }
-
-  const apiKey = opts.userApiKey || getGeminiKey();
-  if (!apiKey || apiKey.startsWith("MY_")) {
+  const apiKey = isRealKey(opts.userApiKey) ? opts.userApiKey.trim() : getGeminiKey();
+  if (!apiKey) {
     throw new AiError("auth", "Google Gemini API key is not configured.", {
       resolution:
         "Provide your Gemini API key in Settings > AI Model Hub or check your server environment.",
@@ -91,7 +178,6 @@ export async function callGemini(model: ModelEntry, opts: ProviderCallOptions): 
 
   for (let i = 0; i < trialModels.length; i++) {
     const currentModel = trialModels[i]!;
-    // If not first attempt, wait brief backoff before retrying alternate model
     if (i > 0) {
       const jitter = Math.floor(Math.random() * 400) + 600;
       await new Promise((r) => setTimeout(r, jitter));
@@ -127,14 +213,12 @@ export async function callGemini(model: ModelEntry, opts: ProviderCallOptions): 
         msg.includes("no longer available") ||
         msg.includes("not found");
 
-      // Only attempt model failover if the error is temporary capacity/timeout or model unavailable
       if (!isRecoverableByAlternateModel || i === trialModels.length - 1) {
         break;
       }
     }
   }
 
-  // Normalize final error
   throw normalizeProviderError(lastErr || new Error("Gemini returned an empty reply"), "gemini");
 }
 
@@ -142,17 +226,20 @@ export async function callGemini(model: ModelEntry, opts: ProviderCallOptions): 
  * 2. GroqCloud via OpenAI-compatible endpoint
  */
 export async function callGroq(model: ModelEntry, opts: ProviderCallOptions): Promise<string> {
-  const apiKey = opts.userApiKey || process.env["GROQ_API_KEY"];
+  const apiKey = resolveCredential(opts.userApiKey, "groq");
   if (!apiKey) {
     throw new AiError("auth", "GroqCloud API key is missing.", {
+      provider: "groq",
       resolution:
         "Get a free Groq key from console.groq.com and paste it in AI Model Hub settings.",
     });
   }
 
-  const baseUrl =
-    opts.customBaseUrl || PROVIDERS.groq.defaultBaseUrl || "https://api.groq.com/openai/v1";
-  const started = Date.now();
+  const baseUrl = resolveSafeBaseUrl(
+    opts.customBaseUrl,
+    PROVIDERS.groq.defaultBaseUrl || "https://api.groq.com/openai/v1",
+    "groq",
+  );
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -168,24 +255,21 @@ export async function callGroq(model: ModelEntry, opts: ProviderCallOptions): Pr
       temperature: 0.6,
       max_tokens: 4096,
     }),
-    signal: opts.signal ?? null,
+    signal: opts.signal ?? AbortSignal.timeout(INFERENCE_TIMEOUT_MS),
   });
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    if (res.status === 429) {
-      throw new AiError("rate_limit", "Groq rate limit reached.", {
-        retryable: true,
-        retryAfterSeconds: 5,
-      });
-    }
-    throw new AiError("provider_error", `Groq error (${res.status}): ${errText}`);
+    throw normalizeGatewayError(res.status, errText, res.headers.get("retry-after"), "groq");
   }
 
   const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
   const text = data.choices?.[0]?.message?.content ?? "";
   if (!text.trim()) {
-    throw new AiError("invalid_response", "Groq returned an empty answer.");
+    throw new AiError("invalid_response", "Groq returned an empty answer.", {
+      retryable: true,
+      provider: "groq",
+    });
   }
   return text;
 }
@@ -197,15 +281,19 @@ export async function callOpenRouter(
   model: ModelEntry,
   opts: ProviderCallOptions,
 ): Promise<string> {
-  const apiKey = opts.userApiKey || process.env["OPENROUTER_API_KEY"];
+  const apiKey = resolveCredential(opts.userApiKey, "openrouter");
   if (!apiKey) {
     throw new AiError("auth", "OpenRouter API key is missing.", {
+      provider: "openrouter",
       resolution: "Get an OpenRouter API key from openrouter.ai/keys to access 200+ models.",
     });
   }
 
-  const baseUrl =
-    opts.customBaseUrl || PROVIDERS.openrouter.defaultBaseUrl || "https://openrouter.ai/api/v1";
+  const baseUrl = resolveSafeBaseUrl(
+    opts.customBaseUrl,
+    PROVIDERS.openrouter.defaultBaseUrl || "https://openrouter.ai/api/v1",
+    "openrouter",
+  );
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -221,18 +309,21 @@ export async function callOpenRouter(
         { role: "user", content: opts.userPrompt },
       ],
     }),
-    signal: opts.signal ?? null,
+    signal: opts.signal ?? AbortSignal.timeout(INFERENCE_TIMEOUT_MS),
   });
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    throw new AiError("provider_error", `OpenRouter returned ${res.status}: ${errText}`);
+    throw normalizeGatewayError(res.status, errText, res.headers.get("retry-after"), "openrouter");
   }
 
   const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
   const text = data.choices?.[0]?.message?.content ?? "";
   if (!text.trim()) {
-    throw new AiError("invalid_response", "OpenRouter returned an empty answer.");
+    throw new AiError("invalid_response", "OpenRouter returned an empty answer.", {
+      retryable: true,
+      provider: "openrouter",
+    });
   }
   return text;
 }
@@ -241,15 +332,19 @@ export async function callOpenRouter(
  * 4. OpenAI Direct
  */
 export async function callOpenAI(model: ModelEntry, opts: ProviderCallOptions): Promise<string> {
-  const apiKey = opts.userApiKey || process.env["OPENAI_API_KEY"];
+  const apiKey = resolveCredential(opts.userApiKey, "openai");
   if (!apiKey) {
     throw new AiError("auth", "OpenAI API key is missing.", {
+      provider: "openai",
       resolution: "Add your OpenAI API key from platform.openai.com in Settings > AI Model Hub.",
     });
   }
 
-  const baseUrl =
-    opts.customBaseUrl || PROVIDERS.openai.defaultBaseUrl || "https://api.openai.com/v1";
+  const baseUrl = resolveSafeBaseUrl(
+    opts.customBaseUrl,
+    PROVIDERS.openai.defaultBaseUrl || "https://api.openai.com/v1",
+    "openai",
+  );
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -263,16 +358,22 @@ export async function callOpenAI(model: ModelEntry, opts: ProviderCallOptions): 
         { role: "user", content: opts.userPrompt },
       ],
     }),
-    signal: opts.signal ?? null,
+    signal: opts.signal ?? AbortSignal.timeout(INFERENCE_TIMEOUT_MS),
   });
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    throw new AiError("provider_error", `OpenAI returned ${res.status}: ${errText}`);
+    throw normalizeGatewayError(res.status, errText, res.headers.get("retry-after"), "openai");
   }
 
   const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
   const text = data.choices?.[0]?.message?.content ?? "";
+  if (!text.trim()) {
+    throw new AiError("invalid_response", "OpenAI returned an empty answer.", {
+      retryable: true,
+      provider: "openai",
+    });
+  }
   return text;
 }
 
@@ -280,7 +381,7 @@ export async function callOpenAI(model: ModelEntry, opts: ProviderCallOptions): 
  * 5. Ollama Local Edge Model
  */
 export async function callOllama(model: ModelEntry, opts: ProviderCallOptions): Promise<string> {
-  const baseUrl = opts.customBaseUrl || process.env["OLLAMA_BASE_URL"] || "http://localhost:11434";
+  const baseUrl = resolveSafeBaseUrl(opts.customBaseUrl, getOllamaBaseUrl(), "ollama", true);
 
   let res: Response;
   try {
@@ -295,7 +396,7 @@ export async function callOllama(model: ModelEntry, opts: ProviderCallOptions): 
         ],
         stream: false,
       }),
-      signal: opts.signal ?? null,
+      signal: opts.signal ?? AbortSignal.timeout(INFERENCE_TIMEOUT_MS),
     });
   } catch (err) {
     throw new AiError(
@@ -303,19 +404,23 @@ export async function callOllama(model: ModelEntry, opts: ProviderCallOptions): 
       `Could not reach local Ollama instance at ${baseUrl}. Ensure Ollama is running ('ollama serve').`,
       {
         cause: err,
+        provider: "ollama",
       },
     );
   }
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    throw new AiError("provider_error", `Ollama error (${res.status}): ${errText}`);
+    throw normalizeGatewayError(res.status, errText, res.headers.get("retry-after"), "ollama");
   }
 
   const data = (await res.json()) as { message?: { content?: string } };
   const text = data.message?.content ?? "";
   if (!text.trim()) {
-    throw new AiError("invalid_response", "Ollama returned an empty response.");
+    throw new AiError("invalid_response", "Ollama returned an empty response.", {
+      retryable: true,
+      provider: "ollama",
+    });
   }
   return text;
 }
@@ -327,14 +432,20 @@ export async function callHuggingFace(
   model: ModelEntry,
   opts: ProviderCallOptions,
 ): Promise<string> {
-  const apiKey = opts.userApiKey || process.env["HUGGINGFACE_API_KEY"];
+  const apiKey = resolveCredential(opts.userApiKey, "huggingface");
   if (!apiKey) {
     throw new AiError("auth", "Hugging Face User Access Token is missing.", {
+      provider: "huggingface",
       resolution: "Create a free User Access Token on huggingface.co/settings/tokens.",
     });
   }
 
-  const url = `https://api-inference.huggingface.co/models/${model.providerModelId}`;
+  const baseUrl = resolveSafeBaseUrl(
+    opts.customBaseUrl,
+    PROVIDERS.huggingface.defaultBaseUrl || "https://api-inference.huggingface.co/models",
+    "huggingface",
+  );
+  const url = `${baseUrl}/${model.providerModelId}`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -345,17 +456,23 @@ export async function callHuggingFace(
       inputs: `System: ${opts.systemPrompt}\nUser: ${opts.userPrompt}\nAssistant:`,
       parameters: { max_new_tokens: 1024, return_full_text: false },
     }),
-    signal: opts.signal ?? null,
+    signal: opts.signal ?? AbortSignal.timeout(INFERENCE_TIMEOUT_MS),
   });
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    throw new AiError("provider_error", `Hugging Face returned ${res.status}: ${errText}`);
+    throw normalizeGatewayError(res.status, errText, res.headers.get("retry-after"), "huggingface");
   }
 
   const data = (await res.json()) as
     Array<{ generated_text?: string }> | { generated_text?: string };
   const text = Array.isArray(data) ? (data[0]?.generated_text ?? "") : (data.generated_text ?? "");
+  if (!text.trim()) {
+    throw new AiError("invalid_response", "Hugging Face returned an empty response.", {
+      retryable: true,
+      provider: "huggingface",
+    });
+  }
   return text;
 }
 
@@ -366,14 +483,19 @@ export async function callGitHubModels(
   model: ModelEntry,
   opts: ProviderCallOptions,
 ): Promise<string> {
-  const token = opts.userApiKey || process.env["GITHUB_TOKEN"];
+  const token = resolveCredential(opts.userApiKey, "github");
   if (!token) {
     throw new AiError("auth", "GitHub Personal Access Token is missing.", {
+      provider: "github",
       resolution: "Generate a GitHub PAT with read permission on github.com/settings/tokens.",
     });
   }
 
-  const baseUrl = opts.customBaseUrl || "https://models.inference.ai.azure.com";
+  const baseUrl = resolveSafeBaseUrl(
+    opts.customBaseUrl,
+    PROVIDERS.github.defaultBaseUrl || "https://models.inference.ai.azure.com",
+    "github",
+  );
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -387,16 +509,23 @@ export async function callGitHubModels(
         { role: "user", content: opts.userPrompt },
       ],
     }),
-    signal: opts.signal ?? null,
+    signal: opts.signal ?? AbortSignal.timeout(INFERENCE_TIMEOUT_MS),
   });
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    throw new AiError("provider_error", `GitHub Models returned ${res.status}: ${errText}`);
+    throw normalizeGatewayError(res.status, errText, res.headers.get("retry-after"), "github");
   }
 
   const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  return data.choices?.[0]?.message?.content ?? "";
+  const text = data.choices?.[0]?.message?.content ?? "";
+  if (!text.trim()) {
+    throw new AiError("invalid_response", "GitHub Models returned an empty response.", {
+      retryable: true,
+      provider: "github",
+    });
+  }
+  return text;
 }
 
 /**
@@ -448,17 +577,17 @@ export async function verifyProviderConnection(
   try {
     switch (providerId) {
       case "gemini": {
-        const key = userApiKey || getGeminiKey();
-        if (!key || key.startsWith("MY_")) {
+        const key = isRealKey(userApiKey) ? userApiKey.trim() : getGeminiKey();
+        const rawEnv = process.env["GEMINI_API_KEY"]?.trim();
+        if (!key) {
           return {
             providerId,
             ok: false,
             status: "needs_key",
             latencyMs: 0,
-            message:
-              key && key.startsWith("MY_")
-                ? "GEMINI_API_KEY is a placeholder. Configure a real key in AI Model Hub."
-                : "Missing GEMINI_API_KEY. Configure in AI Model Hub or environment.",
+            message: rawEnv?.startsWith("MY_")
+              ? "GEMINI_API_KEY is a placeholder. Configure a real key in AI Model Hub."
+              : "Missing GEMINI_API_KEY. Configure in AI Model Hub or environment.",
           };
         }
         const { GoogleGenAI } = await import("@google/genai");
@@ -493,7 +622,7 @@ export async function verifyProviderConnection(
       }
 
       case "groq": {
-        const key = userApiKey || process.env["GROQ_API_KEY"];
+        const key = resolveCredential(userApiKey, "groq");
         if (!key) {
           return {
             providerId,
@@ -503,10 +632,14 @@ export async function verifyProviderConnection(
             message: "Enter a Groq API key (free at console.groq.com) to activate.",
           };
         }
-        const baseUrl =
-          customBaseUrl || PROVIDERS.groq.defaultBaseUrl || "https://api.groq.com/openai/v1";
+        const baseUrl = resolveSafeBaseUrl(
+          customBaseUrl,
+          PROVIDERS.groq.defaultBaseUrl || "https://api.groq.com/openai/v1",
+          "groq",
+        );
         const res = await fetch(`${baseUrl}/models`, {
           headers: { Authorization: `Bearer ${key}` },
+          signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
         });
         if (!res.ok) {
           return {
@@ -527,7 +660,7 @@ export async function verifyProviderConnection(
       }
 
       case "openrouter": {
-        const key = userApiKey || process.env["OPENROUTER_API_KEY"];
+        const key = resolveCredential(userApiKey, "openrouter");
         if (!key) {
           return {
             providerId,
@@ -537,10 +670,14 @@ export async function verifyProviderConnection(
             message: "Enter an OpenRouter key from openrouter.ai/keys.",
           };
         }
-        const baseUrl =
-          customBaseUrl || PROVIDERS.openrouter.defaultBaseUrl || "https://openrouter.ai/api/v1";
+        const baseUrl = resolveSafeBaseUrl(
+          customBaseUrl,
+          PROVIDERS.openrouter.defaultBaseUrl || "https://openrouter.ai/api/v1",
+          "openrouter",
+        );
         const res = await fetch(`${baseUrl}/auth/key`, {
           headers: { Authorization: `Bearer ${key}` },
+          signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
         });
         if (!res.ok) {
           return {
@@ -561,7 +698,7 @@ export async function verifyProviderConnection(
       }
 
       case "openai": {
-        const key = userApiKey || process.env["OPENAI_API_KEY"];
+        const key = resolveCredential(userApiKey, "openai");
         if (!key) {
           return {
             providerId,
@@ -571,9 +708,14 @@ export async function verifyProviderConnection(
             message: "Enter your OpenAI API key to connect GPT-4o and o-series models.",
           };
         }
-        const baseUrl = customBaseUrl || "https://api.openai.com/v1";
+        const baseUrl = resolveSafeBaseUrl(
+          customBaseUrl,
+          PROVIDERS.openai.defaultBaseUrl || "https://api.openai.com/v1",
+          "openai",
+        );
         const res = await fetch(`${baseUrl}/models`, {
           headers: { Authorization: `Bearer ${key}` },
+          signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
         });
         if (!res.ok) {
           return {
@@ -594,7 +736,7 @@ export async function verifyProviderConnection(
       }
 
       case "ollama": {
-        const baseUrl = customBaseUrl || process.env["OLLAMA_BASE_URL"] || "http://localhost:11434";
+        const baseUrl = resolveSafeBaseUrl(customBaseUrl, getOllamaBaseUrl(), "ollama", true);
         try {
           const res = await fetch(`${baseUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
           if (!res.ok) throw new Error(`Status ${res.status}`);
@@ -620,7 +762,7 @@ export async function verifyProviderConnection(
       }
 
       case "github": {
-        const token = userApiKey || process.env["GITHUB_TOKEN"];
+        const token = resolveCredential(userApiKey, "github");
         if (!token) {
           return {
             providerId,
@@ -630,8 +772,14 @@ export async function verifyProviderConnection(
             message: "Provide a GitHub Personal Access Token to test GitHub Models.",
           };
         }
-        const res = await fetch("https://models.inference.ai.azure.com/models", {
+        const baseUrl = resolveSafeBaseUrl(
+          customBaseUrl,
+          PROVIDERS.github.defaultBaseUrl || "https://models.inference.ai.azure.com",
+          "github",
+        );
+        const res = await fetch(`${baseUrl}/models`, {
           headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
         });
         if (!res.ok) {
           return {
@@ -652,7 +800,7 @@ export async function verifyProviderConnection(
       }
 
       case "huggingface": {
-        const key = userApiKey || process.env["HUGGINGFACE_API_KEY"];
+        const key = resolveCredential(userApiKey, "huggingface");
         if (!key) {
           return {
             providerId,
@@ -664,6 +812,7 @@ export async function verifyProviderConnection(
         }
         const res = await fetch("https://huggingface.co/api/whoami-v2", {
           headers: { Authorization: `Bearer ${key}` },
+          signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
         });
         if (!res.ok) {
           return {
@@ -683,13 +832,66 @@ export async function verifyProviderConnection(
         };
       }
 
-      default:
+      case "cloudflare": {
+        const token = resolveCredential(userApiKey, "cloudflare");
+        if (!token) {
+          return {
+            providerId,
+            ok: false,
+            status: "needs_key",
+            latencyMs: 0,
+            message: "Cloudflare Workers AI token is required (CLOUDFLARE_API_TOKEN).",
+          };
+        }
+        const res = await fetch("https://api.cloudflare.com/client/v4/user/tokens/verify", {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
+        });
+        if (!res.ok) {
+          return {
+            providerId,
+            ok: false,
+            status: "error",
+            latencyMs: Date.now() - start,
+            message: `Cloudflare token rejected (${res.status}).`,
+          };
+        }
         return {
           providerId,
           ok: true,
-          status: "available_free",
-          latencyMs: 10,
-          message: "Provider adapter ready.",
+          status: "connected",
+          latencyMs: Date.now() - start,
+          message: "Cloudflare Workers AI token verified.",
+        };
+      }
+
+      case "lovable-gateway": {
+        const key = resolveCredential(userApiKey, "lovable-gateway");
+        if (!key) {
+          return {
+            providerId,
+            ok: false,
+            status: "needs_key",
+            latencyMs: 0,
+            message: "Built-in fallback gateway is not configured on this server.",
+          };
+        }
+        return {
+          providerId,
+          ok: true,
+          status: "connected",
+          latencyMs: Date.now() - start,
+          message: "Built-in fallback gateway is configured.",
+        };
+      }
+
+      default:
+        return {
+          providerId,
+          ok: false,
+          status: "error",
+          latencyMs: 0,
+          message: `Unsupported provider "${String(providerId)}".`,
         };
     }
   } catch (error) {

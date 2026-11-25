@@ -277,12 +277,34 @@ ${
   }, [currentDef]);
 
   const handleCopyCss = async () => {
+    let copied = false;
     try {
-      await navigator.clipboard.writeText(cssSnippet);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(cssSnippet);
+        copied = true;
+      }
+    } catch {
+      copied = false;
+    }
+    if (!copied && typeof document !== "undefined") {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = cssSnippet;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        copied = document.execCommand("copy");
+        ta.remove();
+      } catch {
+        copied = false;
+      }
+    }
+    if (copied) {
       setCopiedCode(true);
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
       copyTimerRef.current = setTimeout(() => setCopiedCode(false), 2000);
-    } catch {
+    } else {
       setCopiedCode(false);
     }
   };
@@ -305,9 +327,10 @@ ${
           <button
             key={emo.id}
             type="button"
+            aria-pressed={activeEmotion === emo.id}
             onClick={() => handleSelectEmotion(emo.id)}
             className={cn(
-              "px-2 py-1 text-xs rounded-md transition-colors flex items-center gap-1 font-medium",
+              "px-2 py-1 text-xs rounded-md transition-colors flex items-center gap-1 font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               activeEmotion === emo.id
                 ? "bg-primary text-primary-foreground shadow-xs"
                 : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground",
@@ -351,11 +374,12 @@ ${
         <div className="flex items-center gap-2">
           <button
             type="button"
+            aria-pressed={triggerMode === "tour"}
             onClick={() => setTriggerMode(triggerMode === "tour" ? "hold" : "tour")}
             className={cn(
-              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border",
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               triggerMode === "tour"
-                ? "bg-amber-500/15 border-amber-500/40 text-amber-500 font-semibold"
+                ? "bg-warning/15 border-warning/40 text-warning font-semibold"
                 : "bg-background border-border text-foreground hover:bg-muted",
             )}
           >
@@ -410,9 +434,10 @@ ${
                   <button
                     key={emo.id}
                     type="button"
+                    aria-pressed={isSelected}
                     onClick={() => handleSelectEmotion(emo.id)}
                     className={cn(
-                      "flex items-start gap-2.5 p-3 rounded-xl border text-left transition-all relative overflow-hidden group",
+                      "flex items-start gap-2.5 p-3 rounded-xl border text-left transition-all relative overflow-hidden group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                       isSelected
                         ? "bg-primary/10 border-primary text-foreground shadow-xs ring-1 ring-primary"
                         : "bg-background/80 border-border/80 text-foreground hover:border-foreground/30 hover:bg-muted/40",
@@ -449,9 +474,10 @@ ${
               <div className="grid grid-cols-2 gap-1.5 bg-muted/40 p-1 rounded-xl border border-border">
                 <button
                   type="button"
+                  aria-pressed={triggerMode === "hold"}
                   onClick={() => setTriggerMode("hold")}
                   className={cn(
-                    "py-1.5 px-2 text-xs font-medium rounded-lg transition-colors text-center",
+                    "py-1.5 px-2 text-xs font-medium rounded-lg transition-colors text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     triggerMode === "hold"
                       ? "bg-background text-foreground shadow-xs"
                       : "text-muted-foreground hover:text-foreground",
@@ -461,9 +487,10 @@ ${
                 </button>
                 <button
                   type="button"
+                  aria-pressed={triggerMode === "burst"}
                   onClick={() => setTriggerMode("burst")}
                   className={cn(
-                    "py-1.5 px-2 text-xs font-medium rounded-lg transition-colors text-center",
+                    "py-1.5 px-2 text-xs font-medium rounded-lg transition-colors text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     triggerMode === "burst"
                       ? "bg-background text-foreground shadow-xs"
                       : "text-muted-foreground hover:text-foreground",
@@ -488,9 +515,10 @@ ${
                   <button
                     key={speed}
                     type="button"
+                    aria-pressed={animSpeed === speed}
                     onClick={() => setAnimSpeed(speed)}
                     className={cn(
-                      "py-1.5 text-xs font-mono font-medium rounded-lg transition-colors text-center",
+                      "py-1.5 text-xs font-mono font-medium rounded-lg transition-colors text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                       animSpeed === speed
                         ? "bg-background text-foreground shadow-xs"
                         : "text-muted-foreground hover:text-foreground",
@@ -514,9 +542,10 @@ ${
                 <button
                   key={preset.slug}
                   type="button"
+                  aria-pressed={selectedPersona === preset.slug}
                   onClick={() => setSelectedPersona(preset.slug)}
                   className={cn(
-                    "px-2.5 py-1 text-xs rounded-lg border transition-all font-medium",
+                    "px-2.5 py-1 text-xs rounded-lg border transition-all font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     selectedPersona === preset.slug
                       ? "bg-primary text-primary-foreground border-primary shadow-xs"
                       : "bg-background/80 border-border text-muted-foreground hover:text-foreground hover:bg-muted/50",
@@ -543,9 +572,12 @@ ${
             </div>
             <button
               type="button"
+              role="switch"
+              aria-checked={simulateReducedMotion}
+              aria-label="Simulate reduced motion"
               onClick={() => setSimulateReducedMotion(!simulateReducedMotion)}
               className={cn(
-                "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out",
+                "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 simulateReducedMotion ? "bg-primary" : "bg-muted",
               )}
             >
@@ -583,9 +615,10 @@ ${
             <div className="absolute top-3 right-3 flex items-center gap-1 rounded-lg border border-border bg-background/80 p-0.5 text-[10px] backdrop-blur-xs z-10">
               <button
                 type="button"
+                aria-pressed={renderMode === "3d"}
                 onClick={() => setRenderMode("3d")}
                 className={cn(
-                  "px-2 py-0.5 rounded font-medium transition-colors",
+                  "px-2 py-0.5 rounded font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   renderMode === "3d"
                     ? "bg-primary text-primary-foreground"
                     : "text-muted-foreground hover:text-foreground",
@@ -595,9 +628,10 @@ ${
               </button>
               <button
                 type="button"
+                aria-pressed={renderMode === "2d"}
                 onClick={() => setRenderMode("2d")}
                 className={cn(
-                  "px-2 py-0.5 rounded font-medium transition-colors",
+                  "px-2 py-0.5 rounded font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   renderMode === "2d"
                     ? "bg-primary text-primary-foreground"
                     : "text-muted-foreground hover:text-foreground",
@@ -607,9 +641,10 @@ ${
               </button>
               <button
                 type="button"
+                aria-pressed={renderMode === "living"}
                 onClick={() => setRenderMode("living")}
                 className={cn(
-                  "px-2 py-0.5 rounded font-medium transition-colors",
+                  "px-2 py-0.5 rounded font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   renderMode === "living"
                     ? "bg-primary text-primary-foreground"
                     : "text-muted-foreground hover:text-foreground",

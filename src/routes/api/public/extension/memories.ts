@@ -8,6 +8,10 @@ import {
   extensionJsonResponse,
   handleExtensionOptions,
 } from "@/lib/extension-cors.server";
+import {
+  readScopedCollection,
+  updateScopedCollection,
+} from "@/lib/persistence/store.server";
 import { verifyBearer } from "@/lib/supabase-bearer.server";
 
 const memorySchema = z.object({
@@ -20,8 +24,7 @@ const memorySchema = z.object({
   instructionContext: z.string().max(500).optional(),
 });
 
-// Ephemeral guest memories
-const guestMemoriesStore: Array<{
+interface StoredGuestMemory {
   id: string;
   key: string;
   value: string;
@@ -30,26 +33,31 @@ const guestMemoriesStore: Array<{
   scope?: "short_term" | "long_term";
   outdated?: boolean;
   created_at: string;
-}> = [
-  {
-    id: "guest_mem_1",
-    key: "preferred_language",
-    value: "Hinglish / English friendly mix",
-    kind: "communication_preference",
-    source: "default",
-    scope: "long_term",
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: "guest_mem_2",
-    key: "ecommerce_platform",
-    value: "Meesho & Amazon Seller Central",
-    kind: "business_context",
-    source: "default",
-    scope: "long_term",
-    created_at: new Date().toISOString(),
-  },
-];
+}
+
+function getDefaultGuestMemories(): StoredGuestMemory[] {
+  const now = new Date().toISOString();
+  return [
+    {
+      id: "guest_mem_1",
+      key: "preferred_language",
+      value: "Hinglish / English friendly mix",
+      kind: "communication_preference",
+      source: "default",
+      scope: "long_term",
+      created_at: now,
+    },
+    {
+      id: "guest_mem_2",
+      key: "ecommerce_platform",
+      value: "Meesho & Amazon Seller Central",
+      kind: "business_context",
+      source: "default",
+      scope: "long_term",
+      created_at: now,
+    },
+  ];
+}
 
 export const Route = createFileRoute("/api/public/extension/memories")({
   server: {
@@ -71,15 +79,24 @@ export const Route = createFileRoute("/api/public/extension/memories")({
             .order("updated_at", { ascending: false });
 
           if (error) {
-            return extensionJsonResponse(request, { ok: false, error: "Failed to fetch memories", memories: [] }, 500);
+            return extensionJsonResponse(
+              request,
+              { ok: false, error: "Failed to fetch memories", memories: [] },
+              500,
+            );
           }
 
           return extensionJsonResponse(request, { ok: true, memories: data || [], isGuest: false });
         }
 
+        const stored = await readScopedCollection<StoredGuestMemory[]>(
+          "guest",
+          "memories",
+          getDefaultGuestMemories(),
+        );
         return extensionJsonResponse(request, {
           ok: true,
-          memories: guestMemoriesStore.filter((m) => !m.outdated),
+          memories: stored.filter((m) => !m.outdated),
           isGuest: true,
         });
       },
@@ -130,8 +147,8 @@ export const Route = createFileRoute("/api/public/extension/memories")({
               {
                 id,
                 user_id: auth.userId,
-                key: body.key,
-                value: body.value,
+                key: body.key.trim(),
+                value: body.value.trim(),
                 kind: body.kind,
                 source: body.source,
                 updated_at: new Date().toISOString(),
@@ -148,11 +165,7 @@ export const Route = createFileRoute("/api/public/extension/memories")({
           return extensionJsonResponse(request, { ok: true, memory: data });
         }
 
-        // Guest store with duplicate / outdated handling
-        const existingIdx = guestMemoriesStore.findIndex(
-          (m) => !m.outdated && m.key.toLowerCase() === body.key.trim().toLowerCase(),
-        );
-        const memItem = {
+        const memItem: StoredGuestMemory = {
           id,
           key: body.key.trim(),
           value: body.value.trim(),
@@ -164,24 +177,44 @@ export const Route = createFileRoute("/api/public/extension/memories")({
 
         let deduplicated = false;
         let replacedOutdated = false;
-        if (existingIdx >= 0) {
-          if (guestMemoriesStore[existingIdx]!.value.toLowerCase() === memItem.value.toLowerCase()) {
-            deduplicated = true;
-            return extensionJsonResponse(request, {
-              ok: true,
-              memory: guestMemoriesStore[existingIdx],
-              deduplicated,
-              isGuest: true,
-            });
-          }
-          guestMemoriesStore[existingIdx]!.outdated = true;
-          replacedOutdated = true;
+        let resolvedMemory: StoredGuestMemory = memItem;
+
+        await updateScopedCollection<StoredGuestMemory[]>(
+          "guest",
+          "memories",
+          getDefaultGuestMemories(),
+          (current) => {
+            const active = current.filter((m) => !m.outdated);
+            const existingIdx = active.findIndex(
+              (m) => m.key.toLowerCase() === memItem.key.toLowerCase(),
+            );
+            if (existingIdx >= 0) {
+              const existing = active[existingIdx]!;
+              if (existing.value.toLowerCase() === memItem.value.toLowerCase()) {
+                deduplicated = true;
+                resolvedMemory = existing;
+                return active;
+              }
+              replacedOutdated = true;
+              const remaining = active.filter((_, idx) => idx !== existingIdx);
+              return [memItem, ...remaining].slice(0, 100);
+            }
+            return [memItem, ...active].slice(0, 100);
+          },
+        );
+
+        if (deduplicated) {
+          return extensionJsonResponse(request, {
+            ok: true,
+            memory: resolvedMemory,
+            deduplicated: true,
+            isGuest: true,
+          });
         }
-        guestMemoriesStore.unshift(memItem);
 
         return extensionJsonResponse(request, {
           ok: true,
-          memory: memItem,
+          memory: resolvedMemory,
           replacedOutdated,
           isGuest: true,
         });
@@ -200,7 +233,11 @@ export const Route = createFileRoute("/api/public/extension/memories")({
         const key = url.searchParams.get("key");
 
         if (!id && !key) {
-          return extensionJsonResponse(request, { ok: false, message: "Must provide memory id or key to delete" }, 400);
+          return extensionJsonResponse(
+            request,
+            { ok: false, message: "Must provide memory id or key to delete" },
+            400,
+          );
         }
 
         if (auth) {
@@ -211,15 +248,39 @@ export const Route = createFileRoute("/api/public/extension/memories")({
             query = query.eq("key", key);
           }
 
-          const { error } = await query;
-          if (error) return extensionJsonResponse(request, { ok: false, error: error.message }, 500);
+          const { data, error } = await query.select("id");
+          if (error) {
+            return extensionJsonResponse(request, { ok: false, error: error.message }, 500);
+          }
+          if (!data || data.length === 0) {
+            return extensionJsonResponse(
+              request,
+              { ok: false, deleted: false, message: "Memory not found." },
+              404,
+            );
+          }
           return extensionJsonResponse(request, { ok: true, deleted: true });
         }
 
-        // Guest store deletion
-        const idx = guestMemoriesStore.findIndex((m) => (id && m.id === id) || (key && m.key === key));
-        if (idx >= 0) {
-          guestMemoriesStore.splice(idx, 1);
+        let removed = false;
+        await updateScopedCollection<StoredGuestMemory[]>(
+          "guest",
+          "memories",
+          getDefaultGuestMemories(),
+          (current) => {
+            const idx = current.findIndex((m) => (id && m.id === id) || (key && m.key === key));
+            if (idx < 0) return current;
+            removed = true;
+            return current.filter((_, i) => i !== idx);
+          },
+        );
+
+        if (!removed) {
+          return extensionJsonResponse(
+            request,
+            { ok: false, deleted: false, message: "Memory not found.", isGuest: true },
+            404,
+          );
         }
 
         return extensionJsonResponse(request, { ok: true, deleted: true, isGuest: true });
